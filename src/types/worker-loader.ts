@@ -40,3 +40,65 @@ export interface WorkerStub {
 export interface WorkerEntrypoint {
   fetch(request: Request): Promise<Response>
 }
+
+/**
+ * Internal marker symbol for identifying real Cloudflare worker loaders.
+ */
+const REAL_WORKER_LOADER_MARKER = Symbol.for('cloudflare.worker_loader')
+
+/**
+ * MockWorkerLoader provides a mock implementation of the WorkerLoader interface
+ * for testing purposes. It caches WorkerStubs by ID.
+ */
+export class MockWorkerLoader implements WorkerLoader {
+  private cache = new Map<string, WorkerStub>()
+
+  get(id: string, getCode: () => Promise<WorkerCode>): WorkerStub {
+    const cached = this.cache.get(id)
+    if (cached) {
+      return cached
+    }
+
+    const stub: WorkerStub = {
+      fetch: async (request: Request): Promise<Response> => {
+        return new Response('MockWorkerLoader response')
+      },
+      getEntrypoint: (name?: string): WorkerEntrypoint => {
+        return {
+          fetch: async (request: Request): Promise<Response> => {
+            return new Response('MockWorkerLoader entrypoint response')
+          }
+        }
+      }
+    }
+
+    this.cache.set(id, stub)
+    return stub
+  }
+}
+
+/**
+ * Type guard to check if a loader is a real Cloudflare worker loader.
+ * Returns false for MockWorkerLoader instances, null, undefined, or non-WorkerLoader objects.
+ * Returns true only for real Cloudflare worker_loaders that have the internal marker.
+ *
+ * @param loader - The loader to check
+ * @returns true if the loader is a real Cloudflare worker loader
+ */
+export function isRealWorkerLoader(loader: unknown): loader is WorkerLoader {
+  if (loader === null || loader === undefined) {
+    return false
+  }
+
+  if (loader instanceof MockWorkerLoader) {
+    return false
+  }
+
+  if (typeof loader !== 'object') {
+    return false
+  }
+
+  // Check for the internal marker that real Cloudflare worker loaders would have
+  const obj = loader as Record<string | symbol, unknown>
+  return obj[REAL_WORKER_LOADER_MARKER] === true
+}

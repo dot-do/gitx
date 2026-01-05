@@ -14,19 +14,25 @@ export interface ObjectStoreAccess {
 export class ObjectStoreProxy {
   constructor(private objectStore: any) {}
 
-  async getObject(sha: string): Promise<any> {
-    throw new Error('Not implemented')
+  async getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null> {
+    return this.objectStore.getObject(sha)
   }
 
   async putObject(type: string, data: Uint8Array): Promise<string> {
-    throw new Error('Not implemented')
+    return this.objectStore.putObject(type, data)
   }
 
   async listObjects(options?: { type?: string; limit?: number }): Promise<string[]> {
-    throw new Error('Not implemented')
+    return this.objectStore.listObjects(options)
   }
 }
 
 export function createObjectStoreAccess(objectStore: any): ObjectStoreAccess {
-  throw new Error('Not implemented')
+  const proxy = new ObjectStoreProxy(objectStore)
+  return {
+    getProxy: () => proxy,
+    getObject: (sha: string) => proxy.getObject(sha),
+    putObject: (type: string, data: Uint8Array) => proxy.putObject(type, data),
+    listObjects: (options?: { type?: string; limit?: number }) => proxy.listObjects(options),
+  }
 }

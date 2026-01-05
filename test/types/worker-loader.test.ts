@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { WorkerLoader, WorkerCode, WorkerStub, WorkerEntrypoint } from '../../src/types/worker-loader'
+import {
+  WorkerLoader,
+  WorkerCode,
+  WorkerStub,
+  WorkerEntrypoint,
+  MockWorkerLoader,
+  isRealWorkerLoader
+} from '../../src/types/worker-loader'
 
 describe('WorkerLoader Types', () => {
   describe('Type Checking', () => {
@@ -25,14 +32,11 @@ describe('WorkerLoader Types', () => {
 
   describe('MockWorkerLoader Implementation', () => {
     it('should implement WorkerLoader interface', () => {
-      // RED: MockWorkerLoader doesn't exist yet
-      const { MockWorkerLoader } = require('../../src/types/worker-loader')
       const loader: WorkerLoader = new MockWorkerLoader()
       expect(typeof loader.get).toBe('function')
     })
 
     it('should cache workers by ID', () => {
-      const { MockWorkerLoader } = require('../../src/types/worker-loader')
       const loader: WorkerLoader = new MockWorkerLoader()
       const stub1 = loader.get('w1', async () => ({ compatibilityDate: '2024-01-01', mainModule: 'a.js', modules: {} }))
       const stub2 = loader.get('w1', async () => ({ compatibilityDate: '2024-01-01', mainModule: 'a.js', modules: {} }))
@@ -42,17 +46,14 @@ describe('WorkerLoader Types', () => {
 
   describe('Type Guard: isRealWorkerLoader', () => {
     it('should exist as a function', () => {
-      const { isRealWorkerLoader } = require('../../src/types/worker-loader')
       expect(typeof isRealWorkerLoader).toBe('function')
     })
 
     it('should return false for MockWorkerLoader', () => {
-      const { MockWorkerLoader, isRealWorkerLoader } = require('../../src/types/worker-loader')
       expect(isRealWorkerLoader(new MockWorkerLoader())).toBe(false)
     })
 
     it('should handle null and undefined', () => {
-      const { isRealWorkerLoader } = require('../../src/types/worker-loader')
       expect(isRealWorkerLoader(null)).toBe(false)
       expect(isRealWorkerLoader(undefined)).toBe(false)
     })
