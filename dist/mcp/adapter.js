@@ -1,41 +1,142 @@
 /**
- * MCP (Model Context Protocol) SDK Adapter
+ * @fileoverview MCP (Model Context Protocol) SDK Adapter
  *
  * This module provides an adapter that bridges the MCP protocol to git operations,
  * handling request/response, tool registration/invocation, resource listing,
- * and error handling.
+ * and error handling. It implements the JSON-RPC 2.0 specification for MCP
+ * communication.
+ *
+ * The adapter supports:
+ * - Tool registration and invocation with schema validation
+ * - Resource registration and reading
+ * - Prompt registration and retrieval
+ * - Standard and custom MCP error codes
+ * - Batch request processing
+ * - Capability negotiation
+ *
+ * @module mcp/adapter
+ *
+ * @example
+ * // Create and configure an MCP adapter
+ * import { createMCPAdapter, MCPAdapter } from './adapter'
+ *
+ * const adapter = createMCPAdapter({
+ *   name: 'my-git-server',
+ *   version: '1.0.0',
+ *   capabilities: ['tools', 'resources']
+ * })
+ *
+ * // Register git tools and start
+ * adapter.registerGitTools()
+ * await adapter.start()
+ *
+ * // Handle incoming requests
+ * const response = await adapter.handleRequest({
+ *   jsonrpc: '2.0',
+ *   id: 1,
+ *   method: 'tools/list',
+ *   params: {}
+ * })
+ *
+ * @example
+ * // Handle raw JSON requests
+ * const rawResponse = await adapter.handleRawRequest(
+ *   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+ * )
  */
 import { gitTools } from './tools';
 /**
- * JSON-RPC 2.0 error codes and MCP-specific error codes
+ * JSON-RPC 2.0 error codes and MCP-specific error codes.
+ *
+ * @description
+ * Enumeration of error codes used in MCP responses. Includes standard
+ * JSON-RPC 2.0 error codes (negative 32xxx range) and MCP-specific
+ * error codes for resource, tool, and prompt operations.
+ *
+ * @enum {number}
+ *
+ * @example
+ * // Using error codes in responses
+ * if (!tool) {
+ *   return {
+ *     jsonrpc: '2.0',
+ *     id: requestId,
+ *     error: {
+ *       code: MCPErrorCode.TOOL_NOT_FOUND,
+ *       message: 'Tool not found'
+ *     }
+ *   }
+ * }
  */
 export var MCPErrorCode;
 (function (MCPErrorCode) {
-    // JSON-RPC standard error codes
+    /** Parse error - Invalid JSON was received (-32700) */
     MCPErrorCode[MCPErrorCode["PARSE_ERROR"] = -32700] = "PARSE_ERROR";
+    /** Invalid Request - The JSON sent is not a valid Request object (-32600) */
     MCPErrorCode[MCPErrorCode["INVALID_REQUEST"] = -32600] = "INVALID_REQUEST";
+    /** Method not found - The method does not exist or is not available (-32601) */
     MCPErrorCode[MCPErrorCode["METHOD_NOT_FOUND"] = -32601] = "METHOD_NOT_FOUND";
+    /** Invalid params - Invalid method parameter(s) (-32602) */
     MCPErrorCode[MCPErrorCode["INVALID_PARAMS"] = -32602] = "INVALID_PARAMS";
+    /** Internal error - Internal JSON-RPC error (-32603) */
     MCPErrorCode[MCPErrorCode["INTERNAL_ERROR"] = -32603] = "INTERNAL_ERROR";
-    // MCP-specific error codes (must be < -32000 per JSON-RPC spec)
+    /** Resource not found - The requested resource does not exist (-32001) */
     MCPErrorCode[MCPErrorCode["RESOURCE_NOT_FOUND"] = -32001] = "RESOURCE_NOT_FOUND";
-    // TOOL_NOT_FOUND maps to METHOD_NOT_FOUND as tools are essentially methods
+    /** Tool not found - Maps to METHOD_NOT_FOUND as tools are methods (-32601) */
     MCPErrorCode[MCPErrorCode["TOOL_NOT_FOUND"] = -32601] = "TOOL_NOT_FOUND";
+    /** Prompt not found - The requested prompt does not exist (-32003) */
     MCPErrorCode[MCPErrorCode["PROMPT_NOT_FOUND"] = -32003] = "PROMPT_NOT_FOUND";
+    /** Capability not supported - The requested capability is not enabled (-32004) */
     MCPErrorCode[MCPErrorCode["CAPABILITY_NOT_SUPPORTED"] = -32004] = "CAPABILITY_NOT_SUPPORTED";
 })(MCPErrorCode || (MCPErrorCode = {}));
 /**
- * Custom error class for MCP errors
+ * Custom error class for MCP errors.
+ *
+ * @description
+ * Error class that encapsulates MCP error information including a numeric
+ * error code, human-readable message, and optional additional data. Can be
+ * serialized to JSON-RPC error format using the toJSON() method.
+ *
+ * @class MCPError
+ * @extends Error
+ *
+ * @example
+ * // Throw an MCP error
+ * throw new MCPError(
+ *   MCPErrorCode.TOOL_NOT_FOUND,
+ *   'Tool "unknown_tool" not found',
+ *   { toolName: 'unknown_tool' }
+ * )
+ *
+ * @example
+ * // Convert to JSON-RPC error format
+ * const error = new MCPError(MCPErrorCode.INVALID_PARAMS, 'Missing required field')
+ * const jsonError = error.toJSON()
+ * // { code: -32602, message: 'Missing required field' }
  */
 export class MCPError extends Error {
+    /** The MCP error code */
     code;
+    /** Optional additional error data */
     data;
+    /**
+     * Create a new MCP error.
+     *
+     * @param code - The MCP error code
+     * @param message - Human-readable error message
+     * @param data - Optional additional error data
+     */
     constructor(code, message, data) {
         super(message);
         this.code = code;
         this.data = data;
         this.name = 'MCPError';
     }
+    /**
+     * Convert the error to JSON-RPC error format.
+     *
+     * @returns Object suitable for JSON-RPC error responses
+     */
     toJSON() {
         const result = {
             code: this.code,
@@ -48,14 +149,64 @@ export class MCPError extends Error {
     }
 }
 /**
- * MCP Adapter class that bridges MCP protocol to git operations
+ * MCP Adapter class that bridges MCP protocol to git operations.
+ *
+ * @description
+ * The main adapter class that handles MCP protocol communication. It manages
+ * tool, resource, and prompt registrations, processes JSON-RPC requests,
+ * and returns properly formatted responses.
+ *
+ * The adapter supports the following MCP methods:
+ * - initialize: Server initialization and capability negotiation
+ * - tools/list: List all registered tools
+ * - tools/call: Invoke a registered tool
+ * - resources/list: List all registered resources
+ * - resources/read: Read a resource's content
+ * - prompts/list: List all registered prompts
+ * - prompts/get: Get a prompt's generated messages
+ *
+ * @class MCPAdapter
+ *
+ * @example
+ * // Create and use an adapter
+ * const adapter = new MCPAdapter({
+ *   name: 'my-server',
+ *   version: '1.0.0',
+ *   capabilities: ['tools']
+ * })
+ *
+ * adapter.registerGitTools()
+ * await adapter.start()
+ *
+ * const response = await adapter.handleRequest({
+ *   jsonrpc: '2.0',
+ *   id: 1,
+ *   method: 'tools/list'
+ * })
  */
 export class MCPAdapter {
+    /** @internal */
     config;
+    /** @internal */
     initialized = false;
+    /** @internal */
     tools = new Map();
+    /** @internal */
     resources = new Map();
+    /** @internal */
     prompts = new Map();
+    /**
+     * Create a new MCP adapter instance.
+     *
+     * @param config - Optional configuration options
+     *
+     * @example
+     * const adapter = new MCPAdapter({
+     *   name: 'git-mcp-server',
+     *   version: '2.0.0',
+     *   capabilities: ['tools', 'resources', 'prompts']
+     * })
+     */
     constructor(config) {
         this.config = {
             name: config?.name || 'gitx.do',
@@ -64,25 +215,64 @@ export class MCPAdapter {
         };
     }
     /**
-     * Get the server configuration
+     * Get the server configuration.
+     *
+     * @description
+     * Returns a copy of the current server configuration including name,
+     * version, and enabled capabilities.
+     *
+     * @returns A copy of the server configuration
+     *
+     * @example
+     * const config = adapter.getConfig()
+     * console.log(`Server: ${config.name} v${config.version}`)
      */
     getConfig() {
         return { ...this.config };
     }
     /**
-     * Check if adapter has a specific capability
+     * Check if adapter has a specific capability.
+     *
+     * @description
+     * Tests whether a specific capability is enabled for this adapter.
+     * Used internally to determine which methods are available.
+     *
+     * @param capability - The capability to check ('tools', 'resources', or 'prompts')
+     * @returns True if the capability is enabled
+     *
+     * @example
+     * if (adapter.hasCapability('resources')) {
+     *   adapter.registerResource(myResource)
+     * }
      */
     hasCapability(capability) {
         return this.config.capabilities.includes(capability);
     }
     /**
-     * Check if the adapter is initialized
+     * Check if the adapter is initialized.
+     *
+     * @description
+     * Returns whether the adapter has been started and is ready to handle requests.
+     *
+     * @returns True if the adapter is initialized and running
      */
     isInitialized() {
         return this.initialized;
     }
     /**
-     * Start the MCP adapter
+     * Start the MCP adapter.
+     *
+     * @description
+     * Initializes the adapter and prepares it to handle requests.
+     * Must be called before processing any MCP requests.
+     *
+     * @returns Promise that resolves when the adapter is started
+     * @throws {Error} If the adapter is already started
+     *
+     * @example
+     * const adapter = new MCPAdapter()
+     * await adapter.start()
+     * // Adapter is now ready to handle requests
      */
     async start() {
         if (this.initialized) {
@@ -91,7 +281,19 @@ export class MCPAdapter {
         this.initialized = true;
     }
     /**
-     * Stop the MCP adapter
+     * Stop the MCP adapter.
+     *
+     * @description
+     * Shuts down the adapter and clears all registered tools, resources,
+     * and prompts. After stopping, the adapter must be restarted before
+     * handling new requests.
+     *
+     * @returns Promise that resolves when the adapter is stopped
+     * @throws {Error} If the adapter is not currently running
+     *
+     * @example
+     * await adapter.stop()
+     * // All registrations are cleared
      */
     async stop() {
         if (!this.initialized) {
@@ -103,7 +305,25 @@ export class MCPAdapter {
         this.prompts.clear();
     }
     /**
-     * Register a tool
+     * Register a tool.
+     *
+     * @description
+     * Adds a tool to the adapter's registry. The tool will be available
+     * for listing via tools/list and invocation via tools/call.
+     *
+     * @param toolInfo - The tool definition to register
+     * @returns void
+     * @throws {Error} If a tool with the same name is already registered
+     *
+     * @example
+     * adapter.registerTool({
+     *   name: 'my_tool',
+     *   description: 'Does something',
+     *   inputSchema: { type: 'object', properties: {} },
+     *   handler: async (params) => ({
+     *     content: [{ type: 'text', text: 'Done' }]
+     *   })
+     * })
      */
     registerTool(toolInfo) {
         if (this.tools.has(toolInfo.name)) {
@@ -112,7 +332,18 @@ export class MCPAdapter {
         this.tools.set(toolInfo.name, toolInfo);
     }
     /**
-     * Unregister a tool by name
+     * Unregister a tool by name.
+     *
+     * @description
+     * Removes a tool from the adapter's registry. The tool will no longer
+     * be available for listing or invocation.
+     *
+     * @param name - The name of the tool to unregister
+     * @returns void
+     * @throws {Error} If no tool with the given name exists
+     *
+     * @example
+     * adapter.unregisterTool('my_tool')
      */
     unregisterTool(name) {
         if (!this.tools.has(name)) {
@@ -121,7 +352,19 @@ export class MCPAdapter {
         this.tools.delete(name);
     }
     /**
-     * List all registered tools (without handlers)
+     * List all registered tools (without handlers).
+     *
+     * @description
+     * Returns an array of all registered tools with their metadata.
+     * Handler functions are omitted for serialization safety.
+     *
+     * @returns Array of tool definitions without handlers
+     *
+     * @example
+     * const tools = adapter.listTools()
+     * for (const tool of tools) {
+     *   console.log(`${tool.name}: ${tool.description}`)
+     * }
      */
     listTools() {
         const result = [];
@@ -135,7 +378,20 @@ export class MCPAdapter {
         return result;
     }
     /**
-     * Get a tool by name (without handler)
+     * Get a tool by name (without handler).
+     *
+     * @description
+     * Retrieves a single tool's metadata by name. Returns undefined if
+     * the tool is not found.
+     *
+     * @param name - The name of the tool to retrieve
+     * @returns The tool definition without handler, or undefined if not found
+     *
+     * @example
+     * const tool = adapter.getTool('git_status')
+     * if (tool) {
+     *   console.log(tool.description)
+     * }
      */
     getTool(name) {
         const tool = this.tools.get(name);
@@ -148,7 +404,18 @@ export class MCPAdapter {
         };
     }
     /**
-     * Register all git tools
+     * Register all git tools.
+     *
+     * @description
+     * Convenience method that registers all built-in git tools from the
+     * tools module. Skips any tools that are already registered.
+     *
+     * @returns void
+     *
+     * @example
+     * const adapter = new MCPAdapter()
+     * adapter.registerGitTools()
+     * // All 18 git tools are now registered
      */
     registerGitTools() {
         for (const tool of gitTools) {
@@ -163,19 +430,62 @@ export class MCPAdapter {
         }
     }
     /**
-     * Register a resource
+     * Register a resource.
+     *
+     * @description
+     * Adds a resource to the adapter's registry. The resource will be
+     * available for listing and reading via the resources/* methods.
+     *
+     * @param resourceInfo - The resource definition to register
+     * @returns void
+     *
+     * @example
+     * adapter.registerResource({
+     *   uri: 'git://repo/config',
+     *   name: 'Repository Config',
+     *   mimeType: 'application/json',
+     *   handler: async () => ({ content: JSON.stringify(config) })
+     * })
      */
     registerResource(resourceInfo) {
         this.resources.set(resourceInfo.uri, resourceInfo);
     }
     /**
-     * Register a prompt
+     * Register a prompt.
+     *
+     * @description
+     * Adds a prompt template to the adapter's registry. The prompt will
+     * be available for listing and retrieval via the prompts/* methods.
+     *
+     * @param promptInfo - The prompt definition to register
+     * @returns void
+     *
+     * @example
+     * adapter.registerPrompt({
+     *   name: 'review-code',
+     *   description: 'Review code changes',
+     *   handler: async () => ({
+     *     messages: [{ role: 'user', content: { type: 'text', text: '...' } }]
+     *   })
+     * })
      */
     registerPrompt(promptInfo) {
         this.prompts.set(promptInfo.name, promptInfo);
     }
     /**
-     * Handle a raw JSON string request
+     * Handle a raw JSON string request.
+     *
+     * @description
+     * Parses a raw JSON string as an MCP request and processes it.
+     * Returns a parse error response if the JSON is invalid.
+     *
+     * @param rawRequest - Raw JSON string containing the request
+     * @returns Promise resolving to the MCP response
+     *
+     * @example
+     * const response = await adapter.handleRawRequest(
+     *   '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+     * )
      */
     async handleRawRequest(rawRequest) {
         let request;
@@ -201,7 +511,20 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle a batch of requests
+     * Handle a batch of requests.
+     *
+     * @description
+     * Processes multiple MCP requests sequentially. Notifications (requests
+     * without an id) are processed but do not produce responses.
+     *
+     * @param requests - Array of MCP requests to process
+     * @returns Promise resolving to array of responses (excluding notifications)
+     *
+     * @example
+     * const responses = await adapter.handleBatchRequest([
+     *   { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+     *   { jsonrpc: '2.0', id: 2, method: 'initialize', params: {} }
+     * ])
      */
     async handleBatchRequest(requests) {
         const responses = [];
@@ -215,7 +538,23 @@ export class MCPAdapter {
         return responses;
     }
     /**
-     * Handle a single MCP request
+     * Handle a single MCP request.
+     *
+     * @description
+     * Main request handler that routes MCP requests to the appropriate
+     * method handler. Supports initialize, tools/*, resources/*, and prompts/*
+     * methods. Returns undefined for notifications (requests without id).
+     *
+     * @param request - The MCP request to handle
+     * @returns Promise resolving to response, or undefined for notifications
+     *
+     * @example
+     * const response = await adapter.handleRequest({
+     *   jsonrpc: '2.0',
+     *   id: 1,
+     *   method: 'tools/call',
+     *   params: { name: 'git_status', arguments: {} }
+     * })
      */
     async handleRequest(request) {
         // Handle notifications (no id) - they don't expect a response
@@ -256,7 +595,15 @@ export class MCPAdapter {
         }
     }
     /**
-     * Handle initialize request
+     * Handle initialize request.
+     *
+     * @description
+     * Processes the MCP initialize request and returns server information
+     * and capabilities. This is the first request a client should send.
+     *
+     * @param request - The initialize request
+     * @returns Response with server info and capabilities
+     * @internal
      */
     handleInitialize(request) {
         const params = request.params || {};
@@ -285,7 +632,10 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle tools/list request
+     * Handle tools/list request.
+     * @param request - The tools/list request
+     * @returns Response with list of registered tools
+     * @internal
      */
     handleToolsList(request) {
         if (!this.hasCapability('tools')) {
@@ -300,7 +650,10 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle tools/call request
+     * Handle tools/call request.
+     * @param request - The tools/call request with tool name and arguments
+     * @returns Response with tool execution result
+     * @internal
      */
     async handleToolsCall(request) {
         if (!this.hasCapability('tools')) {
@@ -346,7 +699,11 @@ export class MCPAdapter {
         }
     }
     /**
-     * Validate tool parameters against schema
+     * Validate tool parameters against schema.
+     * @param tool - The tool to validate parameters for
+     * @param params - The parameters to validate
+     * @returns Validation result with errors array
+     * @internal
      */
     validateToolParams(tool, params) {
         const errors = [];
@@ -385,7 +742,10 @@ export class MCPAdapter {
         return { valid: errors.length === 0, errors };
     }
     /**
-     * Handle resources/list request
+     * Handle resources/list request.
+     * @param request - The resources/list request
+     * @returns Response with list of registered resources
+     * @internal
      */
     handleResourcesList(request) {
         if (!this.hasCapability('resources')) {
@@ -404,7 +764,10 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle resources/read request
+     * Handle resources/read request.
+     * @param request - The resources/read request with URI
+     * @returns Response with resource content
+     * @internal
      */
     async handleResourcesRead(request) {
         if (!this.hasCapability('resources')) {
@@ -436,7 +799,10 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle prompts/list request
+     * Handle prompts/list request.
+     * @param request - The prompts/list request
+     * @returns Response with list of registered prompts
+     * @internal
      */
     handlePromptsList(request) {
         if (!this.hasCapability('prompts')) {
@@ -454,7 +820,10 @@ export class MCPAdapter {
         };
     }
     /**
-     * Handle prompts/get request
+     * Handle prompts/get request.
+     * @param request - The prompts/get request with name and arguments
+     * @returns Response with generated prompt messages
+     * @internal
      */
     async handlePromptsGet(request) {
         if (!this.hasCapability('prompts')) {
@@ -479,7 +848,13 @@ export class MCPAdapter {
         };
     }
     /**
-     * Create an error response
+     * Create an error response.
+     * @param id - Request ID
+     * @param code - Error code
+     * @param message - Error message
+     * @param data - Optional additional error data
+     * @returns Formatted error response
+     * @internal
      */
     errorResponse(id, code, message, data) {
         const response = {
@@ -494,7 +869,25 @@ export class MCPAdapter {
     }
 }
 /**
- * Factory function to create an MCP adapter
+ * Factory function to create an MCP adapter.
+ *
+ * @description
+ * Convenience function for creating a new MCP adapter instance.
+ * Equivalent to using `new MCPAdapter(config)`.
+ *
+ * @param config - Optional server configuration
+ * @returns A new MCPAdapter instance
+ *
+ * @example
+ * import { createMCPAdapter } from './adapter'
+ *
+ * const adapter = createMCPAdapter({
+ *   name: 'my-git-server',
+ *   capabilities: ['tools', 'resources']
+ * })
+ *
+ * adapter.registerGitTools()
+ * await adapter.start()
  */
 export function createMCPAdapter(config) {
     return new MCPAdapter(config);

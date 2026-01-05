@@ -1,8 +1,49 @@
 /**
- * Git Tag Operations
+ * @fileoverview Git Tag Operations
  *
  * Implements lightweight and annotated tag operations with
  * support for GPG signatures, pattern filtering, and version sorting.
+ *
+ * ## Features
+ *
+ * - Create lightweight tags (ref pointing directly to commit)
+ * - Create annotated tags (tag object with message)
+ * - GPG signing and verification
+ * - Tag listing with pattern filtering
+ * - Version-based sorting
+ * - Nested tag resolution
+ *
+ * ## Tag Types
+ *
+ * Git supports two types of tags:
+ *
+ * - **Lightweight tags**: Simply a ref pointing to a commit
+ * - **Annotated tags**: A tag object with tagger info, message, and optional signature
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { createLightweightTag, createAnnotatedTag, listTags } from './ops/tag'
+ *
+ * // Create a lightweight tag
+ * await createLightweightTag(store, {
+ *   name: 'v1.0.0',
+ *   target: commitSha
+ * })
+ *
+ * // Create an annotated tag
+ * await createAnnotatedTag(store, {
+ *   name: 'v2.0.0',
+ *   target: commitSha,
+ *   message: 'Release version 2.0.0',
+ *   tagger: { name: 'John Doe', email: 'john@example.com' }
+ * })
+ *
+ * // List tags matching pattern
+ * const tags = await listTags(store, { pattern: 'v*', sortByVersion: true })
+ * ```
+ *
+ * @module ops/tag
  */
 
 import { Author, ObjectType, TagObject } from '../types/objects'
@@ -13,12 +54,39 @@ import type { RefObjectStore as ObjectStore } from '../types/storage'
 // ============================================================================
 
 /**
- * Options for creating a lightweight tag
+ * Options for creating a lightweight tag.
+ *
+ * A lightweight tag is simply a ref pointing directly to a commit.
+ *
+ * @interface TagOptions
+ *
+ * @example
+ * ```typescript
+ * const options: TagOptions = {
+ *   name: 'v1.0.0',
+ *   target: 'abc123def456...',
+ *   verify: true,
+ *   force: false
+ * }
+ * ```
  */
 export interface TagOptions {
+  /** Tag name (without refs/tags/ prefix) */
   name: string
+
+  /** Target commit SHA */
   target: string
+
+  /**
+   * If true, verify that the target exists before creating.
+   * @default false
+   */
   verify?: boolean
+
+  /**
+   * If true, overwrite existing tag with same name.
+   * @default false
+   */
   force?: boolean
 }
 

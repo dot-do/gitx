@@ -1,28 +1,144 @@
 /**
- * Git pkt-line protocol implementation
+ * @fileoverview Git pkt-line Protocol Implementation
  *
- * The pkt-line format is used in Git's wire protocol for communication.
- * Each packet starts with a 4-byte hex length prefix (including the 4 bytes itself).
+ * This module implements the pkt-line format used in Git's wire protocol for
+ * client-server communication. The pkt-line format provides a simple framing
+ * mechanism for variable-length data.
  *
- * Special packets:
- * - flush-pkt (0000): Indicates end of a message section
- * - delim-pkt (0001): Delimiter used in protocol v2
+ * @module wire/pkt-line
  *
- * Reference: https://git-scm.com/docs/protocol-common#_pkt_line_format
+ * ## Format Overview
+ *
+ * Each packet consists of a 4-byte hex length prefix followed by the data:
+ * - Length includes the 4-byte prefix itself
+ * - Maximum packet size is 65520 bytes (65516 data + 4 prefix)
+ *
+ * ## Special Packets
+ *
+ * - **flush-pkt** (`0000`): Indicates end of a message section
+ * - **delim-pkt** (`0001`): Delimiter used in protocol v2
+ *
+ * @see {@link https://git-scm.com/docs/protocol-common#_pkt_line_format} Git pkt-line Format
+ *
+ * @example Basic encoding and decoding
+ * ```typescript
+ * import { encodePktLine, decodePktLine, FLUSH_PKT } from './wire/pkt-line'
+ *
+ * // Encode a message
+ * const encoded = encodePktLine('hello\n')
+ * // Result: '000ahello\n'
+ *
+ * // Decode a message
+ * const decoded = decodePktLine('000ahello\n')
+ * // Result: { data: 'hello\n', bytesRead: 10 }
+ *
+ * // Use flush packet to end a section
+ * const message = encodePktLine('line1\n') + encodePktLine('line2\n') + FLUSH_PKT
+ * ```
+ *
+ * @example Streaming multiple packets
+ * ```typescript
+ * import { pktLineStream } from './wire/pkt-line'
+ *
+ * const stream = '0009line1\n0009line2\n0000'
+ * const { packets, remaining } = pktLineStream(stream)
+ *
+ * for (const packet of packets) {
+ *   if (packet.type === 'flush') {
+ *     console.log('End of section')
+ *   } else {
+ *     console.log('Data:', packet.data)
+ *   }
+ * }
+ * ```
  */
-/** Flush packet - indicates end of section */
+/**
+ * Flush packet - indicates end of a message section.
+ *
+ * @description
+ * The flush packet is a special 4-byte sequence `0000` that signals
+ * the end of a logical section in the protocol. It's used to:
+ * - End ref advertisements
+ * - Separate negotiation phases
+ * - Signal end of packfile transmission
+ *
+ * @example
+ * ```typescript
+ * // Build a complete ref advertisement
+ * let response = encodePktLine('# service=git-upload-pack\n')
+ * response += FLUSH_PKT  // End service announcement
+ * response += encodePktLine('abc123 refs/heads/main\n')
+ * response += FLUSH_PKT  // End ref list
+ * ```
+ */
 export const FLUSH_PKT = '0000';
-/** Delimiter packet - used in protocol v2 */
+/**
+ * Delimiter packet - used in protocol v2.
+ *
+ * @description
+ * The delimiter packet `0001` is used in Git protocol v2 to separate
+ * sections within a single message, such as between command parameters
+ * and command arguments.
+ *
+ * @example
+ * ```typescript
+ * // Protocol v2 command format
+ * let request = encodePktLine('command=fetch')
+ * request += encodePktLine('agent=git/2.30.0')
+ * request += DELIM_PKT  // Separate metadata from arguments
+ * request += encodePktLine('want abc123...')
+ * request += FLUSH_PKT  // End of request
+ * ```
+ */
 export const DELIM_PKT = '0001';
-/** Maximum pkt-line data size (65516 bytes = 65520 - 4 for length prefix) */
+/**
+ * Maximum pkt-line data size in bytes.
+ *
+ * @description
+ * The maximum data that can be included in a single pkt-line is 65516 bytes.
+ * This is calculated as: 65520 (max packet) - 4 (length prefix) = 65516.
+ *
+ * Attempting to encode data larger than this will result in an error
+ * or require splitting into multiple packets.
+ */
 export const MAX_PKT_LINE_DATA = 65516;
 /**
  * Encode data into pkt-line format.
  *
- * The format is: 4 hex chars (total length including prefix) + data
+ * @description
+ * Encodes the given data with a 4-character hex length prefix. The length
+ * includes the 4-byte prefix itself, so a 6-byte payload results in a
+ * 10-byte packet with prefix "000a".
+ *
+ * For binary data containing non-printable characters, returns a Uint8Array.
+ * For text data, returns a string for easier concatenation.
  *
  * @param data - The data to encode (string or Uint8Array)
- * @returns Encoded pkt-line as string (for text) or Uint8Array (for binary with non-printable chars)
+ * @returns Encoded pkt-line as string (for text) or Uint8Array (for binary)
+ *
+ * @throws {Error} If data exceeds MAX_PKT_LINE_DATA bytes
+ *
+ * @example Encoding text data
+ * ```typescript
+ * const line = encodePktLine('hello\n')
+ * // Result: '000ahello\n'
+ * // Length: 4 (prefix) + 6 (data) = 10 = 0x000a
+ * ```
+ *
+ * @example Encoding binary data
+ * ```typescript
+ * const binaryData = new Uint8Array([0x01, 0x02, 0x03])
+ * const encoded = encodePktLine(binaryData)
+ * // Result: Uint8Array with hex prefix + data
+ * ```
+ *
+ * @example Building a multi-line message
+ * ```typescript
+ * let message = ''
+ * message += encodePktLine('want abc123...\n') as string
+ * message += encodePktLine('have def456...\n') as string
+ * message += FLUSH_PKT
+ * ```
  */
 export function encodePktLine(data) {
     if (typeof data === 'string') {
@@ -50,8 +166,42 @@ export function encodePktLine(data) {
 /**
  * Decode a pkt-line format message.
  *
+ * @description
+ * Parses a single pkt-line from the input and returns the decoded data
+ * along with metadata about the packet. Handles special packets (flush,
+ * delim) and incomplete data gracefully.
+ *
+ * The function validates packet size to prevent denial-of-service attacks
+ * from maliciously large length values.
+ *
  * @param input - The input to decode (string or Uint8Array)
  * @returns Object with decoded data, packet type (if special), and bytes consumed
+ *
+ * @throws {Error} If packet size exceeds MAX_PKT_LINE_DATA + 4
+ *
+ * @example Decoding a data packet
+ * ```typescript
+ * const result = decodePktLine('000ahello\n')
+ * // result.data === 'hello\n'
+ * // result.bytesRead === 10
+ * // result.type === undefined (data packet)
+ * ```
+ *
+ * @example Decoding a flush packet
+ * ```typescript
+ * const result = decodePktLine('0000remaining...')
+ * // result.data === null
+ * // result.type === 'flush'
+ * // result.bytesRead === 4
+ * ```
+ *
+ * @example Handling incomplete data
+ * ```typescript
+ * const result = decodePktLine('00')  // Not enough for length prefix
+ * // result.data === null
+ * // result.type === 'incomplete'
+ * // result.bytesRead === 0
+ * ```
  */
 export function decodePktLine(input) {
     // Convert to string for easier parsing
@@ -93,14 +243,45 @@ export function decodePktLine(input) {
 }
 /**
  * Create a flush-pkt (0000).
- * Used to indicate end of a message section.
+ *
+ * @description
+ * Returns the flush packet constant. Primarily useful for explicit intent
+ * in code, as you can also use FLUSH_PKT directly.
+ *
+ * The flush packet signals the end of a logical section in the protocol.
+ *
+ * @returns The flush packet string '0000'
+ *
+ * @example
+ * ```typescript
+ * // These are equivalent:
+ * const flush1 = encodeFlushPkt()
+ * const flush2 = FLUSH_PKT
+ *
+ * // Using in a message
+ * const message = encodePktLine('data\n') + encodeFlushPkt()
+ * ```
  */
 export function encodeFlushPkt() {
     return FLUSH_PKT;
 }
 /**
  * Create a delim-pkt (0001).
- * Used as a delimiter in protocol v2.
+ *
+ * @description
+ * Returns the delimiter packet constant. The delimiter packet is used
+ * in Git protocol v2 to separate sections within a command.
+ *
+ * @returns The delimiter packet string '0001'
+ *
+ * @example
+ * ```typescript
+ * // Protocol v2 ls-refs command
+ * let request = encodePktLine('command=ls-refs')
+ * request += encodeDelimPkt()  // Separator
+ * request += encodePktLine('ref-prefix refs/heads/')
+ * request += encodeFlushPkt()  // End
+ * ```
  */
 export function encodeDelimPkt() {
     return DELIM_PKT;
@@ -108,8 +289,63 @@ export function encodeDelimPkt() {
 /**
  * Parse a stream of pkt-lines.
  *
- * @param input - The input stream to parse
+ * @description
+ * Parses multiple pkt-lines from an input stream, returning all complete
+ * packets and any remaining unparsed data. This is useful for:
+ * - Processing multi-packet messages
+ * - Handling streaming data that arrives in chunks
+ * - Parsing complete protocol exchanges
+ *
+ * The function continues parsing until it encounters incomplete data
+ * or reaches the end of input.
+ *
+ * @param input - The input stream to parse (string or Uint8Array)
  * @returns Object with parsed packets and any remaining unparsed data
+ *
+ * @example Parsing a complete message
+ * ```typescript
+ * const stream = '0009line1\n0009line2\n0000'
+ * const { packets, remaining } = pktLineStream(stream)
+ *
+ * // packets = [
+ * //   { data: 'line1\n', type: 'data' },
+ * //   { data: 'line2\n', type: 'data' },
+ * //   { data: null, type: 'flush' }
+ * // ]
+ * // remaining = ''
+ * ```
+ *
+ * @example Handling chunked data
+ * ```typescript
+ * // First chunk arrives
+ * let buffer = '0009line1\n00'  // Incomplete second packet
+ * let result = pktLineStream(buffer)
+ * // result.packets = [{ data: 'line1\n', type: 'data' }]
+ * // result.remaining = '00'
+ *
+ * // Second chunk arrives
+ * buffer = result.remaining + '09line2\n0000'
+ * result = pktLineStream(buffer)
+ * // result.packets = [
+ * //   { data: 'line2\n', type: 'data' },
+ * //   { data: null, type: 'flush' }
+ * // ]
+ * ```
+ *
+ * @example Processing ref advertisement
+ * ```typescript
+ * const refAdvert = '001e# service=git-upload-pack\n0000' +
+ *                   '003fabc123... refs/heads/main\x00side-band-64k\n0000'
+ *
+ * const { packets } = pktLineStream(refAdvert)
+ * for (const pkt of packets) {
+ *   if (pkt.type === 'flush') {
+ *     console.log('--- Section end ---')
+ *   } else if (pkt.data) {
+ *     console.log('Line:', pkt.data.trim())
+ *   }
+ * }
+ * ```
  */
 export function pktLineStream(input) {
     const packets = [];

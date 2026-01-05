@@ -1,15 +1,63 @@
 /**
- * Git Branch Operations
+ * @fileoverview Git Branch Operations
  *
- * Handles branch creation, deletion, renaming, listing, and tracking.
- * Works with the RefStorage system for underlying ref management.
+ * This module provides comprehensive branch management functionality including
+ * creation, deletion, renaming, listing, and upstream tracking configuration.
+ *
+ * Branches in Git are simply refs under `refs/heads/` that point to commits.
+ * This module provides a higher-level API that handles the ref manipulation
+ * and adds branch-specific features like tracking information.
+ *
+ * **Key Features**:
+ * - Branch CRUD operations (create, read, update, delete)
+ * - Upstream tracking configuration
+ * - Merge status checking
+ * - Branch name validation and normalization
+ *
+ * @module refs/branch
+ *
+ * @example
+ * ```typescript
+ * import { BranchManager, createBranch, listBranches } from './refs/branch'
+ *
+ * // Using the manager
+ * const manager = new BranchManager(refStorage)
+ * const branch = await manager.createBranch('feature/new-thing', { startPoint: 'main' })
+ *
+ * // Or using convenience functions
+ * const branches = await listBranches(refStorage)
+ * ```
  */
 /**
- * Error thrown when a branch operation fails
+ * Error thrown when a branch operation fails.
+ *
+ * @description
+ * Provides structured error information with error code
+ * for programmatic error handling.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await manager.deleteBranch('main')
+ * } catch (e) {
+ *   if (e instanceof BranchError) {
+ *     if (e.code === 'CANNOT_DELETE_CURRENT') {
+ *       console.log('Cannot delete the branch you are on')
+ *     }
+ *   }
+ * }
+ * ```
  */
 export class BranchError extends Error {
     code;
     branchName;
+    /**
+     * Create a new BranchError.
+     *
+     * @param message - Human-readable error description
+     * @param code - Error code for programmatic handling
+     * @param branchName - The branch that caused the error
+     */
     constructor(message, code, branchName) {
         super(message);
         this.code = code;
@@ -17,151 +65,487 @@ export class BranchError extends Error {
         this.name = 'BranchError';
     }
 }
+// ============================================================================
+// BranchManager Class
+// ============================================================================
 /**
- * Branch manager for performing branch operations
+ * Branch manager for performing Git branch operations.
+ *
+ * @description
+ * Provides a comprehensive API for branch management. Uses RefStorage
+ * internally for ref manipulation.
+ *
+ * Note: Many methods are currently stubs (TODO) and will throw 'Not implemented'.
+ * These will be implemented in the GREEN phase of TDD development.
+ *
+ * @example
+ * ```typescript
+ * const manager = new BranchManager(refStorage)
+ *
+ * // Create a feature branch
+ * const branch = await manager.createBranch('feature/auth', {
+ *   startPoint: 'main',
+ *   track: true
+ * })
+ *
+ * // List all branches
+ * const branches = await manager.listBranches({ includeRemotes: true })
+ *
+ * // Delete a merged branch
+ * await manager.deleteBranch('feature/auth')
+ * ```
  */
 export class BranchManager {
+    /**
+     * Create a new BranchManager.
+     *
+     * @param storage - RefStorage instance for ref operations
+     */
     constructor(storage) {
         void storage; // Suppress unused variable warning until implementation
         // TODO: Implement in GREEN phase
     }
     /**
-     * Create a new branch
+     * Create a new branch.
+     *
+     * @description
+     * Creates a new branch pointing to the specified start point.
+     * By default, the branch starts at HEAD.
+     *
+     * @param name - Branch name (without refs/heads/ prefix)
+     * @param options - Creation options
+     * @returns The created branch
+     * @throws BranchError with code 'INVALID_NAME' if name is invalid
+     * @throws BranchError with code 'ALREADY_EXISTS' if branch exists and not forcing
+     * @throws BranchError with code 'INVALID_START_POINT' if start point is invalid
+     *
+     * @example
+     * ```typescript
+     * // Create from HEAD
+     * const branch = await manager.createBranch('feature')
+     *
+     * // Create from specific commit
+     * const branch = await manager.createBranch('hotfix', { startPoint: 'abc123' })
+     *
+     * // Force overwrite existing
+     * const branch = await manager.createBranch('main', { force: true, startPoint: 'HEAD' })
+     * ```
      */
     async createBranch(_name, _options) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Delete a branch
+     * Delete a branch.
+     *
+     * @description
+     * Removes a branch ref. By default, refuses to delete unmerged branches.
+     *
+     * @param name - Branch name to delete
+     * @param options - Deletion options
+     * @throws BranchError with code 'NOT_FOUND' if branch doesn't exist
+     * @throws BranchError with code 'CANNOT_DELETE_CURRENT' if branch is checked out
+     * @throws BranchError with code 'NOT_FULLY_MERGED' if branch has unmerged commits
+     *
+     * @example
+     * ```typescript
+     * // Safe delete (only if merged)
+     * await manager.deleteBranch('feature')
+     *
+     * // Force delete
+     * await manager.deleteBranch('experiment', { force: true })
+     * ```
      */
     async deleteBranch(_name, _options) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Rename a branch
+     * Rename a branch.
+     *
+     * @description
+     * Renames a branch, updating the ref name. If the branch is the current
+     * branch, HEAD is updated accordingly.
+     *
+     * @param oldName - Current branch name
+     * @param newName - New branch name
+     * @param options - Rename options
+     * @returns The renamed branch
+     * @throws BranchError with code 'NOT_FOUND' if old branch doesn't exist
+     * @throws BranchError with code 'ALREADY_EXISTS' if new name exists and not forcing
+     * @throws BranchError with code 'INVALID_NAME' if new name is invalid
+     *
+     * @example
+     * ```typescript
+     * const branch = await manager.renameBranch('old-name', 'new-name')
+     * ```
      */
     async renameBranch(_oldName, _newName, _options) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * List all branches
+     * List all branches.
+     *
+     * @description
+     * Returns branches matching the specified criteria.
+     * By default, returns only local branches.
+     *
+     * @param options - Listing options
+     * @returns Array of branches matching criteria
+     *
+     * @example
+     * ```typescript
+     * // List local branches
+     * const local = await manager.listBranches()
+     *
+     * // List all branches including remotes
+     * const all = await manager.listBranches({ includeRemotes: true })
+     *
+     * // List merged branches
+     * const merged = await manager.listBranches({ mergedInto: 'main' })
+     * ```
      */
     async listBranches(_options) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Get the current branch
+     * Get the current branch.
+     *
+     * @description
+     * Returns the branch that HEAD points to, or null if HEAD is detached.
+     *
+     * @returns Current branch or null if detached
+     *
+     * @example
+     * ```typescript
+     * const current = await manager.getCurrentBranch()
+     * if (current) {
+     *   console.log(`On branch: ${current.name}`)
+     * } else {
+     *   console.log('HEAD is detached')
+     * }
+     * ```
      */
     async getCurrentBranch() {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Get a specific branch by name
+     * Get a specific branch by name.
+     *
+     * @description
+     * Retrieves branch information for a specific branch.
+     *
+     * @param name - Branch name
+     * @returns Branch info or null if not found
+     *
+     * @example
+     * ```typescript
+     * const branch = await manager.getBranch('main')
+     * if (branch) {
+     *   console.log(`main is at ${branch.sha}`)
+     * }
+     * ```
      */
     async getBranch(_name) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Check if a branch exists
+     * Check if a branch exists.
+     *
+     * @description
+     * Quick check for branch existence without fetching full info.
+     *
+     * @param name - Branch name
+     * @returns True if branch exists
+     *
+     * @example
+     * ```typescript
+     * if (await manager.branchExists('feature')) {
+     *   console.log('Branch already exists')
+     * }
+     * ```
      */
     async branchExists(_name) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Set upstream branch for tracking
+     * Set upstream branch for tracking.
+     *
+     * @description
+     * Configures or removes upstream tracking for a branch.
+     *
+     * @param branchName - Local branch to configure
+     * @param options - Tracking options
+     * @throws BranchError with code 'NOT_FOUND' if branch doesn't exist
+     *
+     * @example
+     * ```typescript
+     * // Set upstream
+     * await manager.setUpstream('feature', {
+     *   remote: 'origin',
+     *   remoteBranch: 'feature'
+     * })
+     *
+     * // Remove upstream
+     * await manager.setUpstream('feature', { unset: true })
+     * ```
      */
     async setUpstream(_branchName, _options) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Get tracking info for a branch
+     * Get tracking info for a branch.
+     *
+     * @description
+     * Returns upstream tracking information including ahead/behind counts.
+     *
+     * @param branchName - Branch to check
+     * @returns Tracking info or null if not tracking
+     *
+     * @example
+     * ```typescript
+     * const tracking = await manager.getTrackingInfo('main')
+     * if (tracking) {
+     *   console.log(`${tracking.ahead} ahead, ${tracking.behind} behind ${tracking.remoteBranch}`)
+     * }
+     * ```
      */
     async getTrackingInfo(_branchName) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Check if a branch is fully merged into another branch
+     * Check if a branch is fully merged into another branch.
+     *
+     * @description
+     * Determines if all commits on the branch are reachable from the target.
+     *
+     * @param branchName - Branch to check
+     * @param into - Target branch (defaults to current branch)
+     * @returns True if fully merged
+     *
+     * @example
+     * ```typescript
+     * if (await manager.isMerged('feature', 'main')) {
+     *   console.log('Safe to delete feature branch')
+     * }
+     * ```
      */
     async isMerged(_branchName, _into) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
     /**
-     * Force delete an unmerged branch
+     * Force delete an unmerged branch.
+     *
+     * @description
+     * Deletes a branch even if it has unmerged commits. Use with caution
+     * as this can result in lost commits.
+     *
+     * @param name - Branch name to delete
+     * @throws BranchError with code 'NOT_FOUND' if branch doesn't exist
+     * @throws BranchError with code 'CANNOT_DELETE_CURRENT' if branch is checked out
+     *
+     * @example
+     * ```typescript
+     * await manager.forceDeleteBranch('abandoned-feature')
+     * ```
      */
     async forceDeleteBranch(_name) {
         // TODO: Implement in GREEN phase
         throw new Error('Not implemented');
     }
 }
+// ============================================================================
+// Validation Functions
+// ============================================================================
 /**
- * Validate a branch name according to Git rules
- * See: https://git-scm.com/docs/git-check-ref-format
+ * Validate a branch name according to Git rules.
+ *
+ * @description
+ * Checks if a branch name is valid and returns detailed validation results
+ * including the normalized form of the name.
+ *
+ * Note: This is a stub implementation. Full validation will be added in GREEN phase.
+ *
+ * @param name - Branch name to validate
+ * @returns Validation result with valid flag, error message, and normalized name
+ *
+ * @see https://git-scm.com/docs/git-check-ref-format
+ *
+ * @example
+ * ```typescript
+ * const result = validateBranchName('feature/auth')
+ * if (result.valid) {
+ *   console.log(`Valid: ${result.normalized}`)
+ * } else {
+ *   console.log(`Invalid: ${result.error}`)
+ * }
+ * ```
  */
 export function validateBranchName(_name) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Check if a string is a valid branch name
+ * Check if a string is a valid branch name.
+ *
+ * @description
+ * Simple boolean check for branch name validity.
+ *
+ * @param name - Branch name to check
+ * @returns True if valid
+ *
+ * @example
+ * ```typescript
+ * if (isValidBranchName('feature/new')) {
+ *   // Create the branch
+ * }
+ * ```
  */
 export function isValidBranchName(_name) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Normalize a branch name (remove refs/heads/ prefix, etc.)
+ * Normalize a branch name.
+ *
+ * @description
+ * Removes refs/heads/ prefix if present, cleans up the name.
+ *
+ * @param name - Branch name or ref
+ * @returns Normalized short branch name
+ *
+ * @example
+ * ```typescript
+ * normalizeBranchName('refs/heads/main')  // 'main'
+ * normalizeBranchName('main')              // 'main'
+ * ```
  */
 export function normalizeBranchName(_name) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Get the full ref name for a branch
+ * Get the full ref name for a branch.
+ *
+ * @description
+ * Adds refs/heads/ prefix if not present.
+ *
+ * @param name - Short branch name
+ * @returns Full ref name
+ *
+ * @example
+ * ```typescript
+ * getBranchRefName('main')            // 'refs/heads/main'
+ * getBranchRefName('refs/heads/main') // 'refs/heads/main'
+ * ```
  */
 export function getBranchRefName(_name) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
+// ============================================================================
+// Convenience Functions
+// ============================================================================
 /**
- * Create a new branch (convenience function)
+ * Create a new branch.
+ *
+ * @description
+ * Convenience function that creates a BranchManager and calls createBranch.
+ *
+ * @param storage - RefStorage instance
+ * @param name - Branch name
+ * @param options - Creation options
+ * @returns Created branch
+ *
+ * @example
+ * ```typescript
+ * const branch = await createBranch(storage, 'feature', { startPoint: 'main' })
+ * ```
  */
 export async function createBranch(_storage, _name, _options) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Delete a branch (convenience function)
+ * Delete a branch.
+ *
+ * @description
+ * Convenience function that creates a BranchManager and calls deleteBranch.
+ *
+ * @param storage - RefStorage instance
+ * @param name - Branch name to delete
+ * @param options - Deletion options
+ *
+ * @example
+ * ```typescript
+ * await deleteBranch(storage, 'feature', { force: true })
+ * ```
  */
 export async function deleteBranch(_storage, _name, _options) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Rename a branch (convenience function)
+ * Rename a branch.
+ *
+ * @description
+ * Convenience function that creates a BranchManager and calls renameBranch.
+ *
+ * @param storage - RefStorage instance
+ * @param oldName - Current branch name
+ * @param newName - New branch name
+ * @param options - Rename options
+ * @returns Renamed branch
+ *
+ * @example
+ * ```typescript
+ * const branch = await renameBranch(storage, 'old', 'new')
+ * ```
  */
 export async function renameBranch(_storage, _oldName, _newName, _options) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * List all branches (convenience function)
+ * List all branches.
+ *
+ * @description
+ * Convenience function that creates a BranchManager and calls listBranches.
+ *
+ * @param storage - RefStorage instance
+ * @param options - Listing options
+ * @returns Array of branches
+ *
+ * @example
+ * ```typescript
+ * const branches = await listBranches(storage, { includeRemotes: true })
+ * ```
  */
 export async function listBranches(_storage, _options) {
     // TODO: Implement in GREEN phase
     throw new Error('Not implemented');
 }
 /**
- * Get the current branch (convenience function)
+ * Get the current branch.
+ *
+ * @description
+ * Convenience function that creates a BranchManager and calls getCurrentBranch.
+ *
+ * @param storage - RefStorage instance
+ * @returns Current branch or null if detached
+ *
+ * @example
+ * ```typescript
+ * const current = await getCurrentBranch(storage)
+ * ```
  */
 export async function getCurrentBranch(_storage) {
     // TODO: Implement in GREEN phase

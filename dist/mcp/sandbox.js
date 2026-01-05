@@ -1,46 +1,142 @@
 /**
- * MCP Sandbox Execution Environment
+ * @fileoverview MCP Sandbox Execution Environment
  *
- * Provides isolated execution environment for MCP tools with:
- * - Resource limits (memory, CPU, time)
- * - Capability restrictions (file, network, process)
- * - Safe git operation execution
- * - Audit logging
+ * Provides an isolated execution environment for MCP tools with:
+ * - Resource limits (memory, CPU, time, file descriptors, disk)
+ * - Capability restrictions (file read/write, network, process spawning)
+ * - Safe git operation execution with permission checks
+ * - Audit logging for security violations
  *
- * SECURITY: Uses Node.js vm module for proper isolation instead of
- * string analysis, which can be easily bypassed.
+ * SECURITY: Uses Node.js vm module concepts for proper isolation. The sandbox
+ * implements multi-layer security through:
+ * 1. Pre-execution static analysis to detect dangerous patterns
+ * 2. Runtime permission checks via Proxy-based module interception
+ * 3. Resource limit enforcement during execution
+ * 4. Permission violation recording for audit trails
+ *
+ * @module mcp/sandbox
+ *
+ * @example
+ * // Create a sandbox with limited permissions
+ * import { createSandbox, SandboxState } from './sandbox'
+ *
+ * const sandbox = createSandbox({
+ *   timeout: 5000,
+ *   memoryLimit: 128 * 1024 * 1024,
+ *   permissions: {
+ *     fileRead: true,
+ *     fileWrite: false,
+ *     network: false,
+ *     spawn: false
+ *   }
+ * })
+ *
+ * await sandbox.start()
+ * const result = await sandbox.execute(() => {
+ *   return 'Hello from sandbox!'
+ * })
+ *
+ * if (result.error) {
+ *   console.error('Execution failed:', result.error.message)
+ * } else {
+ *   console.log('Result:', result.value)
+ * }
+ *
+ * await sandbox.destroy()
+ *
+ * @example
+ * // Using a sandbox pool for concurrent execution
+ * import { createSandboxPool } from './sandbox'
+ *
+ * const pool = createSandboxPool({ size: 4 })
+ * const sandbox = await pool.acquire()
+ *
+ * try {
+ *   const result = await sandbox.execute(myFunction)
+ * } finally {
+ *   await pool.release(sandbox)
+ * }
+ *
+ * await pool.shutdown()
  */
 import { EventEmitter } from 'events';
 /**
- * Sandbox error codes
+ * Sandbox error codes.
+ *
+ * @description
+ * Enumeration of all possible error codes that can be returned by sandbox
+ * operations. These codes indicate the specific reason for execution failure.
+ *
+ * @enum {string}
  */
 export var SandboxErrorCode;
 (function (SandboxErrorCode) {
+    /** Execution exceeded the configured timeout */
     SandboxErrorCode["TIMEOUT"] = "TIMEOUT";
+    /** Memory usage exceeded the configured limit */
     SandboxErrorCode["MEMORY_LIMIT_EXCEEDED"] = "MEMORY_LIMIT_EXCEEDED";
+    /** CPU time exceeded the configured limit */
     SandboxErrorCode["CPU_LIMIT_EXCEEDED"] = "CPU_LIMIT_EXCEEDED";
+    /** Operation was denied due to insufficient permissions */
     SandboxErrorCode["PERMISSION_DENIED"] = "PERMISSION_DENIED";
+    /** General execution error occurred */
     SandboxErrorCode["EXECUTION_ERROR"] = "EXECUTION_ERROR";
+    /** Too many file descriptors opened */
     SandboxErrorCode["FILE_DESCRIPTOR_LIMIT"] = "FILE_DESCRIPTOR_LIMIT";
+    /** Too many processes spawned */
     SandboxErrorCode["PROCESS_LIMIT_EXCEEDED"] = "PROCESS_LIMIT_EXCEEDED";
+    /** Network bandwidth limit exceeded */
     SandboxErrorCode["BANDWIDTH_LIMIT_EXCEEDED"] = "BANDWIDTH_LIMIT_EXCEEDED";
+    /** Disk write limit exceeded */
     SandboxErrorCode["DISK_LIMIT_EXCEEDED"] = "DISK_LIMIT_EXCEEDED";
+    /** Sandbox crashed unexpectedly */
     SandboxErrorCode["SANDBOX_CRASHED"] = "SANDBOX_CRASHED";
+    /** Sandbox is paused and not accepting executions */
     SandboxErrorCode["SANDBOX_PAUSED"] = "SANDBOX_PAUSED";
 })(SandboxErrorCode || (SandboxErrorCode = {}));
 /**
- * Sandbox error class
+ * Sandbox error class.
+ *
+ * @description
+ * Custom error class for sandbox-specific errors. Includes an error code
+ * for programmatic handling and optional additional data.
+ *
+ * @class SandboxError
+ * @extends Error
+ *
+ * @example
+ * try {
+ *   await sandbox.execute(fn)
+ * } catch (error) {
+ *   if (error instanceof SandboxError) {
+ *     console.log('Error code:', error.code)
+ *     console.log('Error data:', error.data)
+ *   }
+ * }
  */
 export class SandboxError extends Error {
+    /** The error code identifying the type of error */
     code;
+    /** Optional additional error data */
     data;
+    /** Stack trace (inherited from Error) */
     stack;
+    /**
+     * Create a new sandbox error.
+     * @param code - The error code
+     * @param message - Human-readable error message
+     * @param data - Optional additional error data
+     */
     constructor(code, message, data) {
         super(message);
         this.name = 'SandboxError';
         this.code = code;
         this.data = data;
     }
+    /**
+     * Convert error to JSON representation.
+     * @returns JSON-serializable error object
+     */
     toJSON() {
         const result = {
             code: this.code,
@@ -53,23 +149,37 @@ export class SandboxError extends Error {
     }
 }
 /**
- * Sandbox state enum
+ * Sandbox state enum.
+ *
+ * @description
+ * Represents the lifecycle state of a sandbox instance.
+ *
+ * @enum {string}
  */
 export var SandboxState;
 (function (SandboxState) {
+    /** Sandbox is idle and ready for use */
     SandboxState["IDLE"] = "IDLE";
+    /** Sandbox is currently executing code */
     SandboxState["RUNNING"] = "RUNNING";
+    /** Sandbox is paused (can be resumed) */
     SandboxState["PAUSED"] = "PAUSED";
+    /** Sandbox has been destroyed and cannot be reused */
     SandboxState["DESTROYED"] = "DESTROYED";
 })(SandboxState || (SandboxState = {}));
 /**
- * Generate unique ID
+ * Generate unique ID.
+ * @returns Unique sandbox identifier
+ * @internal
  */
 function generateId() {
     return `sandbox-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 /**
- * Get permission set from preset
+ * Get permission set from preset.
+ * @param preset - The permission preset to convert
+ * @returns Corresponding PermissionSet
+ * @internal
  */
 function getPermissionsFromPreset(preset) {
     switch (preset) {
@@ -105,7 +215,8 @@ function getPermissionsFromPreset(preset) {
     }
 }
 /**
- * Dangerous modules that require permission checks
+ * Dangerous modules that require permission checks.
+ * @internal
  */
 const DANGEROUS_MODULES = new Set([
     'fs',
@@ -121,7 +232,8 @@ const DANGEROUS_MODULES = new Set([
     'worker_threads',
 ]);
 /**
- * File system read methods
+ * File system read methods.
+ * @internal
  */
 const FS_READ_METHODS = new Set([
     'readFile',
@@ -143,7 +255,8 @@ const FS_READ_METHODS = new Set([
     'createReadStream',
 ]);
 /**
- * File system write methods
+ * File system write methods.
+ * @internal
  */
 const FS_WRITE_METHODS = new Set([
     'writeFile',
@@ -169,10 +282,43 @@ const FS_WRITE_METHODS = new Set([
     'chownSync',
 ]);
 /**
- * MCP Sandbox class for isolated execution
+ * MCP Sandbox class for isolated execution.
  *
- * SECURITY: This implementation uses Node.js vm module with proper context
- * isolation and runtime permission checks instead of string analysis.
+ * @description
+ * Provides an isolated execution environment with resource limits and
+ * permission controls. Uses multi-layer security including static analysis,
+ * runtime permission checks, and resource limit enforcement.
+ *
+ * SECURITY: This implementation uses Node.js vm module concepts with proper
+ * context isolation and runtime permission checks instead of string analysis.
+ *
+ * Lifecycle:
+ * 1. Create sandbox with createSandbox() or new MCPSandbox()
+ * 2. Start the sandbox with start()
+ * 3. Execute code with execute()
+ * 4. Optionally pause()/resume()
+ * 5. Cleanup with cleanup() or destroy()
+ *
+ * @class MCPSandbox
+ * @extends EventEmitter
+ *
+ * @fires stateChange - When sandbox state changes
+ *
+ * @example
+ * const sandbox = new MCPSandbox({
+ *   timeout: 5000,
+ *   permissions: { fileRead: true, fileWrite: false }
+ * })
+ *
+ * await sandbox.start()
+ *
+ * const result = await sandbox.execute(() => {
+ *   return 'Hello from sandbox!'
+ * })
+ *
+ * console.log(result.value) // 'Hello from sandbox!'
+ *
+ * await sandbox.destroy()
  */
 export class MCPSandbox extends EventEmitter {
     id;
@@ -189,6 +335,10 @@ export class MCPSandbox extends EventEmitter {
     executionQueue = [];
     activeExecutions = 0;
     globalContext = new Map();
+    /**
+     * Create a new sandbox instance.
+     * @param config - Configuration options
+     */
     constructor(config = {}) {
         super();
         this.id = generateId();
@@ -214,21 +364,45 @@ export class MCPSandbox extends EventEmitter {
             this.permissions = config.permissions ?? {};
         }
     }
+    /**
+     * Get the sandbox ID.
+     * @returns Unique sandbox identifier
+     */
     getId() {
         return this.id;
     }
+    /**
+     * Get the sandbox configuration.
+     * @returns Copy of the configuration
+     */
     getConfig() {
         return { ...this.config };
     }
+    /**
+     * Get the current sandbox state.
+     * @returns Current SandboxState
+     */
     getState() {
         return this.state;
     }
+    /**
+     * Get the current permission set.
+     * @returns Copy of permissions
+     */
     getPermissions() {
         return { ...this.permissions };
     }
+    /**
+     * Get resource usage statistics.
+     * @returns Copy of resource stats
+     */
     getResourceStats() {
         return { ...this.resourceStats };
     }
+    /**
+     * Get configured resource limits.
+     * @returns Copy of resource limits
+     */
     getResourceLimits() {
         return {
             memoryLimit: this.config.memoryLimit,
@@ -238,9 +412,22 @@ export class MCPSandbox extends EventEmitter {
             diskWriteLimit: this.config.diskWriteLimit,
         };
     }
+    /**
+     * Get list of permission violations.
+     * @returns Array of recorded violations
+     */
     getPermissionViolations() {
         return [...this.permissionViolations];
     }
+    /**
+     * Start the sandbox.
+     *
+     * @description
+     * Transitions the sandbox to RUNNING state. Must be called before execute().
+     *
+     * @returns Promise that resolves when started
+     * @throws {Error} If sandbox is destroyed or already running
+     */
     async start() {
         if (this.state === SandboxState.DESTROYED) {
             throw new Error('Cannot start a destroyed sandbox');
@@ -251,6 +438,15 @@ export class MCPSandbox extends EventEmitter {
         this.state = SandboxState.RUNNING;
         this.emit('stateChange', this.state);
     }
+    /**
+     * Stop the sandbox.
+     *
+     * @description
+     * Transitions from RUNNING or PAUSED to IDLE state. Clears global context.
+     *
+     * @returns Promise that resolves when stopped
+     * @throws {Error} If sandbox is not running
+     */
     async stop() {
         if (this.state !== SandboxState.RUNNING && this.state !== SandboxState.PAUSED) {
             throw new Error('Sandbox is not running');
@@ -259,6 +455,16 @@ export class MCPSandbox extends EventEmitter {
         this.globalContext.clear();
         this.emit('stateChange', this.state);
     }
+    /**
+     * Pause the sandbox.
+     *
+     * @description
+     * Temporarily pauses execution. New execute() calls will be queued if
+     * queueOnPause is enabled, otherwise they return immediately with an error.
+     *
+     * @returns Promise that resolves when paused
+     * @throws {Error} If sandbox is not running
+     */
     async pause() {
         if (this.state !== SandboxState.RUNNING) {
             throw new Error('Sandbox is not running');
@@ -266,6 +472,15 @@ export class MCPSandbox extends EventEmitter {
         this.state = SandboxState.PAUSED;
         this.emit('stateChange', this.state);
     }
+    /**
+     * Resume the sandbox.
+     *
+     * @description
+     * Resumes execution after pause. Processes any queued executions.
+     *
+     * @returns Promise that resolves when resumed
+     * @throws {Error} If sandbox is not paused
+     */
     async resume() {
         if (this.state !== SandboxState.PAUSED) {
             throw new Error('Sandbox is not paused');
@@ -280,6 +495,15 @@ export class MCPSandbox extends EventEmitter {
             }
         }
     }
+    /**
+     * Cleanup sandbox resources.
+     *
+     * @description
+     * Resets resource statistics and clears global context. Sandbox remains
+     * usable after cleanup.
+     *
+     * @returns Promise that resolves when cleanup is complete
+     */
     async cleanup() {
         this.resourceStats = {
             memoryUsed: 0,
@@ -289,6 +513,14 @@ export class MCPSandbox extends EventEmitter {
         };
         this.globalContext.clear();
     }
+    /**
+     * Destroy the sandbox.
+     *
+     * @description
+     * Permanently destroys the sandbox. It cannot be reused after destruction.
+     *
+     * @returns Promise that resolves when destroyed
+     */
     async destroy() {
         if (this.state === SandboxState.RUNNING) {
             await this.stop();
@@ -296,6 +528,30 @@ export class MCPSandbox extends EventEmitter {
         this.state = SandboxState.DESTROYED;
         this.emit('stateChange', this.state);
     }
+    /**
+     * Execute a function in the sandbox.
+     *
+     * @description
+     * Executes the provided function within the sandbox's isolated environment.
+     * The function is subject to configured timeout, resource limits, and
+     * permission restrictions.
+     *
+     * @template T - Return type of the function
+     * @param fn - Function to execute (sync or async)
+     * @param options - Execution options (timeout, context)
+     * @returns Promise resolving to SandboxResult with value or error
+     *
+     * @example
+     * const result = await sandbox.execute<number>(() => {
+     *   return 42
+     * })
+     *
+     * if (result.error) {
+     *   console.error('Failed:', result.error.code)
+     * } else {
+     *   console.log('Result:', result.value) // 42
+     * }
+     */
     async execute(fn, options = {}) {
         const startTime = Date.now();
         const timeout = options.timeout ?? this.config.timeout ?? 30000;
@@ -887,20 +1143,72 @@ export class MCPSandbox extends EventEmitter {
     }
 }
 /**
- * Create a new sandbox instance
+ * Create a new sandbox instance.
+ *
+ * @description
+ * Factory function for creating a new MCPSandbox instance.
+ * Equivalent to using `new MCPSandbox(config)`.
+ *
+ * @param config - Sandbox configuration options
+ * @returns A new MCPSandbox instance
+ *
+ * @example
+ * import { createSandbox } from './sandbox'
+ *
+ * const sandbox = createSandbox({
+ *   timeout: 5000,
+ *   permissions: { fileRead: true, network: false }
+ * })
+ *
+ * await sandbox.start()
+ * const result = await sandbox.execute(() => 'Hello!')
  */
 export function createSandbox(config = {}) {
     return new MCPSandbox(config);
 }
 /**
- * Sandbox pool for managing multiple sandbox instances
+ * Sandbox pool for managing multiple sandbox instances.
+ *
+ * @description
+ * Manages a fixed-size pool of sandbox instances for concurrent execution.
+ * Provides acquire/release semantics with automatic waiting and timeout.
+ *
+ * @class SandboxPool
+ *
+ * @example
+ * const pool = new SandboxPool({
+ *   size: 4,
+ *   acquireTimeout: 10000,
+ *   sandboxConfig: { timeout: 5000 }
+ * })
+ *
+ * // Acquire a sandbox
+ * const sandbox = await pool.acquire()
+ *
+ * try {
+ *   const result = await sandbox.execute(() => 'Hello')
+ * } finally {
+ *   await pool.release(sandbox)
+ * }
+ *
+ * // Shutdown when done
+ * await pool.shutdown()
  */
 export class SandboxPool {
+    /** @internal */
     sandboxes = [];
+    /** @internal */
     availableSandboxes = [];
+    /** @internal */
     acquireTimeout;
+    /** @internal */
     waiters = [];
+    /** @internal */
     isShutdown = false;
+    /**
+     * Create a new sandbox pool.
+     * @param config - Pool configuration
+     */
     constructor(config) {
         this.acquireTimeout = config.acquireTimeout ?? 30000;
         for (let i = 0; i < config.size; i++) {
@@ -909,12 +1217,30 @@ export class SandboxPool {
             this.availableSandboxes.push(sandbox);
         }
     }
+    /**
+     * Get total number of sandboxes in the pool.
+     * @returns Pool size
+     */
     size() {
         return this.sandboxes.length;
     }
+    /**
+     * Get number of available (not in use) sandboxes.
+     * @returns Number of available sandboxes
+     */
     available() {
         return this.availableSandboxes.length;
     }
+    /**
+     * Acquire a sandbox from the pool.
+     *
+     * @description
+     * Returns an available sandbox or waits until one becomes available.
+     * The sandbox is started if in IDLE state.
+     *
+     * @returns Promise resolving to an acquired sandbox
+     * @throws {Error} If pool is shutdown or acquire times out
+     */
     async acquire() {
         if (this.isShutdown) {
             throw new Error('Pool is shutdown');
@@ -944,6 +1270,17 @@ export class SandboxPool {
             });
         });
     }
+    /**
+     * Release a sandbox back to the pool.
+     *
+     * @description
+     * Returns a sandbox to the pool after use. The sandbox is cleaned up
+     * before being made available again. If waiters are present, the sandbox
+     * is given to the next waiter instead of being added to the available pool.
+     *
+     * @param sandbox - The sandbox to release
+     * @returns Promise that resolves when the sandbox is released
+     */
     async release(sandbox) {
         if (this.isShutdown) {
             return;
@@ -957,6 +1294,15 @@ export class SandboxPool {
             this.availableSandboxes.push(sandbox);
         }
     }
+    /**
+     * Shutdown the pool.
+     *
+     * @description
+     * Rejects all pending waiters, destroys all sandboxes, and prevents
+     * further acquire operations. This is a permanent operation.
+     *
+     * @returns Promise that resolves when shutdown is complete
+     */
     async shutdown() {
         this.isShutdown = true;
         // Reject all waiters
@@ -975,7 +1321,28 @@ export class SandboxPool {
     }
 }
 /**
- * Create a sandbox pool
+ * Create a sandbox pool.
+ *
+ * @description
+ * Factory function for creating a new SandboxPool instance.
+ * Equivalent to using `new SandboxPool(config)`.
+ *
+ * @param config - Pool configuration
+ * @returns A new SandboxPool instance
+ *
+ * @example
+ * import { createSandboxPool } from './sandbox'
+ *
+ * const pool = createSandboxPool({
+ *   size: 4,
+ *   sandboxConfig: { timeout: 10000 }
+ * })
+ *
+ * const sandbox = await pool.acquire()
+ * // ... use sandbox ...
+ * await pool.release(sandbox)
+ *
+ * await pool.shutdown()
  */
 export function createSandboxPool(config) {
     return new SandboxPool(config);

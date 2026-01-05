@@ -1,8 +1,46 @@
 /**
- * MCP (Model Context Protocol) Git Tool Definitions
+ * @fileoverview MCP (Model Context Protocol) Git Tool Definitions
  *
  * This module provides tool definitions for git operations that can be
- * exposed via the Model Context Protocol for AI assistants.
+ * exposed via the Model Context Protocol for AI assistants. It defines
+ * a comprehensive set of git tools including status, log, diff, commit,
+ * branch, checkout, push, pull, clone, init, add, reset, merge, rebase,
+ * stash, tag, remote, and fetch operations.
+ *
+ * The module uses a registry pattern for tool management, allowing dynamic
+ * registration, validation, and invocation of tools. Each tool follows the
+ * MCP specification with JSON Schema input validation and standardized
+ * result formatting.
+ *
+ * @module mcp/tools
+ *
+ * @example
+ * // Setting up repository context and invoking a tool
+ * import { setRepositoryContext, invokeTool } from './tools'
+ *
+ * // Set up the repository context first
+ * setRepositoryContext({
+ *   objectStore: myObjectStore,
+ *   refStore: myRefStore,
+ *   index: myIndex
+ * })
+ *
+ * // Invoke a tool
+ * const result = await invokeTool('git_status', { short: true })
+ * console.log(result.content[0].text)
+ *
+ * @example
+ * // Registering a custom tool
+ * import { registerTool } from './tools'
+ *
+ * registerTool({
+ *   name: 'my_custom_tool',
+ *   description: 'A custom tool',
+ *   inputSchema: { type: 'object', properties: {} },
+ *   handler: async (params) => ({
+ *     content: [{ type: 'text', text: 'Hello!' }]
+ *   })
+ * })
  */
 import { walkCommits } from '../ops/commit-traversal';
 import { diffTrees, DiffStatus } from '../ops/tree-diff';
@@ -11,22 +49,66 @@ import { createCommit } from '../ops/commit';
 /** Global repository context - set by the application before invoking tools */
 let globalRepositoryContext = null;
 /**
- * Set the global repository context for MCP tools
+ * Set the global repository context for MCP tools.
+ *
+ * @description
+ * This function sets the global repository context that will be used by all
+ * MCP git tools. The context provides access to the object store, ref store,
+ * index, and working directory. This must be called before invoking any tools
+ * that require repository access.
+ *
+ * @param ctx - The repository context to set, or null to clear it
+ * @returns void
+ *
+ * @example
+ * // Set up context before using tools
+ * setRepositoryContext({
+ *   objectStore: myObjectStore,
+ *   refStore: myRefStore
+ * })
+ *
+ * // Clear context when done
+ * setRepositoryContext(null)
  */
 export function setRepositoryContext(ctx) {
     globalRepositoryContext = ctx;
 }
 /**
- * Get the global repository context
+ * Get the global repository context.
+ *
+ * @description
+ * Returns the currently set repository context, or null if no context has
+ * been set. Tools use this internally to access repository data.
+ *
+ * @returns The current repository context, or null if not set
+ *
+ * @example
+ * const ctx = getRepositoryContext()
+ * if (ctx) {
+ *   const commit = await ctx.objectStore.getCommit(sha)
+ * }
  */
 export function getRepositoryContext() {
     return globalRepositoryContext;
 }
 /**
- * Validate a path parameter to prevent command injection
+ * Validate a path parameter to prevent command injection.
+ *
+ * @description
+ * Security function that validates file paths to prevent path traversal
+ * attacks and command injection. Rejects paths containing '..' (parent
+ * directory traversal), absolute paths starting with '/', and shell
+ * metacharacters.
+ *
  * @param path - The path to validate
  * @returns The validated path (defaults to '.' if undefined)
- * @throws Error if path contains forbidden characters
+ * @throws {Error} If path contains forbidden characters or traversal patterns
+ *
+ * @example
+ * validatePath('src/file.ts')    // Returns 'src/file.ts'
+ * validatePath(undefined)        // Returns '.'
+ * validatePath('../etc/passwd')  // Throws Error
+ * validatePath('/etc/passwd')    // Throws Error
  */
 function validatePath(path) {
     if (!path)
@@ -38,10 +120,21 @@ function validatePath(path) {
     return path;
 }
 /**
- * Validate a branch or ref name according to git rules
+ * Validate a branch or ref name according to git rules.
+ *
+ * @description
+ * Validates that a branch name conforms to git's naming rules. Branch names
+ * can contain alphanumeric characters, dots, underscores, forward slashes,
+ * and hyphens. The '..' sequence is forbidden as it's used for range notation.
+ *
  * @param name - The branch/ref name to validate
  * @returns The validated name
- * @throws Error if name contains invalid characters
+ * @throws {Error} If name contains invalid characters
+ *
+ * @example
+ * validateBranchName('feature/my-branch')  // Returns 'feature/my-branch'
+ * validateBranchName('v1.0.0')             // Returns 'v1.0.0'
+ * validateBranchName('main..develop')      // Throws Error
  */
 function validateBranchName(name) {
     // Git branch name rules
@@ -51,10 +144,22 @@ function validateBranchName(name) {
     return name;
 }
 /**
- * Validate a commit reference (hash, branch, tag, HEAD, etc.)
+ * Validate a commit reference (hash, branch, tag, HEAD, etc.).
+ *
+ * @description
+ * Validates commit references which can be SHA hashes, branch names, tag names,
+ * HEAD, or relative references like HEAD~3 or HEAD^2. The '..' sequence is
+ * forbidden to prevent range injection.
+ *
  * @param ref - The commit reference to validate
  * @returns The validated reference
- * @throws Error if reference contains invalid characters
+ * @throws {Error} If reference contains invalid characters
+ *
+ * @example
+ * validateCommitRef('abc123def456')  // Returns the SHA
+ * validateCommitRef('HEAD~3')        // Returns 'HEAD~3'
+ * validateCommitRef('main^2')        // Returns 'main^2'
+ * validateCommitRef('a..b')          // Throws Error
  */
 function validateCommitRef(ref) {
     // Allow hex hashes, branch names, tags, HEAD, HEAD~n, HEAD^n, etc.
@@ -64,10 +169,21 @@ function validateCommitRef(ref) {
     return ref;
 }
 /**
- * Validate a URL for git clone operations
+ * Validate a URL for git clone operations.
+ *
+ * @description
+ * Security function that validates URLs to prevent shell injection.
+ * Rejects URLs containing shell metacharacters that could be used
+ * for command injection.
+ *
  * @param url - The URL to validate
  * @returns The validated URL
- * @throws Error if URL contains shell injection characters
+ * @throws {Error} If URL contains shell injection characters
+ *
+ * @example
+ * validateUrl('https://github.com/user/repo.git')  // Returns the URL
+ * validateUrl('git@github.com:user/repo.git')     // Returns the URL
+ * validateUrl('https://evil.com; rm -rf /')       // Throws Error
  */
 function validateUrl(url) {
     // Reject shell injection characters in URLs
@@ -77,10 +193,21 @@ function validateUrl(url) {
     return url;
 }
 /**
- * Validate a remote name
+ * Validate a remote name.
+ *
+ * @description
+ * Validates that a remote name contains only safe characters.
+ * Remote names can contain alphanumeric characters, dots, underscores,
+ * and hyphens.
+ *
  * @param name - The remote name to validate
  * @returns The validated name
- * @throws Error if name contains invalid characters
+ * @throws {Error} If name contains invalid characters
+ *
+ * @example
+ * validateRemoteName('origin')      // Returns 'origin'
+ * validateRemoteName('my-remote')   // Returns 'my-remote'
+ * validateRemoteName('remote/bad')  // Throws Error
  */
 function validateRemoteName(name) {
     if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -89,7 +216,18 @@ function validateRemoteName(name) {
     return name;
 }
 /**
- * Convert DiffStatus to human-readable text
+ * Convert DiffStatus enum to human-readable text.
+ *
+ * @description
+ * Maps diff status enum values to their git-style display text
+ * for use in status and diff output formatting.
+ *
+ * @param status - The DiffStatus enum value
+ * @returns Human-readable status string
+ *
+ * @example
+ * getStatusText(DiffStatus.ADDED)    // Returns 'new file'
+ * getStatusText(DiffStatus.DELETED)  // Returns 'deleted'
  */
 function getStatusText(status) {
     switch (status) {
@@ -112,7 +250,26 @@ function getStatusText(status) {
     }
 }
 /**
- * Format a commit for log output
+ * Format a commit for log output.
+ *
+ * @description
+ * Formats a commit object into a display string, supporting both
+ * one-line format (abbreviated SHA + subject) and full format
+ * (complete commit information with author and date).
+ *
+ * @param sha - The full 40-character commit SHA
+ * @param commit - The parsed commit object
+ * @param oneline - If true, returns abbreviated single-line format
+ * @returns Formatted commit string
+ *
+ * @example
+ * // One-line format
+ * formatCommit('abc123...', commit, true)
+ * // Returns: 'abc123d Fix bug in parser'
+ *
+ * // Full format
+ * formatCommit('abc123...', commit, false)
+ * // Returns multi-line commit display
  */
 function formatCommit(sha, commit, oneline) {
     if (oneline) {
@@ -134,11 +291,45 @@ function formatCommit(sha, commit, oneline) {
     return lines.join('\n');
 }
 /**
- * Internal registry for custom-registered tools
+ * Internal registry for custom-registered tools.
+ * @internal
  */
 const toolRegistry = new Map();
 /**
- * Registry of available git tools
+ * Registry of available git tools.
+ *
+ * @description
+ * Array containing all built-in git tool definitions. These tools are
+ * automatically registered in the tool registry on module load. Each
+ * tool implements a specific git operation following the MCP specification.
+ *
+ * Available tools:
+ * - git_status: Show repository status
+ * - git_log: Show commit history
+ * - git_diff: Show differences between commits
+ * - git_commit: Create a new commit
+ * - git_branch: List, create, or delete branches
+ * - git_checkout: Switch branches or restore files
+ * - git_push: Upload commits to remote
+ * - git_pull: Fetch and integrate from remote
+ * - git_clone: Clone a repository
+ * - git_init: Initialize a new repository
+ * - git_add: Stage files for commit
+ * - git_reset: Reset HEAD to a state
+ * - git_merge: Merge branches
+ * - git_rebase: Rebase commits
+ * - git_stash: Stash changes
+ * - git_tag: Manage tags
+ * - git_remote: Manage remotes
+ * - git_fetch: Fetch from remotes
+ *
+ * @example
+ * // Access git tools array
+ * import { gitTools } from './tools'
+ *
+ * for (const tool of gitTools) {
+ *   console.log(`Tool: ${tool.name} - ${tool.description}`)
+ * }
  */
 export const gitTools = [
     // git_status tool
@@ -1456,9 +1647,44 @@ gitTools.forEach((tool) => {
     toolRegistry.set(tool.name, tool);
 });
 /**
- * Register a new tool in the registry
- * @param tool - The tool to register
- * @throws Error if tool with same name already exists or if handler is missing
+ * Register a new tool in the registry.
+ *
+ * @description
+ * Adds a custom tool to the global tool registry. The tool must have a valid
+ * handler function and a unique name. Once registered, the tool can be invoked
+ * using {@link invokeTool}.
+ *
+ * Note: Built-in git tools are automatically registered on module load.
+ *
+ * @param tool - The tool definition to register
+ * @returns void
+ * @throws {Error} If tool handler is missing or not a function
+ * @throws {Error} If a tool with the same name already exists
+ *
+ * @example
+ * import { registerTool, invokeTool } from './tools'
+ *
+ * // Register a custom tool
+ * registerTool({
+ *   name: 'custom_operation',
+ *   description: 'Performs a custom operation',
+ *   inputSchema: {
+ *     type: 'object',
+ *     properties: {
+ *       value: { type: 'string', description: 'Input value' }
+ *     },
+ *     required: ['value']
+ *   },
+ *   handler: async (params) => {
+ *     const { value } = params as { value: string }
+ *     return {
+ *       content: [{ type: 'text', text: `Processed: ${value}` }]
+ *     }
+ *   }
+ * })
+ *
+ * // Now invoke the registered tool
+ * const result = await invokeTool('custom_operation', { value: 'test' })
  */
 export function registerTool(tool) {
     if (!tool.handler || typeof tool.handler !== 'function') {
@@ -1470,10 +1696,37 @@ export function registerTool(tool) {
     toolRegistry.set(tool.name, tool);
 }
 /**
- * Validate input parameters against a tool's schema
+ * Validate input parameters against a tool's schema.
+ *
+ * @description
+ * Performs comprehensive validation of tool parameters against the tool's
+ * JSON Schema definition. Checks for required parameters, type correctness,
+ * enum values, numeric constraints, string patterns, and array item types.
+ *
+ * This function is called automatically by {@link invokeTool} before
+ * executing a tool handler, but can also be used independently for
+ * pre-validation.
+ *
  * @param tool - The tool whose schema to validate against
  * @param params - The parameters to validate
- * @returns Validation result with errors if any
+ * @returns Validation result object with valid flag and array of error messages
+ *
+ * @example
+ * import { validateToolInput, getTool } from './tools'
+ *
+ * const tool = getTool('git_commit')
+ * if (tool) {
+ *   const validation = validateToolInput(tool, { path: '/repo' })
+ *   if (!validation.valid) {
+ *     console.error('Validation errors:', validation.errors)
+ *     // Output: ['Missing required parameter: message']
+ *   }
+ * }
+ *
+ * @example
+ * // Type validation example
+ * const result = validateToolInput(tool, { maxCount: 'not-a-number' })
+ * // result.errors: ["Parameter 'maxCount' has invalid type: expected number, got string"]
  */
 export function validateToolInput(tool, params) {
     const errors = [];
@@ -1537,11 +1790,49 @@ export function validateToolInput(tool, params) {
     };
 }
 /**
- * Invoke a tool by name with the given parameters
- * @param toolName - Name of the tool to invoke
- * @param params - Parameters to pass to the tool
- * @returns Result of the tool invocation
- * @throws Error if tool not found
+ * Invoke a tool by name with the given parameters.
+ *
+ * @description
+ * Looks up a tool by name in the registry, validates the provided parameters
+ * against the tool's schema, and executes the tool's handler. Validation
+ * errors and execution errors are returned as MCPToolResult with isError=true
+ * rather than throwing exceptions.
+ *
+ * This is the primary function for executing MCP tools. Ensure the repository
+ * context is set via {@link setRepositoryContext} before invoking git tools.
+ *
+ * @param toolName - Name of the tool to invoke (e.g., 'git_status')
+ * @param params - Parameters to pass to the tool handler
+ * @returns Promise resolving to the tool result
+ * @throws {Error} If the tool is not found in the registry
+ *
+ * @example
+ * import { invokeTool, setRepositoryContext } from './tools'
+ *
+ * // Set up repository context first
+ * setRepositoryContext(myRepoContext)
+ *
+ * // Invoke git_status tool
+ * const status = await invokeTool('git_status', { short: true })
+ * if (!status.isError) {
+ *   console.log(status.content[0].text)
+ * }
+ *
+ * @example
+ * // Invoke git_log with parameters
+ * const log = await invokeTool('git_log', {
+ *   maxCount: 10,
+ *   oneline: true,
+ *   ref: 'main'
+ * })
+ *
+ * @example
+ * // Handle validation errors
+ * const result = await invokeTool('git_commit', {})
+ * if (result.isError) {
+ *   // result.content[0].text contains validation error message
+ *   console.error('Error:', result.content[0].text)
+ * }
  */
 export async function invokeTool(toolName, params) {
     const tool = toolRegistry.get(toolName);
@@ -1578,8 +1869,25 @@ export async function invokeTool(toolName, params) {
     }
 }
 /**
- * Get a list of all registered tools
- * @returns Array of tool definitions (without handlers)
+ * Get a list of all registered tools.
+ *
+ * @description
+ * Returns an array of all tools in the registry with their names, descriptions,
+ * and input schemas. Handler functions are omitted for security and serialization.
+ * This is useful for discovery and documentation purposes.
+ *
+ * @returns Array of tool definitions without handler functions
+ *
+ * @example
+ * import { listTools } from './tools'
+ *
+ * const tools = listTools()
+ * console.log(`Available tools: ${tools.length}`)
+ *
+ * for (const tool of tools) {
+ *   console.log(`- ${tool.name}: ${tool.description}`)
+ *   console.log(`  Required params: ${tool.inputSchema.required?.join(', ') || 'none'}`)
+ * }
  */
 export function listTools() {
     const tools = [];
@@ -1594,9 +1902,31 @@ export function listTools() {
     return tools;
 }
 /**
- * Get a tool by name
- * @param name - Name of the tool to retrieve
- * @returns The tool if found, undefined otherwise
+ * Get a tool by name.
+ *
+ * @description
+ * Retrieves a tool definition from the registry by its name. Returns the
+ * complete tool object including the handler function. Returns undefined
+ * if no tool with the given name exists.
+ *
+ * @param name - Name of the tool to retrieve (e.g., 'git_status')
+ * @returns The complete tool definition if found, undefined otherwise
+ *
+ * @example
+ * import { getTool } from './tools'
+ *
+ * const statusTool = getTool('git_status')
+ * if (statusTool) {
+ *   console.log(`Description: ${statusTool.description}`)
+ *   console.log(`Parameters:`, Object.keys(statusTool.inputSchema.properties || {}))
+ * }
+ *
+ * @example
+ * // Check if a tool exists before using it
+ * const tool = getTool('my_custom_tool')
+ * if (!tool) {
+ *   console.error('Tool not found')
+ * }
  */
 export function getTool(name) {
     return toolRegistry.get(name);

@@ -1,16 +1,64 @@
 /**
- * Tree Diff Operations
+ * @fileoverview Tree Diff Operations
  *
  * This module provides functionality for comparing Git trees and detecting
  * changes between them, including added, deleted, modified, renamed, and
  * copied files.
+ *
+ * ## Features
+ *
+ * - Compare two tree objects to detect changes
+ * - Detect file additions, deletions, modifications
+ * - Rename detection based on content similarity
+ * - Copy detection
+ * - Binary file detection
+ * - Path filtering with glob patterns
+ * - Type change detection (file to symlink, etc.)
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { diffTrees, DiffStatus } from './ops/tree-diff'
+ *
+ * // Compare two trees
+ * const result = await diffTrees(store, oldTreeSha, newTreeSha, {
+ *   detectRenames: true,
+ *   similarityThreshold: 50
+ * })
+ *
+ * // Process changes
+ * for (const entry of result.entries) {
+ *   switch (entry.status) {
+ *     case DiffStatus.ADDED:
+ *       console.log(`+ ${entry.path}`)
+ *       break
+ *     case DiffStatus.DELETED:
+ *       console.log(`- ${entry.path}`)
+ *       break
+ *     case DiffStatus.MODIFIED:
+ *       console.log(`M ${entry.path}`)
+ *       break
+ *     case DiffStatus.RENAMED:
+ *       console.log(`R ${entry.oldPath} -> ${entry.path}`)
+ *       break
+ *   }
+ * }
+ *
+ * console.log(`Stats: ${result.stats.added} added, ${result.stats.deleted} deleted`)
+ * ```
+ *
+ * @module ops/tree-diff
  */
 
 import type { TreeEntry } from '../types/objects'
 import type { TreeDiffObjectStore as ObjectStore } from '../types/storage'
 
 /**
- * Status of a file in a diff
+ * Status of a file in a diff.
+ *
+ * These status codes match Git's diff status output.
+ *
+ * @enum {string}
  */
 export enum DiffStatus {
   /** File was added */

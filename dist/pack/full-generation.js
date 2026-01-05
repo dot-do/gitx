@@ -1,26 +1,85 @@
 /**
- * Full Packfile Generation
+ * @fileoverview Full Packfile Generation Module
  *
- * This module provides comprehensive packfile generation capabilities including:
- * - Complete pack generation from object sets
- * - Delta chain optimization
- * - Pack ordering strategies
- * - Large repository handling
- * - Incremental pack updates
+ * This module provides advanced packfile generation capabilities designed for
+ * production use with large repositories. It extends the basic generation module
+ * with additional features for optimization, streaming, and incremental updates.
+ *
+ * ## Key Features
+ *
+ * - **Delta Chain Optimization**: Intelligent selection of delta bases
+ * - **Ordering Strategies**: Multiple object ordering algorithms for optimal compression
+ * - **Progress Reporting**: Real-time progress callbacks during generation
+ * - **Large Repository Support**: Memory-efficient handling via chunking and streaming
+ * - **Incremental Updates**: Efficiently update existing packs with new objects
+ * - **Pack Validation**: Verify integrity of generated packfiles
+ *
+ * ## Main Classes
+ *
+ * - {@link FullPackGenerator} - Full-featured pack generator with progress support
+ * - {@link DeltaChainOptimizer} - Optimizes delta base selection
+ * - {@link LargeRepositoryHandler} - Handles large repos with memory limits
+ * - {@link StreamingPackWriter} - Writes packs incrementally
+ * - {@link IncrementalPackUpdater} - Updates packs with new objects
+ *
+ * ## Ordering Strategies
+ *
+ * The module supports multiple object ordering strategies:
+ * - TYPE_FIRST: Groups objects by type (commits, trees, blobs, tags)
+ * - SIZE_DESCENDING: Largest objects first (good bases for deltas)
+ * - RECENCY: Most recently modified objects first
+ * - PATH_BASED: Groups objects by file path
+ * - DELTA_OPTIMIZED: Orders based on delta chain dependencies
+ *
+ * @module pack/full-generation
+ * @see {@link module:pack/generation} Basic pack generation
+ *
+ * @example
+ * // Generate a pack with progress reporting
+ * const generator = new FullPackGenerator({
+ *   enableDeltaCompression: true,
+ *   orderingStrategy: PackOrderingStrategy.TYPE_FIRST
+ * });
+ *
+ * generator.onProgress((progress) => {
+ *   console.log(`${progress.phase}: ${progress.objectsProcessed}/${progress.totalObjects}`);
+ * });
+ *
+ * for (const obj of objects) {
+ *   generator.addObject(obj);
+ * }
+ *
+ * const result = generator.generate();
+ * console.log(`Generated pack with ${result.stats.deltaObjects} deltas`);
  */
 import pako from 'pako';
 import { PackObjectType, encodeTypeAndSize } from './format';
 import { createDelta } from './delta';
 import { sha1 } from '../utils/sha1';
 /**
- * Pack ordering strategies
+ * Available pack ordering strategies.
+ *
+ * @description Different ordering strategies affect delta compression efficiency
+ * and pack structure. Choose based on your use case:
+ * - TYPE_FIRST: Standard Git ordering, good for general use
+ * - SIZE_DESCENDING: Optimizes for delta compression
+ * - RECENCY: Useful for fetch operations
+ * - PATH_BASED: Groups related files together
+ * - DELTA_OPTIMIZED: Respects delta chain dependencies
+ *
+ * @enum {string}
  */
 export var PackOrderingStrategy;
 (function (PackOrderingStrategy) {
+    /** Groups objects by type (commits, trees, blobs, tags) */
     PackOrderingStrategy["TYPE_FIRST"] = "type_first";
+    /** Orders by size, largest first (better delta bases) */
     PackOrderingStrategy["SIZE_DESCENDING"] = "size_descending";
+    /** Orders by timestamp, newest first */
     PackOrderingStrategy["RECENCY"] = "recency";
+    /** Groups objects by file path */
     PackOrderingStrategy["PATH_BASED"] = "path_based";
+    /** Orders based on delta chain structure */
     PackOrderingStrategy["DELTA_OPTIMIZED"] = "delta_optimized";
 })(PackOrderingStrategy || (PackOrderingStrategy = {}));
 // ============================================================================
@@ -120,7 +179,20 @@ function calculateSimilarity(a, b) {
 // Main Functions
 // ============================================================================
 /**
- * Generate a complete packfile from an object set
+ * Generates a complete packfile from an object set.
+ *
+ * @description Convenience function that creates a FullPackGenerator, adds
+ * all objects from the set, and returns the complete packfile with checksum.
+ *
+ * @param {PackableObjectSet} objectSet - The set of objects to pack
+ * @returns {Uint8Array} Complete packfile data including checksum
+ *
+ * @example
+ * const objectSet = {
+ *   objects: [blob1, blob2, tree, commit],
+ *   roots: [commit.sha]
+ * };
+ * const packfile = generateFullPackfile(objectSet);
  */
 export function generateFullPackfile(objectSet) {
     const generator = new FullPackGenerator();
@@ -130,7 +202,18 @@ export function generateFullPackfile(objectSet) {
     return result.packData;
 }
 /**
- * Optimize delta chains for a set of objects
+ * Optimizes delta chains for a set of objects.
+ *
+ * @description Analyzes objects to find optimal delta base selections that
+ * minimize total pack size while respecting chain depth limits.
+ *
+ * @param {PackableObject[]} objects - Objects to optimize
+ * @param {DeltaChainConfig} [config] - Optimization configuration
+ * @returns {OptimizedDeltaChain} Optimized chain information and selections
+ *
+ * @example
+ * const result = optimizeDeltaChains(objects, { maxDepth: 50 });
+ * console.log(`Saved ${result.totalSavings} bytes`);
  */
 export function optimizeDeltaChains(objects, config) {
     const optimizer = new DeltaChainOptimizer(config);
@@ -140,7 +223,22 @@ export function optimizeDeltaChains(objects, config) {
     return optimizer.optimize();
 }
 /**
- * Apply an ordering strategy to objects
+ * Applies an ordering strategy to objects for optimal packing.
+ *
+ * @description Reorders objects according to the specified strategy to
+ * improve compression efficiency or access patterns.
+ *
+ * @param {PackableObject[]} objects - Objects to reorder
+ * @param {PackOrderingStrategy} strategy - Ordering strategy to apply
+ * @param {OrderingStrategyConfig} [config] - Additional configuration
+ * @returns {OrderedObjectSet} Ordered objects with applied strategy info
+ *
+ * @example
+ * const ordered = applyOrderingStrategy(
+ *   objects,
+ *   PackOrderingStrategy.TYPE_FIRST,
+ *   { secondaryStrategy: PackOrderingStrategy.SIZE_DESCENDING }
+ * );
  */
 export function applyOrderingStrategy(objects, strategy, config) {
     const orderedObjects = [...objects];
@@ -220,7 +318,20 @@ export function applyOrderingStrategy(objects, strategy, config) {
     };
 }
 /**
- * Compute object dependencies
+ * Computes object dependencies from commit and tree references.
+ *
+ * @description Parses commit and tree objects to extract references,
+ * building a dependency graph useful for ordering and validation.
+ *
+ * @param {PackableObject[]} objects - Objects to analyze
+ * @returns {ObjectDependencyGraph} Dependency graph with traversal methods
+ *
+ * @example
+ * const graph = computeObjectDependencies(objects);
+ * const sorted = graph.topologicalSort();
+ * if (graph.hasCycles()) {
+ *   throw new Error('Circular dependencies detected');
+ * }
  */
 export function computeObjectDependencies(objects) {
     const dependencies = new Map();
@@ -368,7 +479,20 @@ export function computeObjectDependencies(objects) {
     };
 }
 /**
- * Select optimal base objects for delta compression
+ * Selects optimal base objects for delta compression.
+ *
+ * @description Analyzes all objects to find the best delta base for each,
+ * computing actual delta savings to make informed selections.
+ *
+ * @param {PackableObject[]} objects - Objects to analyze
+ * @param {{ preferSamePath?: boolean }} [options] - Selection options
+ * @returns {BaseSelectionResult} Map of selections and savings
+ *
+ * @example
+ * const result = selectOptimalBases(objects, { preferSamePath: true });
+ * for (const [target, base] of result.selections) {
+ *   console.log(`${target} -> ${base}: saves ${result.savings.get(target)} bytes`);
+ * }
  */
 export function selectOptimalBases(objects, options) {
     const selections = new Map();
@@ -414,7 +538,26 @@ export function selectOptimalBases(objects, options) {
     return { selections, savings };
 }
 /**
- * Validate pack integrity
+ * Validates pack file integrity.
+ *
+ * @description Performs comprehensive validation of a packfile including:
+ * - Header signature and version
+ * - Object count verification
+ * - Checksum validation
+ * - Optional delta chain validation
+ *
+ * @param {Uint8Array} packData - Complete packfile data to validate
+ * @param {{ validateDeltas?: boolean; collectStats?: boolean }} [options] - Validation options
+ * @returns {PackValidationResult} Validation result with errors and optional stats
+ * @throws {Error} Never throws; errors are returned in the result
+ *
+ * @example
+ * const result = validatePackIntegrity(packData, { collectStats: true });
+ * if (!result.valid) {
+ *   console.error('Pack errors:', result.errors);
+ * } else {
+ *   console.log(`Valid pack with ${result.stats?.objectCount} objects`);
+ * }
  */
 export function validatePackIntegrity(packData, options) {
     const errors = [];
@@ -551,7 +694,31 @@ export function validatePackIntegrity(packData, options) {
 // Classes
 // ============================================================================
 /**
- * Full pack generator with streaming and progress support
+ * Full-featured pack generator with streaming and progress support.
+ *
+ * @description Advanced packfile generator that extends basic functionality with:
+ * - Progress callbacks during generation
+ * - Configurable ordering strategies
+ * - Delta compression with chain optimization
+ * - Validation of input objects
+ *
+ * @class FullPackGenerator
+ *
+ * @example
+ * const generator = new FullPackGenerator({
+ *   enableDeltaCompression: true,
+ *   orderingStrategy: PackOrderingStrategy.TYPE_FIRST
+ * });
+ *
+ * generator.onProgress((p) => {
+ *   console.log(`Phase: ${p.phase}, Progress: ${p.objectsProcessed}/${p.totalObjects}`);
+ * });
+ *
+ * for (const obj of objects) {
+ *   generator.addObject(obj);
+ * }
+ *
+ * const result = generator.generate();
  */
 export class FullPackGenerator {
     objects = new Map();
@@ -734,7 +901,19 @@ export class FullPackGenerator {
     }
 }
 /**
- * Delta chain optimizer
+ * Delta chain optimizer for finding optimal base selections.
+ *
+ * @description Analyzes a set of objects to determine the best delta base
+ * for each, considering chain depth limits, similarity, and savings.
+ *
+ * @class DeltaChainOptimizer
+ *
+ * @example
+ * const optimizer = new DeltaChainOptimizer({ maxDepth: 50 });
+ * for (const obj of objects) {
+ *   optimizer.addObject(obj);
+ * }
+ * const result = optimizer.optimize();
  */
 export class DeltaChainOptimizer {
     objects = [];
@@ -905,7 +1084,22 @@ export class DeltaChainOptimizer {
     }
 }
 /**
- * Handler for large repositories
+ * Handler for large repositories with memory management.
+ *
+ * @description Provides memory-efficient pack generation for large repositories
+ * by partitioning objects into chunks and optionally streaming output.
+ *
+ * @class LargeRepositoryHandler
+ *
+ * @example
+ * const handler = new LargeRepositoryHandler({
+ *   maxMemoryUsage: 500 * 1024 * 1024, // 500MB
+ *   chunkSize: 1000,
+ *   enableStreaming: true
+ * });
+ * handler.setObjects(largeObjectSet);
+ * handler.onProgress((p) => console.log(p.phase));
+ * const result = handler.generatePack();
  */
 export class LargeRepositoryHandler {
     objects = [];
@@ -972,7 +1166,21 @@ export class LargeRepositoryHandler {
     }
 }
 /**
- * Streaming pack writer
+ * Streaming pack writer for incremental output.
+ *
+ * @description Writes packfile data incrementally, suitable for streaming
+ * to network or disk without holding entire pack in memory.
+ *
+ * @class StreamingPackWriter
+ *
+ * @example
+ * const writer = new StreamingPackWriter();
+ * writer.onChunk((chunk) => socket.write(chunk));
+ * writer.writeHeader(objects.length);
+ * for (const obj of objects) {
+ *   writer.writeObject(obj);
+ * }
+ * await writer.finalize();
  */
 export class StreamingPackWriter {
     chunkCallback;
@@ -1024,7 +1232,18 @@ export class StreamingPackWriter {
     }
 }
 /**
- * Incremental pack updater
+ * Incremental pack updater for adding new objects to existing packs.
+ *
+ * @description Efficiently creates packs containing only new objects while
+ * optionally reusing delta relationships with existing objects.
+ *
+ * @class IncrementalPackUpdater
+ *
+ * @example
+ * const updater = new IncrementalPackUpdater({ reuseDeltas: true });
+ * updater.setExistingObjects(existingPack);
+ * const result = updater.addObjects(newObjects);
+ * console.log(`Added ${result.addedObjects}, skipped ${result.skippedObjects}`);
  */
 export class IncrementalPackUpdater {
     existingObjects = [];

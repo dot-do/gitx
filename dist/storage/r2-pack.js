@@ -1,19 +1,96 @@
 /**
- * R2 Packfile Storage
+ * @fileoverview R2 Packfile Storage Module
  *
- * Manages Git packfiles stored in Cloudflare R2 object storage.
- * Provides functionality for:
- * - Uploading and downloading packfiles with their indices
- * - Multi-pack index (MIDX) for efficient object lookup across packs
- * - Concurrent access control with locking
- * - Pack verification and integrity checks
+ * This module manages Git packfiles stored in Cloudflare R2 object storage.
+ * It provides comprehensive functionality for:
+ *
+ * - **Uploading and downloading packfiles** with their indices using atomic operations
+ * - **Multi-pack index (MIDX)** for efficient object lookup across multiple packs
+ * - **Concurrent access control** with distributed locking using R2 conditional writes
+ * - **Pack verification** and integrity checks via SHA-1 checksums
+ * - **Atomic uploads** using a manifest-based pattern to ensure data consistency
+ *
+ * The module implements Git's packfile format (version 2 and 3) and provides
+ * both class-based (`R2PackStorage`) and standalone function APIs for flexibility.
+ *
+ * @module storage/r2-pack
+ *
+ * @example
+ * ```typescript
+ * // Using the class-based API
+ * const storage = new R2PackStorage({
+ *   bucket: myR2Bucket,
+ *   prefix: 'repos/my-repo/',
+ *   cacheSize: 100,
+ *   cacheTTL: 3600
+ * });
+ *
+ * // Upload a packfile
+ * const result = await storage.uploadPackfile(packData, indexData);
+ * console.log(`Uploaded pack: ${result.packId}`);
+ *
+ * // Download with verification
+ * const download = await storage.downloadPackfile(result.packId, {
+ *   verify: true,
+ *   includeIndex: true
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Using standalone functions
+ * const result = await uploadPackfile(bucket, packData, indexData, {
+ *   prefix: 'repos/my-repo/'
+ * });
+ *
+ * const packfiles = await listPackfiles(bucket, {
+ *   prefix: 'repos/my-repo/',
+ *   limit: 10
+ * });
+ * ```
  */
 /**
- * Error thrown by R2 pack operations
+ * Error thrown by R2 pack operations.
+ *
+ * @description
+ * Custom error class for R2 packfile operations with error codes for
+ * programmatic error handling.
+ *
+ * Error codes:
+ * - `NOT_FOUND`: Packfile does not exist
+ * - `LOCKED`: Packfile is locked by another process
+ * - `INVALID_DATA`: Packfile format is invalid
+ * - `CHECKSUM_MISMATCH`: Checksum verification failed
+ * - `NETWORK_ERROR`: R2 network/connectivity issue
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await storage.downloadPackfile(packId, { required: true });
+ * } catch (error) {
+ *   if (error instanceof R2PackError) {
+ *     switch (error.code) {
+ *       case 'NOT_FOUND':
+ *         console.log('Pack does not exist');
+ *         break;
+ *       case 'CHECKSUM_MISMATCH':
+ *         console.log('Pack is corrupted');
+ *         break;
+ *     }
+ *   }
+ * }
+ * ```
  */
 export class R2PackError extends Error {
     code;
     packId;
+    /**
+     * Creates a new R2PackError.
+     *
+     * @param message - Human-readable error message
+     * @param code - Error code for programmatic handling
+     * @param packId - Optional pack ID related to the error
+     */
     constructor(message, code, packId) {
         super(message);
         this.code = code;
@@ -26,7 +103,23 @@ const PACK_SIGNATURE = new Uint8Array([0x50, 0x41, 0x43, 0x4b]);
 // Multi-pack index signature
 const MIDX_SIGNATURE = new Uint8Array([0x4d, 0x49, 0x44, 0x58]); // "MIDX"
 /**
- * Validate a packfile header
+ * Validates a packfile header and extracts version and object count.
+ *
+ * @description
+ * Checks that the packfile has a valid PACK signature and supported version (2 or 3).
+ *
+ * @param data - Raw packfile bytes
+ * @returns Object containing version number and object count
+ *
+ * @throws {R2PackError} With code 'INVALID_DATA' if packfile is invalid
+ *
+ * @example
+ * ```typescript
+ * const { version, objectCount } = validatePackfile(packData);
+ * console.log(`Pack version ${version} with ${objectCount} objects`);
+ * ```
+ *
+ * @internal
  */
 function validatePackfile(data) {
     if (data.length < 12) {
@@ -48,7 +141,21 @@ function validatePackfile(data) {
     return { version, objectCount };
 }
 /**
- * Compute SHA-1 checksum as hex string
+ * Computes SHA-1 checksum of data as a hexadecimal string.
+ *
+ * @description
+ * Uses the Web Crypto API to compute SHA-1 hash for Git compatibility.
+ *
+ * @param data - Data to hash
+ * @returns 40-character lowercase hexadecimal SHA-1 hash
+ *
+ * @example
+ * ```typescript
+ * const checksum = await computeChecksum(packData);
+ * console.log(`SHA-1: ${checksum}`);
+ * ```
+ *
+ * @internal
  */
 async function computeChecksum(data) {
     const hashBuffer = await crypto.subtle.digest('SHA-1', data);
@@ -58,7 +165,20 @@ async function computeChecksum(data) {
         .join('');
 }
 /**
- * Generate a unique pack ID
+ * Generates a unique pack ID.
+ *
+ * @description
+ * Creates a cryptographically random pack identifier in the format 'pack-{16 hex chars}'.
+ *
+ * @returns Unique pack ID string
+ *
+ * @example
+ * ```typescript
+ * const packId = generatePackId();
+ * // Returns something like: 'pack-a1b2c3d4e5f67890'
+ * ```
+ *
+ * @internal
  */
 function generatePackId() {
     const randomBytes = new Uint8Array(8);
@@ -69,7 +189,22 @@ function generatePackId() {
     return `pack-${hex}`;
 }
 /**
- * Build the full key path with prefix
+ * Builds the full key path with prefix.
+ *
+ * @description
+ * Normalizes the prefix to ensure it has a trailing slash and prepends it to the path.
+ *
+ * @param prefix - Storage prefix (may or may not have trailing slash)
+ * @param path - Path to append to prefix
+ * @returns Full key path
+ *
+ * @example
+ * ```typescript
+ * buildKey('repos/my-repo', 'packs/pack-123.pack')
+ * // Returns: 'repos/my-repo/packs/pack-123.pack'
+ * ```
+ *
+ * @internal
  */
 function buildKey(prefix, path) {
     if (!prefix) {
@@ -80,7 +215,14 @@ function buildKey(prefix, path) {
     return normalizedPrefix + path;
 }
 /**
- * Generate a unique lock ID
+ * Generates a unique lock ID.
+ *
+ * @description
+ * Creates a cryptographically random lock identifier (32 hex chars).
+ *
+ * @returns Unique lock ID string
+ *
+ * @internal
  */
 function generateLockId() {
     const randomBytes = new Uint8Array(16);
@@ -90,7 +232,43 @@ function generateLockId() {
         .join('');
 }
 /**
- * R2 Packfile Storage class
+ * R2 Packfile Storage class.
+ *
+ * @description
+ * Main class for managing Git packfiles in Cloudflare R2 object storage.
+ * Provides methods for uploading, downloading, listing, and managing packfiles
+ * with support for atomic uploads, distributed locking, and multi-pack indexing.
+ *
+ * @example
+ * ```typescript
+ * // Initialize storage
+ * const storage = new R2PackStorage({
+ *   bucket: env.GIT_BUCKET,
+ *   prefix: 'repos/my-repo/',
+ *   cacheSize: 100,
+ *   cacheTTL: 3600
+ * });
+ *
+ * // Upload a packfile atomically
+ * const result = await storage.uploadPackfile(packData, indexData);
+ *
+ * // Download with verification
+ * const download = await storage.downloadPackfile(result.packId, {
+ *   verify: true,
+ *   includeIndex: true
+ * });
+ *
+ * // List all packfiles
+ * const list = await storage.listPackfiles();
+ *
+ * // Acquire lock for write operations
+ * const lock = await storage.acquireLock(packId, { ttl: 30000 });
+ * try {
+ *   // Perform operations
+ * } finally {
+ *   await lock.release();
+ * }
+ * ```
  */
 export class R2PackStorage {
     _bucket;
@@ -98,6 +276,21 @@ export class R2PackStorage {
     _cacheTTL;
     _midxCache = null;
     _indexChecksums = new Map();
+    /**
+     * Creates a new R2PackStorage instance.
+     *
+     * @param options - Configuration options for the storage instance
+     *
+     * @example
+     * ```typescript
+     * const storage = new R2PackStorage({
+     *   bucket: env.MY_BUCKET,
+     *   prefix: 'repos/my-repo/',
+     *   cacheSize: 100,
+     *   cacheTTL: 3600
+     * });
+     * ```
+     */
     constructor(options) {
         this._bucket = options.bucket;
         this._prefix = options.prefix ?? '';
@@ -108,8 +301,9 @@ export class R2PackStorage {
         return buildKey(this._prefix, path);
     }
     /**
-     * Upload a packfile and its index to R2 atomically
+     * Uploads a packfile and its index to R2 atomically.
      *
+     * @description
      * Uses a manifest-based pattern to ensure atomic uploads:
      * 1. Upload pack and index to staging paths
      * 2. Create manifest in 'staging' status
@@ -119,6 +313,23 @@ export class R2PackStorage {
      *
      * If the process fails at any point, the pack is not considered complete
      * until a valid manifest with status 'complete' exists.
+     *
+     * @param packData - Raw packfile bytes (must have valid PACK signature)
+     * @param indexData - Pack index file bytes
+     * @param options - Optional upload configuration
+     *
+     * @returns Upload result with pack ID, sizes, checksum, and object count
+     *
+     * @throws {R2PackError} With code 'INVALID_DATA' if packfile is invalid
+     * @throws {R2PackError} With code 'NETWORK_ERROR' if bucket is unavailable
+     *
+     * @example
+     * ```typescript
+     * const result = await storage.uploadPackfile(packData, indexData);
+     * console.log(`Uploaded: ${result.packId}`);
+     * console.log(`Objects: ${result.objectCount}`);
+     * console.log(`Checksum: ${result.checksum}`);
+     * ```
      */
     async uploadPackfile(packData, indexData, options) {
         if (!this._bucket) {
@@ -221,7 +432,24 @@ export class R2PackStorage {
         }
     }
     /**
-     * Get the manifest for a packfile
+     * Gets the manifest for a packfile.
+     *
+     * @description
+     * Retrieves the manifest JSON that tracks the upload status of a packfile.
+     * Returns null if no manifest exists (legacy packs or invalid pack ID).
+     *
+     * @param packId - Pack identifier to get manifest for
+     * @returns Pack manifest or null if not found
+     *
+     * @example
+     * ```typescript
+     * const manifest = await storage.getPackManifest('pack-abc123');
+     * if (manifest?.status === 'complete') {
+     *   console.log('Pack is ready for use');
+     * } else {
+     *   console.log('Pack upload is incomplete');
+     * }
+     * ```
      */
     async getPackManifest(packId) {
         const manifestKey = this._buildKey(`packs/${packId}.manifest`);
@@ -238,12 +466,23 @@ export class R2PackStorage {
         }
     }
     /**
-     * Check if a packfile upload is complete
+     * Checks if a packfile upload is complete.
      *
+     * @description
      * A pack is considered complete if:
      * 1. It has a manifest with status 'complete', OR
      * 2. It was uploaded before the atomic upload feature (legacy packs without manifest)
      *    AND both .pack and .idx files exist
+     *
+     * @param packId - Pack identifier to check
+     * @returns true if pack is complete and ready for use
+     *
+     * @example
+     * ```typescript
+     * if (await storage.isPackComplete(packId)) {
+     *   const data = await storage.downloadPackfile(packId);
+     * }
+     * ```
      */
     async isPackComplete(packId) {
         // Check for manifest first
@@ -262,7 +501,34 @@ export class R2PackStorage {
         return packExists !== null && idxExists !== null;
     }
     /**
-     * Download a packfile from R2
+     * Downloads a packfile from R2.
+     *
+     * @description
+     * Downloads pack data with optional index file. Verifies pack completeness
+     * before downloading and optionally verifies checksum integrity.
+     *
+     * @param packId - Pack identifier to download
+     * @param options - Download options (includeIndex, verify, byteRange, required)
+     *
+     * @returns Download result with pack data, or null if not found (unless required=true)
+     *
+     * @throws {R2PackError} With code 'NOT_FOUND' if required=true and pack not found
+     * @throws {R2PackError} With code 'CHECKSUM_MISMATCH' if verify=true and verification fails
+     *
+     * @example
+     * ```typescript
+     * // Basic download
+     * const result = await storage.downloadPackfile(packId);
+     *
+     * // Download with verification and index
+     * const verified = await storage.downloadPackfile(packId, {
+     *   verify: true,
+     *   includeIndex: true
+     * });
+     *
+     * // Required download (throws if not found)
+     * const required = await storage.downloadPackfile(packId, { required: true });
+     * ```
      */
     async downloadPackfile(packId, options) {
         // Verify pack completeness before downloading
@@ -331,7 +597,23 @@ export class R2PackStorage {
         return result;
     }
     /**
-     * Get metadata for a packfile
+     * Gets metadata for a packfile.
+     *
+     * @description
+     * Retrieves metadata about a packfile including size, object count,
+     * creation time, and checksum without downloading the full pack.
+     *
+     * @param packId - Pack identifier to get metadata for
+     * @returns Packfile metadata or null if not found
+     *
+     * @example
+     * ```typescript
+     * const metadata = await storage.getPackfileMetadata(packId);
+     * if (metadata) {
+     *   console.log(`Size: ${metadata.packSize} bytes`);
+     *   console.log(`Objects: ${metadata.objectCount}`);
+     * }
+     * ```
      */
     async getPackfileMetadata(packId) {
         const packKey = this._buildKey(`packs/${packId}.pack`);
@@ -350,7 +632,25 @@ export class R2PackStorage {
         };
     }
     /**
-     * List all packfiles
+     * Lists all packfiles in storage.
+     *
+     * @description
+     * Returns a paginated list of packfile metadata. Use the cursor for
+     * fetching subsequent pages of results.
+     *
+     * @param options - Pagination options (limit, cursor)
+     * @returns List of packfile metadata with optional cursor for pagination
+     *
+     * @example
+     * ```typescript
+     * // List first 10 packfiles
+     * const first = await storage.listPackfiles({ limit: 10 });
+     *
+     * // Get next page
+     * if (first.cursor) {
+     *   const next = await storage.listPackfiles({ limit: 10, cursor: first.cursor });
+     * }
+     * ```
      */
     async listPackfiles(options) {
         const prefix = this._buildKey('packs/');
@@ -395,7 +695,23 @@ export class R2PackStorage {
         return result;
     }
     /**
-     * Delete a packfile, its index, and manifest
+     * Deletes a packfile, its index, and manifest.
+     *
+     * @description
+     * Removes all files associated with a packfile and updates the
+     * multi-pack index if needed.
+     *
+     * @param packId - Pack identifier to delete
+     * @returns true if pack was deleted, false if it didn't exist
+     *
+     * @example
+     * ```typescript
+     * if (await storage.deletePackfile(packId)) {
+     *   console.log('Pack deleted successfully');
+     * } else {
+     *   console.log('Pack not found');
+     * }
+     * ```
      */
     async deletePackfile(packId) {
         const packKey = this._buildKey(`packs/${packId}.pack`);
@@ -424,7 +740,22 @@ export class R2PackStorage {
         return true;
     }
     /**
-     * Download just the index file for a packfile
+     * Downloads just the index file for a packfile.
+     *
+     * @description
+     * Retrieves only the pack index file, useful for object lookups
+     * without downloading the full packfile.
+     *
+     * @param packId - Pack identifier to download index for
+     * @returns Index data or null if not found
+     *
+     * @example
+     * ```typescript
+     * const indexData = await storage.downloadIndex(packId);
+     * if (indexData) {
+     *   // Parse and use the index
+     * }
+     * ```
      */
     async downloadIndex(packId) {
         const idxKey = this._buildKey(`packs/${packId}.idx`);
@@ -435,7 +766,22 @@ export class R2PackStorage {
         return new Uint8Array(await idxObj.arrayBuffer());
     }
     /**
-     * Upload a new index for an existing packfile
+     * Uploads a new index for an existing packfile.
+     *
+     * @description
+     * Replaces the index file for an existing packfile. Useful for
+     * regenerating corrupted indices or updating index format.
+     *
+     * @param packId - Pack identifier to upload index for
+     * @param indexData - New index file data
+     *
+     * @throws {R2PackError} With code 'NOT_FOUND' if packfile doesn't exist
+     *
+     * @example
+     * ```typescript
+     * const newIndex = generatePackIndex(packData);
+     * await storage.uploadIndex(packId, newIndex);
+     * ```
      */
     async uploadIndex(packId, indexData) {
         // Check if pack exists
@@ -452,7 +798,23 @@ export class R2PackStorage {
         this._indexChecksums.set(packId, indexChecksum);
     }
     /**
-     * Verify that an index matches its packfile
+     * Verifies that an index matches its packfile.
+     *
+     * @description
+     * Compares the current index checksum against the stored checksum
+     * to detect corruption or tampering.
+     *
+     * @param packId - Pack identifier to verify index for
+     * @returns true if index is valid, false if missing or corrupted
+     *
+     * @example
+     * ```typescript
+     * if (await storage.verifyIndex(packId)) {
+     *   console.log('Index is valid');
+     * } else {
+     *   console.log('Index needs to be regenerated');
+     * }
+     * ```
      */
     async verifyIndex(packId) {
         // Get current index
@@ -470,8 +832,9 @@ export class R2PackStorage {
         return true;
     }
     /**
-     * Clean up orphaned staging files
+     * Cleans up orphaned staging files.
      *
+     * @description
      * This should be called on startup to clean up any staging files
      * left behind by failed uploads. It will:
      * 1. List all files in the staging directory
@@ -479,6 +842,15 @@ export class R2PackStorage {
      * 3. If not complete, delete the staging files and any partial final files
      *
      * @returns Array of pack IDs that were cleaned up
+     *
+     * @example
+     * ```typescript
+     * // Call on worker startup
+     * const cleaned = await storage.cleanupOrphanedStagingFiles();
+     * if (cleaned.length > 0) {
+     *   console.log(`Cleaned up ${cleaned.length} orphaned uploads`);
+     * }
+     * ```
      */
     async cleanupOrphanedStagingFiles() {
         const stagingPrefix = this._buildKey('staging/');
@@ -531,7 +903,18 @@ export class R2PackStorage {
         return cleanedUp;
     }
     /**
-     * Rebuild the multi-pack index from all packfiles
+     * Rebuilds the multi-pack index from all packfiles.
+     *
+     * @description
+     * Creates a new MIDX by scanning all packfiles and building a sorted
+     * index of all objects. Call this after adding or removing packs.
+     *
+     * @example
+     * ```typescript
+     * await storage.rebuildMultiPackIndex();
+     * const midx = await storage.getMultiPackIndex();
+     * console.log(`Indexed ${midx.entries.length} objects`);
+     * ```
      */
     async rebuildMultiPackIndex() {
         // List all packs
@@ -577,7 +960,23 @@ export class R2PackStorage {
         };
     }
     /**
-     * Get the current multi-pack index
+     * Gets the current multi-pack index.
+     *
+     * @description
+     * Returns the MIDX from cache if available and not expired,
+     * otherwise fetches from R2. Returns an empty index if none exists.
+     *
+     * @returns Current multi-pack index
+     *
+     * @example
+     * ```typescript
+     * const midx = await storage.getMultiPackIndex();
+     * const entry = lookupObjectInMultiPack(midx, objectSha);
+     * if (entry) {
+     *   const packId = midx.packIds[entry.packIndex];
+     *   console.log(`Object is in pack ${packId}`);
+     * }
+     * ```
      */
     async getMultiPackIndex() {
         // Check cache first
@@ -605,11 +1004,31 @@ export class R2PackStorage {
         return midx;
     }
     /**
-     * Acquire a distributed lock on a resource using R2 conditional writes
+     * Acquires a distributed lock on a resource using R2 conditional writes.
+     *
+     * @description
+     * Uses R2's conditional write feature (ETags) to implement distributed locking.
+     * Locks automatically expire after the TTL to prevent deadlocks.
+     *
      * @param resource - Resource identifier to lock
-     * @param ttlMs - Time-to-live in milliseconds (default: 30000)
+     * @param ttlMs - Time-to-live in milliseconds
      * @param holder - Optional identifier for the lock holder (for debugging)
+     *
      * @returns LockHandle if acquired, null if lock is held by another process
+     *
+     * @example
+     * ```typescript
+     * const handle = await storage.acquireDistributedLock('my-resource', 30000, 'worker-1');
+     * if (handle) {
+     *   try {
+     *     // Do work while holding the lock
+     *   } finally {
+     *     await storage.releaseDistributedLock(handle);
+     *   }
+     * } else {
+     *   console.log('Could not acquire lock - resource is busy');
+     * }
+     * ```
      */
     async acquireDistributedLock(resource, ttlMs = 30000, holder) {
         const lockKey = this._buildKey(`locks/${resource}.lock`);
@@ -699,8 +1118,25 @@ export class R2PackStorage {
         }
     }
     /**
-     * Release a distributed lock
+     * Releases a distributed lock.
+     *
+     * @description
+     * Releases the lock only if the caller still owns it (verified by lockId).
+     * Safe to call even if lock has expired or been taken by another process.
+     *
      * @param handle - Lock handle returned from acquireDistributedLock
+     *
+     * @example
+     * ```typescript
+     * const handle = await storage.acquireDistributedLock('resource');
+     * if (handle) {
+     *   try {
+     *     // Do work
+     *   } finally {
+     *     await storage.releaseDistributedLock(handle);
+     *   }
+     * }
+     * ```
      */
     async releaseDistributedLock(handle) {
         const lockKey = this._buildKey(`locks/${handle.resource}.lock`);
@@ -720,10 +1156,31 @@ export class R2PackStorage {
         }
     }
     /**
-     * Refresh a distributed lock to extend its TTL
+     * Refreshes a distributed lock to extend its TTL.
+     *
+     * @description
+     * Extends the lock's expiration time. Useful for long-running operations
+     * that need to hold the lock longer than the original TTL.
+     *
      * @param handle - Lock handle to refresh
-     * @param ttlMs - New TTL in milliseconds (default: 30000)
+     * @param ttlMs - New TTL in milliseconds
+     *
      * @returns true if refresh succeeded, false if lock was lost
+     *
+     * @example
+     * ```typescript
+     * const handle = await storage.acquireDistributedLock('resource', 30000);
+     * if (handle) {
+     *   // Do some work...
+     *
+     *   // Extend the lock for another 30 seconds
+     *   if (await storage.refreshDistributedLock(handle, 30000)) {
+     *     // Continue working
+     *   } else {
+     *     // Lock was lost, abort operation
+     *   }
+     * }
+     * ```
      */
     async refreshDistributedLock(handle, ttlMs = 30000) {
         const lockKey = this._buildKey(`locks/${handle.resource}.lock`);
@@ -773,9 +1230,21 @@ export class R2PackStorage {
         }
     }
     /**
-     * Clean up expired locks from R2 storage
+     * Cleans up expired locks from R2 storage.
+     *
+     * @description
+     * Scans all lock files and removes those that have expired.
      * This should be called periodically to remove stale lock files
+     * left by crashed processes.
+     *
      * @returns Number of locks cleaned up
+     *
+     * @example
+     * ```typescript
+     * // Run periodically (e.g., every 5 minutes)
+     * const cleaned = await storage.cleanupExpiredLocks();
+     * console.log(`Cleaned up ${cleaned} expired locks`);
+     * ```
      */
     async cleanupExpiredLocks() {
         const prefix = this._buildKey('locks/');
@@ -805,8 +1274,36 @@ export class R2PackStorage {
         return cleanedCount;
     }
     /**
-     * Acquire a lock on a packfile (backward-compatible wrapper)
-     * Uses distributed locking with R2 conditional writes
+     * Acquires a lock on a packfile (backward-compatible wrapper).
+     *
+     * @description
+     * High-level API for acquiring a pack lock with optional timeout.
+     * Uses distributed locking with R2 conditional writes internally.
+     *
+     * @param packId - Pack identifier to lock
+     * @param options - Lock acquisition options
+     *
+     * @returns PackLock interface for managing the lock
+     *
+     * @throws {R2PackError} With code 'LOCKED' if lock cannot be acquired
+     *
+     * @example
+     * ```typescript
+     * const lock = await storage.acquireLock(packId, {
+     *   timeout: 10000,
+     *   ttl: 30000,
+     *   holder: 'my-worker'
+     * });
+     *
+     * try {
+     *   // Perform pack operations
+     *   if (lock.refresh) {
+     *     await lock.refresh(); // Extend lock if needed
+     *   }
+     * } finally {
+     *   await lock.release();
+     * }
+     * ```
      */
     async acquireLock(packId, options) {
         const ttl = options?.ttl ?? 30000; // Default 30 second TTL
@@ -851,7 +1348,29 @@ export class R2PackStorage {
     }
 }
 /**
- * Serialize a multi-pack index to bytes
+ * Serializes a multi-pack index to bytes.
+ *
+ * @description
+ * Converts a MultiPackIndex structure to the binary MIDX format.
+ * The format includes:
+ * - MIDX signature (4 bytes)
+ * - Version (4 bytes)
+ * - Pack count (4 bytes)
+ * - Entry count (4 bytes)
+ * - Pack IDs with length prefixes
+ * - Object entries (40 + 4 + 8 = 52 bytes each)
+ * - Checksum (20 bytes)
+ *
+ * @param midx - Multi-pack index to serialize
+ * @returns Serialized MIDX bytes
+ *
+ * @example
+ * ```typescript
+ * const bytes = serializeMultiPackIndex(midx);
+ * await bucket.put('packs/multi-pack-index', bytes);
+ * ```
+ *
+ * @internal
  */
 function serializeMultiPackIndex(midx) {
     // Calculate size
@@ -910,28 +1429,103 @@ function serializeMultiPackIndex(midx) {
 }
 // Standalone functions
 /**
- * Upload a packfile to R2
+ * Uploads a packfile to R2.
+ *
+ * @description
+ * Standalone function for uploading a packfile. Creates a temporary
+ * R2PackStorage instance internally.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packData - Raw packfile bytes
+ * @param indexData - Pack index file bytes
+ * @param options - Optional configuration including prefix
+ *
+ * @returns Upload result with pack ID, sizes, and checksum
+ *
+ * @throws {R2PackError} If packfile is invalid or upload fails
+ *
+ * @example
+ * ```typescript
+ * const result = await uploadPackfile(bucket, packData, indexData, {
+ *   prefix: 'repos/my-repo/'
+ * });
+ * console.log(`Uploaded: ${result.packId}`);
+ * ```
  */
 export async function uploadPackfile(bucket, packData, indexData, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
     return storage.uploadPackfile(packData, indexData);
 }
 /**
- * Download a packfile from R2
+ * Downloads a packfile from R2.
+ *
+ * @description
+ * Standalone function for downloading a packfile. Creates a temporary
+ * R2PackStorage instance internally.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to download
+ * @param options - Download options and prefix
+ *
+ * @returns Download result or null if not found
+ *
+ * @throws {R2PackError} If required=true and pack not found, or verification fails
+ *
+ * @example
+ * ```typescript
+ * const result = await downloadPackfile(bucket, packId, {
+ *   prefix: 'repos/my-repo/',
+ *   verify: true
+ * });
+ * ```
  */
 export async function downloadPackfile(bucket, packId, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
     return storage.downloadPackfile(packId, options);
 }
 /**
- * Get packfile metadata
+ * Gets packfile metadata.
+ *
+ * @description
+ * Standalone function for retrieving packfile metadata without downloading
+ * the full pack.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier
+ * @param options - Optional prefix configuration
+ *
+ * @returns Packfile metadata or null if not found
+ *
+ * @example
+ * ```typescript
+ * const metadata = await getPackfileMetadata(bucket, packId);
+ * if (metadata) {
+ *   console.log(`Objects: ${metadata.objectCount}`);
+ * }
+ * ```
  */
 export async function getPackfileMetadata(bucket, packId, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
     return storage.getPackfileMetadata(packId);
 }
 /**
- * List all packfiles
+ * Lists all packfiles.
+ *
+ * @description
+ * Standalone function for listing packfiles with pagination support.
+ *
+ * @param bucket - R2 bucket instance
+ * @param options - Prefix and pagination options
+ *
+ * @returns Array of packfile metadata
+ *
+ * @example
+ * ```typescript
+ * const packs = await listPackfiles(bucket, {
+ *   prefix: 'repos/my-repo/',
+ *   limit: 50
+ * });
+ * ```
  */
 export async function listPackfiles(bucket, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
@@ -939,14 +1533,44 @@ export async function listPackfiles(bucket, options) {
     return result.items;
 }
 /**
- * Delete a packfile
+ * Deletes a packfile.
+ *
+ * @description
+ * Standalone function for deleting a packfile and its associated files.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to delete
+ * @param options - Optional prefix configuration
+ *
+ * @returns true if deleted, false if not found
+ *
+ * @example
+ * ```typescript
+ * if (await deletePackfile(bucket, packId)) {
+ *   console.log('Deleted');
+ * }
+ * ```
  */
 export async function deletePackfile(bucket, packId, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
     return storage.deletePackfile(packId);
 }
 /**
- * Create a multi-pack index from all packfiles in the bucket
+ * Creates a multi-pack index from all packfiles in the bucket.
+ *
+ * @description
+ * Standalone function that rebuilds the MIDX and returns the result.
+ *
+ * @param bucket - R2 bucket instance
+ * @param options - Optional prefix configuration
+ *
+ * @returns The newly created multi-pack index
+ *
+ * @example
+ * ```typescript
+ * const midx = await createMultiPackIndex(bucket, { prefix: 'repos/my-repo/' });
+ * console.log(`Indexed ${midx.entries.length} objects`);
+ * ```
  */
 export async function createMultiPackIndex(bucket, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
@@ -954,7 +1578,25 @@ export async function createMultiPackIndex(bucket, options) {
     return storage.getMultiPackIndex();
 }
 /**
- * Parse a multi-pack index from raw bytes
+ * Parses a multi-pack index from raw bytes.
+ *
+ * @description
+ * Deserializes the binary MIDX format into a MultiPackIndex structure.
+ * Validates the signature and format.
+ *
+ * @param data - Raw MIDX bytes
+ * @returns Parsed multi-pack index
+ *
+ * @throws {R2PackError} With code 'INVALID_DATA' if format is invalid
+ *
+ * @example
+ * ```typescript
+ * const midxData = await bucket.get('packs/multi-pack-index');
+ * if (midxData) {
+ *   const midx = parseMultiPackIndex(new Uint8Array(await midxData.arrayBuffer()));
+ *   console.log(`Contains ${midx.entries.length} objects`);
+ * }
+ * ```
  */
 export function parseMultiPackIndex(data) {
     if (data.length < 16) {
@@ -1016,7 +1658,27 @@ export function parseMultiPackIndex(data) {
     };
 }
 /**
- * Look up an object in the multi-pack index using binary search
+ * Looks up an object in the multi-pack index using binary search.
+ *
+ * @description
+ * Efficiently finds an object's location across all packs using O(log n)
+ * binary search on the sorted entries.
+ *
+ * @param midx - Multi-pack index to search
+ * @param objectId - 40-character hex SHA-1 object ID to find
+ *
+ * @returns Entry with pack index and offset, or null if not found
+ *
+ * @example
+ * ```typescript
+ * const midx = await storage.getMultiPackIndex();
+ * const entry = lookupObjectInMultiPack(midx, 'abc123...');
+ * if (entry) {
+ *   const packId = midx.packIds[entry.packIndex];
+ *   const offset = entry.offset;
+ *   console.log(`Found in ${packId} at offset ${offset}`);
+ * }
+ * ```
  */
 export function lookupObjectInMultiPack(midx, objectId) {
     const entries = midx.entries;
@@ -1043,15 +1705,61 @@ export function lookupObjectInMultiPack(midx, objectId) {
     return null;
 }
 /**
- * Acquire a lock on a packfile
+ * Acquires a lock on a packfile.
+ *
+ * @description
+ * Standalone function for acquiring a pack lock using distributed locking.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to lock
+ * @param options - Lock options and prefix
+ *
+ * @returns PackLock interface for managing the lock
+ *
+ * @throws {R2PackError} With code 'LOCKED' if lock cannot be acquired
+ *
+ * @example
+ * ```typescript
+ * const lock = await acquirePackLock(bucket, packId, {
+ *   prefix: 'repos/my-repo/',
+ *   timeout: 10000,
+ *   ttl: 30000
+ * });
+ *
+ * try {
+ *   // Do work
+ * } finally {
+ *   await lock.release();
+ * }
+ * ```
  */
 export async function acquirePackLock(bucket, packId, options) {
     const storage = new R2PackStorage({ bucket, prefix: options?.prefix });
     return storage.acquireLock(packId, options);
 }
 /**
- * Release a lock on a packfile
- * Note: This function requires a valid PackLock with a handle to properly release distributed locks
+ * Releases a lock on a packfile.
+ *
+ * @description
+ * Standalone function for releasing a pack lock.
+ *
+ * Note: This function requires a valid PackLock with a handle to properly
+ * release distributed locks. For best results, use the lock.release() method
+ * on the PackLock object returned from acquirePackLock.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to unlock
+ * @param options - Optional prefix configuration
+ *
+ * @example
+ * ```typescript
+ * // Preferred: use lock.release()
+ * const lock = await acquirePackLock(bucket, packId);
+ * await lock.release();
+ *
+ * // Alternative: use standalone function (less safe)
+ * await releasePackLock(bucket, packId);
+ * ```
  */
 export async function releasePackLock(bucket, packId, options) {
     // For backward compatibility, we just delete the lock file directly

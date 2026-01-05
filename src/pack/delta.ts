@@ -1,51 +1,155 @@
 /**
- * Git packfile delta encoding/decoding
+ * @fileoverview Git Packfile Delta Encoding/Decoding
  *
- * Git uses delta compression in packfiles to store objects efficiently.
- * A delta is a set of instructions to transform a base object into a target object.
+ * This module implements Git's delta compression algorithm, which is used in packfiles
+ * to efficiently store objects by encoding only the differences between similar objects.
  *
- * Delta format:
- * - Source (base) size: variable-length integer
- * - Target size: variable-length integer
- * - Instructions: sequence of copy or insert commands
+ * ## Delta Format Overview
  *
- * Instruction types:
- * - Copy (MSB=1): Copy bytes from source object
- *   Bits 0-3: which offset bytes are present
- *   Bits 4-6: which size bytes are present
- * - Insert (MSB=0): Insert literal bytes
- *   Bits 0-6: number of bytes to insert (1-127)
+ * A delta consists of:
+ * 1. **Source size** - Variable-length integer specifying the base object size
+ * 2. **Target size** - Variable-length integer specifying the result size
+ * 3. **Instructions** - Sequence of copy or insert commands
+ *
+ * ## Instruction Types
+ *
+ * ### Copy Instruction (MSB = 1)
+ * Copies a range of bytes from the source (base) object.
+ *
+ * | Bit    | Meaning                                   |
+ * |--------|-------------------------------------------|
+ * | 7      | Always 1 (copy marker)                    |
+ * | 6-4    | Which size bytes follow (bit mask)        |
+ * | 3-0    | Which offset bytes follow (bit mask)      |
+ *
+ * Following bytes encode offset (up to 4 bytes) and size (up to 3 bytes).
+ * If size is 0 after decoding, it means 0x10000 (65536).
+ *
+ * ### Insert Instruction (MSB = 0)
+ * Inserts literal bytes directly into the output.
+ *
+ * | Bit    | Meaning                                   |
+ * |--------|-------------------------------------------|
+ * | 7      | Always 0 (insert marker)                  |
+ * | 6-0    | Number of bytes to insert (1-127)         |
+ *
+ * The instruction byte is followed by that many literal bytes.
+ *
+ * @module pack/delta
+ * @see {@link https://git-scm.com/docs/pack-format} Git Pack Format Documentation
+ *
+ * @example
+ * // Apply a delta to reconstruct an object
+ * import { applyDelta } from './delta';
+ *
+ * const baseObject = getBaseObject();    // Uint8Array
+ * const deltaData = getDeltaData();      // Uint8Array from packfile
+ * const targetObject = applyDelta(baseObject, deltaData);
+ *
+ * @example
+ * // Create a delta between two objects
+ * import { createDelta } from './delta';
+ *
+ * const oldVersion = new TextEncoder().encode('Hello, World!');
+ * const newVersion = new TextEncoder().encode('Hello, Universe!');
+ * const delta = createDelta(oldVersion, newVersion);
  */
 
-/** Copy instruction type marker (MSB set) */
+/**
+ * Marker byte for copy instructions (MSB set).
+ * When the MSB is set, the instruction copies bytes from the base object.
+ *
+ * @constant {number}
+ */
 export const COPY_INSTRUCTION = 0x80
 
-/** Insert instruction type marker (MSB clear) */
+/**
+ * Marker byte for insert instructions (MSB clear).
+ * When the MSB is clear, the lower 7 bits indicate how many literal bytes follow.
+ *
+ * @constant {number}
+ */
 export const INSERT_INSTRUCTION = 0x00
 
-/** Result of parsing a delta header */
+/**
+ * Result of parsing a delta header (source or target size).
+ *
+ * @description Contains the decoded size value and the number of bytes
+ * consumed during parsing. Used to track position while reading delta data.
+ *
+ * @interface DeltaHeaderResult
+ */
 export interface DeltaHeaderResult {
+  /** The decoded size value */
   size: number
+  /** Number of bytes consumed from the input buffer */
   bytesRead: number
 }
 
-/** Delta instruction representation */
+/**
+ * Represents a single decoded delta instruction.
+ *
+ * @description Used for analyzing or debugging deltas. Each instruction
+ * is either a copy (from base object) or an insert (literal data).
+ *
+ * @interface DeltaInstruction
+ *
+ * @example
+ * // A copy instruction
+ * const copy: DeltaInstruction = {
+ *   type: 'copy',
+ *   offset: 100,  // Copy from base offset 100
+ *   size: 50      // Copy 50 bytes
+ * };
+ *
+ * @example
+ * // An insert instruction
+ * const insert: DeltaInstruction = {
+ *   type: 'insert',
+ *   size: 10,
+ *   data: new Uint8Array([...])  // 10 literal bytes
+ * };
+ */
 export interface DeltaInstruction {
+  /** Instruction type: 'copy' from base or 'insert' literal bytes */
   type: 'copy' | 'insert'
-  offset?: number  // For copy: offset in source
-  size: number     // For copy: bytes to copy; For insert: bytes to insert
-  data?: Uint8Array // For insert: the literal data
+  /** For copy: byte offset in the source/base object (undefined for insert) */
+  offset?: number
+  /** Number of bytes to copy or insert */
+  size: number
+  /** For insert: the literal bytes to insert (undefined for copy) */
+  data?: Uint8Array
 }
 
 /**
- * Parse a variable-length size from delta header
+ * Parses a variable-length size value from the delta header.
  *
- * Git uses a variable-length encoding where each byte's MSB indicates
- * if more bytes follow. The lower 7 bits of each byte contribute to the value.
+ * @description Reads the source or target size from a delta's header using
+ * Git's variable-length integer encoding. Each byte's MSB indicates whether
+ * more bytes follow, and the lower 7 bits contribute to the value.
  *
- * @param data The delta data buffer
- * @param offset Starting offset in the buffer
- * @returns The parsed size and number of bytes consumed
+ * **Encoding Details:**
+ * - Bytes are read sequentially
+ * - Lower 7 bits of each byte contribute to the result
+ * - MSB = 1 means more bytes follow
+ * - MSB = 0 means this is the last byte
+ * - Maximum of 10 bytes (supports values up to 2^70)
+ *
+ * @param {Uint8Array} data - The delta data buffer
+ * @param {number} offset - Starting byte offset in the buffer
+ * @returns {DeltaHeaderResult} Object with parsed size and bytes consumed
+ * @throws {Error} If data ends unexpectedly before size is complete
+ * @throws {Error} If size encoding exceeds maximum length (corrupted data)
+ *
+ * @example
+ * // Parse source and target sizes from delta
+ * let offset = 0;
+ * const source = parseDeltaHeader(delta, offset);
+ * offset += source.bytesRead;
+ * const target = parseDeltaHeader(delta, offset);
+ * offset += target.bytesRead;
+ *
+ * console.log(`Base size: ${source.size}, Target size: ${target.size}`);
  */
 export function parseDeltaHeader(data: Uint8Array, offset: number): DeltaHeaderResult {
   let size = 0
@@ -80,10 +184,14 @@ export function parseDeltaHeader(data: Uint8Array, offset: number): DeltaHeaderR
 }
 
 /**
- * Encode a size as a variable-length integer
+ * Encodes a size as a variable-length integer for delta headers.
  *
- * @param size The size to encode
- * @returns The encoded bytes
+ * @description Internal function that encodes sizes using Git's varint format.
+ * Used when creating delta headers that specify source and target sizes.
+ *
+ * @param {number} size - The size value to encode
+ * @returns {Uint8Array} The encoded bytes
+ * @internal
  */
 function encodeDeltaSize(size: number): Uint8Array {
   const bytes: number[] = []
@@ -101,12 +209,48 @@ function encodeDeltaSize(size: number): Uint8Array {
 }
 
 /**
- * Apply a delta to a base object to produce the target object
+ * Applies a delta to a base object to produce the target object.
  *
- * @param base The source/base object
- * @param delta The delta data
- * @returns The reconstructed target object
- * @throws Error if delta is invalid or sizes don't match
+ * @description Reconstructs the target object by executing the delta's copy and
+ * insert instructions against the base object. This is the core operation for
+ * unpacking delta-compressed objects in packfiles.
+ *
+ * **Delta Application Process:**
+ * 1. Parse source (base) size and verify it matches
+ * 2. Parse target size to allocate result buffer
+ * 3. Execute instructions sequentially:
+ *    - Copy: copy bytes from base object to result
+ *    - Insert: copy literal bytes from delta to result
+ * 4. Verify result size matches expected target size
+ *
+ * **Error Conditions:**
+ * - Base object size doesn't match delta's source size
+ * - Copy instruction references bytes outside base object
+ * - Instructions would overflow the result buffer
+ * - Result size doesn't match delta's target size
+ * - Invalid instruction byte (0x00)
+ *
+ * @param {Uint8Array} base - The source/base object to apply delta against
+ * @param {Uint8Array} delta - The delta data (decompressed from packfile)
+ * @returns {Uint8Array} The reconstructed target object
+ * @throws {Error} If base size doesn't match delta's source size
+ * @throws {Error} If delta contains invalid instructions
+ * @throws {Error} If copy would read beyond base object bounds
+ * @throws {Error} If result size doesn't match expected target size
+ *
+ * @example
+ * // Reconstruct an object from base + delta
+ * const base = await getObject(baseSha);
+ * const delta = decompressDeltaData(packData, offset);
+ * const target = applyDelta(base, delta);
+ *
+ * @example
+ * // Error handling
+ * try {
+ *   const target = applyDelta(base, delta);
+ * } catch (e) {
+ *   console.error('Delta application failed:', e.message);
+ * }
  */
 export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
   let offset = 0
@@ -191,16 +335,48 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
 }
 
 /**
- * Create a delta between two objects
+ * Creates a delta that transforms a base object into a target object.
  *
- * This uses a simple but effective algorithm:
- * 1. Build a hash table of 4-byte sequences in the base
- * 2. Scan the target looking for matches
- * 3. Emit copy instructions for matches, insert for non-matches
+ * @description Generates delta instructions that can reconstruct the target
+ * from the base object. Uses a hash-based algorithm to find matching sequences
+ * and emits copy/insert instructions accordingly.
  *
- * @param base The source/base object
- * @param target The target object to encode
- * @returns The delta data
+ * **Algorithm:**
+ * 1. Build a hash table of 4-byte sequences in the base object
+ * 2. Scan through the target looking for matches in the hash table
+ * 3. For each match found, verify and extend to maximum length
+ * 4. Emit copy instructions for matches (4+ bytes)
+ * 5. Emit insert instructions for non-matching data
+ *
+ * **Optimization Notes:**
+ * - Uses 4-byte window for hash matching
+ * - Minimum copy size is 4 bytes (smaller copies become inserts)
+ * - Insert instructions are limited to 127 bytes each
+ * - Empty base results in pure insert delta
+ * - Empty target results in headers-only delta
+ *
+ * **Output Format:**
+ * - Source size (varint)
+ * - Target size (varint)
+ * - Sequence of copy/insert instructions
+ *
+ * @param {Uint8Array} base - The source/base object
+ * @param {Uint8Array} target - The target object to encode as delta
+ * @returns {Uint8Array} The delta data (can be applied with {@link applyDelta})
+ *
+ * @example
+ * // Create a delta for similar files
+ * const v1 = new TextEncoder().encode('Hello, World!');
+ * const v2 = new TextEncoder().encode('Hello, Universe!');
+ * const delta = createDelta(v1, v2);
+ *
+ * // Delta should be smaller than v2 if there's good overlap
+ * console.log(`Original: ${v2.length}, Delta: ${delta.length}`);
+ *
+ * @example
+ * // Verify delta correctness
+ * const reconstructed = applyDelta(v1, delta);
+ * // reconstructed should equal v2
  */
 export function createDelta(base: Uint8Array, target: Uint8Array): Uint8Array {
   const instructions: Uint8Array[] = []
@@ -295,7 +471,16 @@ export function createDelta(base: Uint8Array, target: Uint8Array): Uint8Array {
 }
 
 /**
- * Simple hash function for a sequence of bytes
+ * Computes a simple hash of a byte sequence for delta matching.
+ *
+ * @description Uses a fast multiplicative hash (similar to djb2) for
+ * building the hash table used in delta creation.
+ *
+ * @param {Uint8Array} data - The data buffer
+ * @param {number} offset - Starting offset
+ * @param {number} length - Number of bytes to hash
+ * @returns {number} 32-bit hash value
+ * @internal
  */
 function hashBytes(data: Uint8Array, offset: number, length: number): number {
   let hash = 0
@@ -306,7 +491,18 @@ function hashBytes(data: Uint8Array, offset: number, length: number): number {
 }
 
 /**
- * Get the length of matching bytes between two arrays
+ * Finds the length of matching bytes between two array regions.
+ *
+ * @description Compares bytes starting from the given offsets and returns
+ * how many consecutive bytes match. Used to extend hash-based matches.
+ *
+ * @param {Uint8Array} a - First array
+ * @param {number} aOffset - Starting offset in first array
+ * @param {Uint8Array} b - Second array
+ * @param {number} bOffset - Starting offset in second array
+ * @param {number} maxLength - Maximum number of bytes to compare
+ * @returns {number} Number of matching bytes (0 to maxLength)
+ * @internal
  */
 function getMatchLength(
   a: Uint8Array, aOffset: number,
@@ -321,8 +517,16 @@ function getMatchLength(
 }
 
 /**
- * Emit insert instructions for a range of bytes
- * Insert commands can only handle 1-127 bytes, so we may need multiple
+ * Emits insert instructions for a range of literal bytes.
+ *
+ * @description Insert commands can only encode 1-127 bytes each, so this
+ * function splits larger ranges into multiple instructions as needed.
+ *
+ * @param {Uint8Array[]} instructions - Array to append instructions to
+ * @param {Uint8Array} data - Source data buffer
+ * @param {number} start - Starting offset (inclusive)
+ * @param {number} end - Ending offset (exclusive)
+ * @internal
  */
 function emitInserts(
   instructions: Uint8Array[],
@@ -344,7 +548,21 @@ function emitInserts(
 }
 
 /**
- * Emit a copy instruction
+ * Emits a copy instruction that copies bytes from the base object.
+ *
+ * @description Encodes a copy instruction using Git's compact format where
+ * only non-zero offset and size bytes are included, indicated by bit flags.
+ *
+ * **Encoding Details:**
+ * - Offset bytes (up to 4) are included based on bits 0-3 of command byte
+ * - Size bytes (up to 3) are included based on bits 4-6 of command byte
+ * - Size of 0x10000 (65536) is encoded as no size bytes (size=0 means 0x10000)
+ * - Offset of 0 means no offset bytes are included
+ *
+ * @param {Uint8Array[]} instructions - Array to append the instruction to
+ * @param {number} offset - Byte offset in base object to copy from
+ * @param {number} size - Number of bytes to copy
+ * @internal
  */
 function emitCopy(
   instructions: Uint8Array[],
@@ -402,7 +620,11 @@ function emitCopy(
 }
 
 /**
- * Concatenate multiple Uint8Arrays into one
+ * Concatenates multiple Uint8Arrays into a single array.
+ *
+ * @param {Uint8Array[]} arrays - Arrays to concatenate
+ * @returns {Uint8Array} Combined array
+ * @internal
  */
 function concatArrays(arrays: Uint8Array[]): Uint8Array {
   let totalLength = 0

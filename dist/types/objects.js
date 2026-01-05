@@ -1,19 +1,130 @@
-// Type guards
+/**
+ * @fileoverview Git Object Types and Serialization
+ *
+ * This module defines the core Git object types (blob, tree, commit, tag) and provides
+ * functions for serializing and deserializing these objects in the Git format.
+ *
+ * Git uses a content-addressable storage model where each object is identified by
+ * its SHA-1 hash. The format for each object type is:
+ * - Header: "{type} {size}\0"
+ * - Content: type-specific binary data
+ *
+ * @module types/objects
+ *
+ * @example
+ * ```typescript
+ * import { serializeBlob, parseBlob, isBlob } from './types/objects'
+ *
+ * // Create and serialize a blob
+ * const content = new TextEncoder().encode('Hello, World!')
+ * const serialized = serializeBlob(content)
+ *
+ * // Parse it back
+ * const blob = parseBlob(serialized)
+ * console.log(blob.type) // 'blob'
+ * ```
+ */
+// ============================================================================
+// Type Guards
+// ============================================================================
+/**
+ * Type guard to check if a GitObject is a BlobObject.
+ *
+ * @description
+ * Narrows the type of a GitObject to BlobObject based on the type field.
+ *
+ * @param obj - The Git object to check
+ * @returns True if the object is a blob, false otherwise
+ *
+ * @example
+ * ```typescript
+ * const obj: GitObject = getObject(sha)
+ * if (isBlob(obj)) {
+ *   // obj is now typed as BlobObject
+ *   const content = new TextDecoder().decode(obj.data)
+ * }
+ * ```
+ */
 export function isBlob(obj) {
     return obj.type === 'blob';
 }
+/**
+ * Type guard to check if a GitObject is a TreeObject.
+ *
+ * @description
+ * Narrows the type of a GitObject to TreeObject based on the type field.
+ *
+ * @param obj - The Git object to check
+ * @returns True if the object is a tree, false otherwise
+ *
+ * @example
+ * ```typescript
+ * const obj: GitObject = getObject(sha)
+ * if (isTree(obj)) {
+ *   // obj is now typed as TreeObject
+ *   for (const entry of obj.entries) {
+ *     console.log(entry.name, entry.mode)
+ *   }
+ * }
+ * ```
+ */
 export function isTree(obj) {
     return obj.type === 'tree';
 }
+/**
+ * Type guard to check if a GitObject is a CommitObject.
+ *
+ * @description
+ * Narrows the type of a GitObject to CommitObject based on the type field.
+ *
+ * @param obj - The Git object to check
+ * @returns True if the object is a commit, false otherwise
+ *
+ * @example
+ * ```typescript
+ * const obj: GitObject = getObject(sha)
+ * if (isCommit(obj)) {
+ *   // obj is now typed as CommitObject
+ *   console.log(obj.message, obj.author.name)
+ * }
+ * ```
+ */
 export function isCommit(obj) {
     return obj.type === 'commit';
 }
+/**
+ * Type guard to check if a GitObject is a TagObject.
+ *
+ * @description
+ * Narrows the type of a GitObject to TagObject based on the type field.
+ *
+ * @param obj - The Git object to check
+ * @returns True if the object is a tag, false otherwise
+ *
+ * @example
+ * ```typescript
+ * const obj: GitObject = getObject(sha)
+ * if (isTag(obj)) {
+ *   // obj is now typed as TagObject
+ *   console.log(obj.name, obj.message)
+ * }
+ * ```
+ */
 export function isTag(obj) {
     return obj.type === 'tag';
 }
-// Helper functions
+// ============================================================================
+// Helper Functions (internal)
+// ============================================================================
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+/**
+ * Convert a hexadecimal string to a Uint8Array.
+ *
+ * @param hex - Hexadecimal string (must have even length)
+ * @returns Binary representation as Uint8Array
+ * @internal
+ */
 function hexToBytes(hex) {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
@@ -21,12 +132,35 @@ function hexToBytes(hex) {
     }
     return bytes;
 }
+/**
+ * Convert a Uint8Array to a lowercase hexadecimal string.
+ *
+ * @param bytes - Binary data to convert
+ * @returns Lowercase hexadecimal string
+ * @internal
+ */
 function bytesToHex(bytes) {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+/**
+ * Format an Author object as a Git author/committer/tagger line.
+ *
+ * @param prefix - Line prefix ('author', 'committer', or 'tagger')
+ * @param author - Author information
+ * @returns Formatted line string
+ * @internal
+ */
 function formatAuthor(prefix, author) {
     return `${prefix} ${author.name} <${author.email}> ${author.timestamp} ${author.timezone}`;
 }
+/**
+ * Parse a Git author/committer/tagger line into an Author object.
+ *
+ * @param line - The full line including prefix
+ * @returns Parsed Author object
+ * @throws Error if the line format is invalid
+ * @internal
+ */
 function parseAuthorLine(line) {
     // Format: "author Name <email> timestamp timezone"
     // or "committer Name <email> timestamp timezone"
@@ -42,7 +176,29 @@ function parseAuthorLine(line) {
         timezone: match[4]
     };
 }
-// Serialization
+// ============================================================================
+// Serialization Functions
+// ============================================================================
+/**
+ * Serialize raw blob data into Git blob object format.
+ *
+ * @description
+ * Creates a complete Git blob object with header: "blob {size}\0{content}"
+ * This format is used for hashing and storage.
+ *
+ * @param data - Raw file content as binary data
+ * @returns Complete blob object with Git header
+ *
+ * @example
+ * ```typescript
+ * const content = new TextEncoder().encode('Hello, World!')
+ * const blob = serializeBlob(content)
+ * // blob contains: "blob 13\0Hello, World!"
+ *
+ * // Hash it to get the SHA
+ * const sha = await sha1(blob)
+ * ```
+ */
 export function serializeBlob(data) {
     // Git format: "blob <size>\0<content>"
     const header = encoder.encode(`blob ${data.length}\0`);
@@ -51,6 +207,27 @@ export function serializeBlob(data) {
     result.set(data, header.length);
     return result;
 }
+/**
+ * Serialize tree entries into Git tree object format.
+ *
+ * @description
+ * Creates a complete Git tree object with header and sorted entries.
+ * Each entry format: "{mode} {name}\0{20-byte-sha}"
+ * Entries are sorted by name with directories treated as having trailing slashes.
+ *
+ * @param entries - Array of tree entries to serialize
+ * @returns Complete tree object with Git header
+ *
+ * @example
+ * ```typescript
+ * const entries: TreeEntry[] = [
+ *   { mode: '100644', name: 'file.txt', sha: 'abc...' },
+ *   { mode: '040000', name: 'src', sha: 'def...' }
+ * ]
+ * const tree = serializeTree(entries)
+ * const sha = await sha1(tree)
+ * ```
+ */
 export function serializeTree(entries) {
     // Git format: "tree <size>\0<entries>"
     // Each entry: "<mode> <name>\0<20-byte-sha>"
@@ -85,6 +262,28 @@ export function serializeTree(entries) {
     result.set(content, header.length);
     return result;
 }
+/**
+ * Serialize commit data into Git commit object format.
+ *
+ * @description
+ * Creates a complete Git commit object with header and formatted content.
+ * The content includes tree SHA, parent SHAs, author, committer, and message.
+ *
+ * @param commit - Commit data (without 'type' and 'data' fields)
+ * @returns Complete commit object with Git header
+ *
+ * @example
+ * ```typescript
+ * const commit = serializeCommit({
+ *   tree: 'abc123...',
+ *   parents: ['parent1...'],
+ *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   message: 'Initial commit'
+ * })
+ * const sha = await sha1(commit)
+ * ```
+ */
 export function serializeCommit(commit) {
     // Git format: "commit <size>\0<content>"
     // Content:
@@ -107,6 +306,28 @@ export function serializeCommit(commit) {
     const header = `commit ${encoder.encode(content).length}\0`;
     return encoder.encode(header + content);
 }
+/**
+ * Serialize tag data into Git tag object format.
+ *
+ * @description
+ * Creates a complete Git tag object with header and formatted content.
+ * The content includes object SHA, object type, tag name, tagger (optional), and message.
+ *
+ * @param tag - Tag data (without 'type' and 'data' fields)
+ * @returns Complete tag object with Git header
+ *
+ * @example
+ * ```typescript
+ * const tag = serializeTag({
+ *   object: 'commitsha...',
+ *   objectType: 'commit',
+ *   name: 'v1.0.0',
+ *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   message: 'Release v1.0.0'
+ * })
+ * const sha = await sha1(tag)
+ * ```
+ */
 export function serializeTag(tag) {
     // Git format: "tag <size>\0<content>"
     // Content:
@@ -129,7 +350,27 @@ export function serializeTag(tag) {
     const header = `tag ${encoder.encode(content).length}\0`;
     return encoder.encode(header + content);
 }
-// Deserialization
+// ============================================================================
+// Deserialization (Parsing) Functions
+// ============================================================================
+/**
+ * Parse a Git blob object from its serialized format.
+ *
+ * @description
+ * Parses a complete Git blob object (with header) back into a BlobObject.
+ * Validates the header format and extracts the content.
+ *
+ * @param data - Complete blob object data including Git header
+ * @returns Parsed BlobObject
+ * @throws Error if the data is not a valid blob object (missing null byte or invalid header)
+ *
+ * @example
+ * ```typescript
+ * const rawBlob = await storage.getObject(sha)
+ * const blob = parseBlob(rawBlob)
+ * const content = new TextDecoder().decode(blob.data)
+ * ```
+ */
 export function parseBlob(data) {
     // Git format: "blob <size>\0<content>"
     // Find the null byte to separate header from content
@@ -148,6 +389,26 @@ export function parseBlob(data) {
         data: content
     };
 }
+/**
+ * Parse a Git tree object from its serialized format.
+ *
+ * @description
+ * Parses a complete Git tree object (with header) back into a TreeObject.
+ * Extracts all tree entries with their modes, names, and SHA references.
+ *
+ * @param data - Complete tree object data including Git header
+ * @returns Parsed TreeObject with entries array
+ * @throws Error if the data is not a valid tree object (missing null byte or invalid header)
+ *
+ * @example
+ * ```typescript
+ * const rawTree = await storage.getObject(sha)
+ * const tree = parseTree(rawTree)
+ * for (const entry of tree.entries) {
+ *   console.log(`${entry.mode} ${entry.name} ${entry.sha}`)
+ * }
+ * ```
+ */
 export function parseTree(data) {
     // Git format: "tree <size>\0<entries>"
     // Each entry: "<mode> <name>\0<20-byte-sha>"
@@ -184,6 +445,26 @@ export function parseTree(data) {
         entries
     };
 }
+/**
+ * Parse a Git commit object from its serialized format.
+ *
+ * @description
+ * Parses a complete Git commit object (with header) back into a CommitObject.
+ * Extracts tree SHA, parent SHAs, author, committer, and message.
+ *
+ * @param data - Complete commit object data including Git header
+ * @returns Parsed CommitObject
+ * @throws Error if the data is not a valid commit object (missing null byte, invalid header, or missing author/committer)
+ *
+ * @example
+ * ```typescript
+ * const rawCommit = await storage.getObject(sha)
+ * const commit = parseCommit(rawCommit)
+ * console.log(`Author: ${commit.author.name}`)
+ * console.log(`Message: ${commit.message}`)
+ * console.log(`Parents: ${commit.parents.length}`)
+ * ```
+ */
 export function parseCommit(data) {
     // Git format: "commit <size>\0<content>"
     const nullIndex = data.indexOf(0);
@@ -236,6 +517,26 @@ export function parseCommit(data) {
         message
     };
 }
+/**
+ * Parse a Git tag object from its serialized format.
+ *
+ * @description
+ * Parses a complete Git tag object (with header) back into a TagObject.
+ * Extracts object SHA, object type, tag name, tagger, and message.
+ *
+ * @param data - Complete tag object data including Git header
+ * @returns Parsed TagObject
+ * @throws Error if the data is not a valid tag object (missing null byte, invalid header, or missing tagger)
+ *
+ * @example
+ * ```typescript
+ * const rawTag = await storage.getObject(sha)
+ * const tag = parseTag(rawTag)
+ * console.log(`Tag: ${tag.name}`)
+ * console.log(`Points to: ${tag.object} (${tag.objectType})`)
+ * console.log(`Message: ${tag.message}`)
+ * ```
+ */
 export function parseTag(data) {
     // Git format: "tag <size>\0<content>"
     const nullIndex = data.indexOf(0);

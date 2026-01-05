@@ -1,16 +1,63 @@
 /**
- * Object Location Index
+ * @fileoverview Object Location Index Module
  *
- * Tracks the storage location of Git objects across multiple tiers:
- * - Hot: SQLite (local Durable Object storage for frequently accessed objects)
- * - R2: Packed in R2 object storage (for larger objects or archives)
- * - Parquet: Columnar format for cold storage analytics
+ * This module tracks the storage location of Git objects across multiple storage tiers.
+ * It provides a unified index for locating objects regardless of which tier contains
+ * the actual data.
  *
- * The index enables efficient object lookup regardless of which tier
- * contains the actual data.
+ * ## Storage Tiers
+ *
+ * - **Hot**: SQLite (local Durable Object storage for frequently accessed objects)
+ * - **R2**: Packed in R2 object storage (for larger objects or archives)
+ * - **Parquet**: Columnar format for cold storage analytics
+ *
+ * ## Features
+ *
+ * - O(1) object location lookup by SHA
+ * - Batch lookup for multiple objects
+ * - Tier-based statistics and querying
+ * - Object tracking during tier migrations
+ *
+ * @module storage/object-index
+ *
+ * @example
+ * ```typescript
+ * // Initialize the index with Durable Object storage
+ * const index = new ObjectIndex(storage);
+ *
+ * // Record an object location
+ * await index.recordLocation({
+ *   sha: 'abc123...def456',
+ *   tier: 'hot',
+ *   size: 1024,
+ *   type: 'blob'
+ * });
+ *
+ * // Look up an object
+ * const location = await index.lookupLocation('abc123...def456');
+ * if (location) {
+ *   console.log(`Object is in ${location.tier} tier`);
+ * }
+ * ```
  */
 /**
- * Validate SHA format (40 alphanumeric characters, allows hyphens)
+ * Validates SHA format (40 alphanumeric characters, allows hyphens).
+ *
+ * @description
+ * Ensures the SHA meets the expected format requirements. Throws an error
+ * if the SHA is invalid, which helps catch bugs early.
+ *
+ * @param sha - The SHA string to validate
+ *
+ * @throws {Error} If SHA format is invalid
+ *
+ * @example
+ * ```typescript
+ * validateSha('abc123def456789012345678901234567890abcd'); // OK
+ * validateSha('invalid'); // throws Error
+ * ```
+ *
+ * @internal
  */
 function validateSha(sha) {
     if (!sha || sha.length !== 40) {
@@ -25,15 +72,104 @@ function validateSha(sha) {
     }
 }
 /**
- * Object Index class for managing object locations across storage tiers
+ * Object Index class for managing object locations across storage tiers.
+ *
+ * @description
+ * Provides a centralized index for tracking where Git objects are stored
+ * in the tiered storage system. Uses SQLite (via Durable Object storage)
+ * for persistent, consistent storage of location metadata.
+ *
+ * ## Key Features
+ *
+ * - **Fast Lookups**: O(1) lookup by SHA using indexed SQLite queries
+ * - **Batch Operations**: Efficient bulk lookup for multiple objects
+ * - **Tier Tracking**: Query objects by storage tier
+ * - **Statistics**: Aggregate stats for monitoring and capacity planning
+ *
+ * ## Thread Safety
+ *
+ * The underlying Durable Object storage provides transactional guarantees,
+ * ensuring consistency even with concurrent access.
+ *
+ * @example
+ * ```typescript
+ * const index = new ObjectIndex(storage);
+ *
+ * // Record locations
+ * await index.recordLocation({
+ *   sha: 'abc123...',
+ *   tier: 'hot',
+ *   size: 1024,
+ *   type: 'blob'
+ * });
+ *
+ * // Look up a single object
+ * const location = await index.lookupLocation('abc123...');
+ *
+ * // Batch lookup
+ * const result = await index.batchLookup(['sha1', 'sha2', 'sha3']);
+ *
+ * // Get objects by tier
+ * const hotObjects = await index.getObjectsByTier('hot');
+ *
+ * // Get statistics
+ * const stats = await index.getStats();
+ * ```
  */
 export class ObjectIndex {
     _storage;
+    /**
+     * Creates a new ObjectIndex instance.
+     *
+     * @description
+     * Initializes the index with a Durable Object storage instance.
+     * The storage should have the object_index table already created
+     * by the schema migration.
+     *
+     * @param storage - Durable Object storage instance with SQL support
+     *
+     * @example
+     * ```typescript
+     * // In a Durable Object class
+     * constructor(state: DurableObjectState) {
+     *   this.index = new ObjectIndex(state.storage);
+     * }
+     * ```
+     */
     constructor(storage) {
         this._storage = storage;
     }
     /**
-     * Record the location of an object
+     * Records the location of an object in the index.
+     *
+     * @description
+     * Inserts or updates the location record for an object. If the object
+     * already exists in the index, its location is updated (upsert behavior).
+     *
+     * @param options - Location recording options including SHA, tier, size, etc.
+     *
+     * @throws {Error} If SHA format is invalid
+     *
+     * @example
+     * ```typescript
+     * // Record a new object in hot tier
+     * await index.recordLocation({
+     *   sha: 'abc123def456789012345678901234567890abcd',
+     *   tier: 'hot',
+     *   size: 1024,
+     *   type: 'blob'
+     * });
+     *
+     * // Record an object in R2 pack
+     * await index.recordLocation({
+     *   sha: 'def456789012345678901234567890abcdef12',
+     *   tier: 'r2',
+     *   packId: 'pack-abc123',
+     *   offset: 4096,
+     *   size: 2048,
+     *   type: 'tree'
+     * });
+     * ```
      */
     async recordLocation(options) {
         validateSha(options.sha);
@@ -43,7 +179,28 @@ export class ObjectIndex {
         this._storage.sql.exec('INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', options.sha, options.tier, packId, offset, options.size, options.type ?? null, updatedAt);
     }
     /**
-     * Look up the location of an object by SHA
+     * Looks up the location of an object by SHA.
+     *
+     * @description
+     * Retrieves the storage location for a single object. Returns null if
+     * the object is not found in the index.
+     *
+     * @param sha - The 40-character SHA-1 hash of the object
+     *
+     * @returns The object location or null if not found
+     *
+     * @example
+     * ```typescript
+     * const location = await index.lookupLocation('abc123...');
+     * if (location) {
+     *   console.log(`Object is in ${location.tier} tier`);
+     *   if (location.packId) {
+     *     console.log(`Pack: ${location.packId}, Offset: ${location.offset}`);
+     *   }
+     * } else {
+     *   console.log('Object not found');
+     * }
+     * ```
      */
     async lookupLocation(sha) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE sha = ?', sha);
@@ -54,7 +211,31 @@ export class ObjectIndex {
         return rows[0];
     }
     /**
-     * Perform batch lookup of multiple objects
+     * Performs batch lookup of multiple objects.
+     *
+     * @description
+     * Efficiently looks up locations for multiple objects in a single query.
+     * Returns both found locations and a list of missing SHAs.
+     *
+     * This is more efficient than multiple single lookups when you need
+     * to find several objects.
+     *
+     * @param shas - Array of SHA-1 hashes to look up
+     *
+     * @returns Result containing found locations and missing SHAs
+     *
+     * @example
+     * ```typescript
+     * const shas = ['sha1...', 'sha2...', 'sha3...'];
+     * const result = await index.batchLookup(shas);
+     *
+     * console.log(`Found ${result.found.size} objects`);
+     * console.log(`Missing ${result.missing.length} objects`);
+     *
+     * for (const [sha, location] of result.found) {
+     *   console.log(`${sha}: ${location.tier}`);
+     * }
+     * ```
      */
     async batchLookup(shas) {
         if (shas.length === 0) {
@@ -72,13 +253,59 @@ export class ObjectIndex {
         return { found, missing };
     }
     /**
-     * Update the location of an object (e.g., when moving between tiers)
+     * Updates the location of an object (e.g., when moving between tiers).
+     *
+     * @description
+     * Updates the tier, packId, and offset for an existing object.
+     * Use this when migrating objects between storage tiers.
+     *
+     * Note: This only updates existing records. If the object doesn't exist,
+     * no action is taken. Use `recordLocation` for upsert behavior.
+     *
+     * @param sha - The object's SHA-1 hash
+     * @param newTier - The new storage tier
+     * @param packId - Pack ID for r2/parquet tiers (optional)
+     * @param offset - Byte offset in pack file (optional)
+     *
+     * @example
+     * ```typescript
+     * // Migrate object from hot to R2
+     * await index.updateLocation(
+     *   'abc123...',
+     *   'r2',
+     *   'pack-new123',
+     *   1024
+     * );
+     *
+     * // Migrate object to hot tier
+     * await index.updateLocation('abc123...', 'hot');
+     * ```
      */
     async updateLocation(sha, newTier, packId, offset) {
         this._storage.sql.exec('UPDATE object_index SET tier = ?, pack_id = ?, offset = ? WHERE sha = ?', newTier, packId ?? null, offset ?? null, sha);
     }
     /**
-     * Get statistics about object distribution across tiers
+     * Gets statistics about object distribution across tiers.
+     *
+     * @description
+     * Returns aggregated statistics including object counts and total sizes
+     * for each storage tier. Useful for monitoring storage usage and
+     * capacity planning.
+     *
+     * @returns Statistics about objects in each tier
+     *
+     * @example
+     * ```typescript
+     * const stats = await index.getStats();
+     *
+     * console.log(`Total objects: ${stats.totalObjects}`);
+     * console.log('Hot tier:');
+     * console.log(`  Count: ${stats.hotCount}`);
+     * console.log(`  Size: ${(stats.hotSize / 1024 / 1024).toFixed(2)} MB`);
+     * console.log('R2 tier:');
+     * console.log(`  Count: ${stats.r2Count}`);
+     * console.log(`  Size: ${(stats.r2Size / 1024 / 1024).toFixed(2)} MB`);
+     * ```
      */
     async getStats() {
         // Get objects by tier and compute stats in code
@@ -104,14 +331,48 @@ export class ObjectIndex {
         };
     }
     /**
-     * Check if an object exists in the index
+     * Checks if an object exists in the index.
+     *
+     * @description
+     * Returns true if the object is tracked in the index, regardless of
+     * which tier it's stored in.
+     *
+     * @param sha - The object's SHA-1 hash
+     *
+     * @returns true if the object exists in the index
+     *
+     * @example
+     * ```typescript
+     * if (await index.exists('abc123...')) {
+     *   console.log('Object is tracked');
+     * } else {
+     *   console.log('Object is not in the index');
+     * }
+     * ```
      */
     async exists(sha) {
         const location = await this.lookupLocation(sha);
         return location !== null;
     }
     /**
-     * Delete an object from the index
+     * Deletes an object from the index.
+     *
+     * @description
+     * Removes the location record for an object. This does NOT delete
+     * the actual object data from storage - only the index entry.
+     *
+     * @param sha - The object's SHA-1 hash
+     *
+     * @returns true if the object was deleted, false if it didn't exist
+     *
+     * @example
+     * ```typescript
+     * if (await index.deleteLocation('abc123...')) {
+     *   console.log('Location record deleted');
+     * } else {
+     *   console.log('Object was not in the index');
+     * }
+     * ```
      */
     async deleteLocation(sha) {
         const result = this._storage.sql.exec('DELETE FROM object_index WHERE sha = ?', sha);
@@ -119,14 +380,52 @@ export class ObjectIndex {
         return rows.length > 0 && rows[0].changes > 0;
     }
     /**
-     * Get all objects in a specific tier
+     * Gets all objects in a specific tier.
+     *
+     * @description
+     * Returns all objects currently stored in the specified tier.
+     * Useful for migration planning or tier-specific operations.
+     *
+     * @param tier - The storage tier to query ('hot', 'r2', or 'parquet')
+     *
+     * @returns Array of object locations in the specified tier
+     *
+     * @example
+     * ```typescript
+     * // Get all hot tier objects
+     * const hotObjects = await index.getObjectsByTier('hot');
+     * console.log(`Hot tier has ${hotObjects.length} objects`);
+     *
+     * // Calculate total size
+     * const totalSize = hotObjects.reduce((sum, obj) => sum + obj.size, 0);
+     * console.log(`Total hot tier size: ${totalSize} bytes`);
+     * ```
      */
     async getObjectsByTier(tier) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE tier = ?', tier);
         return result.toArray();
     }
     /**
-     * Get all objects in a specific pack
+     * Gets all objects in a specific pack.
+     *
+     * @description
+     * Returns all objects stored in a particular packfile, sorted by offset.
+     * Useful for pack operations like repacking or verification.
+     *
+     * @param packId - The pack file identifier
+     *
+     * @returns Array of object locations in the pack, sorted by offset
+     *
+     * @example
+     * ```typescript
+     * const packObjects = await index.getObjectsByPack('pack-abc123');
+     * console.log(`Pack contains ${packObjects.length} objects`);
+     *
+     * // Objects are sorted by offset for sequential reading
+     * for (const obj of packObjects) {
+     *   console.log(`  ${obj.sha}: offset=${obj.offset}, size=${obj.size}`);
+     * }
+     * ```
      */
     async getObjectsByPack(packId) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE pack_id = ?', packId);
@@ -136,28 +435,95 @@ export class ObjectIndex {
     }
 }
 /**
- * Record the location of an object (standalone function)
+ * Records the location of an object (standalone function).
+ *
+ * @description
+ * Standalone function that creates a temporary ObjectIndex instance
+ * to record an object's location. Useful when you don't need to
+ * maintain an ObjectIndex instance.
+ *
+ * @param storage - Durable Object storage instance
+ * @param options - Location recording options
+ *
+ * @throws {Error} If SHA format is invalid
+ *
+ * @example
+ * ```typescript
+ * await recordLocation(storage, {
+ *   sha: 'abc123...',
+ *   tier: 'hot',
+ *   size: 1024,
+ *   type: 'blob'
+ * });
+ * ```
  */
 export async function recordLocation(storage, options) {
     const index = new ObjectIndex(storage);
     return index.recordLocation(options);
 }
 /**
- * Look up the location of an object by SHA (standalone function)
+ * Looks up the location of an object by SHA (standalone function).
+ *
+ * @description
+ * Standalone function for single object lookup. Creates a temporary
+ * ObjectIndex instance internally.
+ *
+ * @param storage - Durable Object storage instance
+ * @param sha - The object's SHA-1 hash
+ *
+ * @returns Object location or null if not found
+ *
+ * @example
+ * ```typescript
+ * const location = await lookupLocation(storage, 'abc123...');
+ * if (location) {
+ *   console.log(`Found in ${location.tier}`);
+ * }
+ * ```
  */
 export async function lookupLocation(storage, sha) {
     const index = new ObjectIndex(storage);
     return index.lookupLocation(sha);
 }
 /**
- * Perform batch lookup of multiple objects (standalone function)
+ * Performs batch lookup of multiple objects (standalone function).
+ *
+ * @description
+ * Standalone function for batch object lookup. More efficient than
+ * multiple single lookups when querying several objects.
+ *
+ * @param storage - Durable Object storage instance
+ * @param shas - Array of SHA-1 hashes to look up
+ *
+ * @returns Result containing found locations and missing SHAs
+ *
+ * @example
+ * ```typescript
+ * const result = await batchLookup(storage, ['sha1...', 'sha2...']);
+ * console.log(`Found: ${result.found.size}, Missing: ${result.missing.length}`);
+ * ```
  */
 export async function batchLookup(storage, shas) {
     const index = new ObjectIndex(storage);
     return index.batchLookup(shas);
 }
 /**
- * Get statistics about object distribution (standalone function)
+ * Gets statistics about object distribution (standalone function).
+ *
+ * @description
+ * Standalone function for retrieving object distribution statistics
+ * across storage tiers.
+ *
+ * @param storage - Durable Object storage instance
+ *
+ * @returns Statistics about objects in each tier
+ *
+ * @example
+ * ```typescript
+ * const stats = await getStats(storage);
+ * console.log(`Total: ${stats.totalObjects} objects`);
+ * console.log(`Hot: ${stats.hotCount}, R2: ${stats.r2Count}`);
+ * ```
  */
 export async function getStats(storage) {
     const index = new ObjectIndex(storage);

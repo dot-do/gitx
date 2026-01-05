@@ -1,40 +1,120 @@
 /**
- * MCP SDK Adapter
+ * @fileoverview MCP SDK Adapter
  *
  * This module provides a full-featured adapter for the MCP SDK,
  * including SDK initialization, tool registration, request/response
  * handling, error propagation, and connection lifecycle management.
+ *
+ * The SDK adapter extends the basic adapter with:
+ * - Multiple transport support (stdio, SSE, HTTP)
+ * - Connection state management and events
+ * - Request cancellation and progress reporting
+ * - Session management with client information
+ * - Ping/pong health checking
+ * - Graceful shutdown with pending request handling
+ *
+ * @module mcp/sdk-adapter
+ *
+ * @example
+ * // Create and start an SDK adapter
+ * import { createMCPSDKAdapter, MCPSDKTransport } from './sdk-adapter'
+ *
+ * const adapter = createMCPSDKAdapter({
+ *   name: 'git-mcp-server',
+ *   version: '1.0.0',
+ *   transports: ['stdio', 'http'],
+ *   capabilities: { tools: { listChanged: true } }
+ * })
+ *
+ * adapter.registerGitdoTools()
+ * await adapter.start()
+ *
+ * // Connect with a transport
+ * const transport = MCPSDKTransport.createStdio()
+ * await adapter.connect(transport)
+ *
+ * @example
+ * // Handle tool calls with progress
+ * const result = adapter.handleToolsCall({
+ *   name: 'git_log',
+ *   arguments: { maxCount: 100 }
+ * })
+ *
+ * adapter.onProgress((event) => {
+ *   console.log(`Progress: ${event.progress}/${event.total}`)
+ * })
+ *
+ * const output = await result
  */
 import { gitTools } from './tools';
 /**
- * MCP SDK Error codes - JSON-RPC 2.0 standard codes and MCP-specific codes
+ * MCP SDK Error codes - JSON-RPC 2.0 standard codes and MCP-specific codes.
+ *
+ * @description
+ * Enumeration of error codes used in MCP SDK responses. Follows JSON-RPC 2.0
+ * specification for standard errors and defines MCP-specific codes for
+ * resource, tool, and prompt operations.
+ *
+ * @enum {number}
  */
 export var MCPSDKErrorCode;
 (function (MCPSDKErrorCode) {
-    // JSON-RPC standard error codes
+    /** Parse error - Invalid JSON (-32700) */
     MCPSDKErrorCode[MCPSDKErrorCode["PARSE_ERROR"] = -32700] = "PARSE_ERROR";
+    /** Invalid Request - Not a valid Request object (-32600) */
     MCPSDKErrorCode[MCPSDKErrorCode["INVALID_REQUEST"] = -32600] = "INVALID_REQUEST";
+    /** Method not found - Method does not exist (-32601) */
     MCPSDKErrorCode[MCPSDKErrorCode["METHOD_NOT_FOUND"] = -32601] = "METHOD_NOT_FOUND";
+    /** Invalid params - Invalid method parameters (-32602) */
     MCPSDKErrorCode[MCPSDKErrorCode["INVALID_PARAMS"] = -32602] = "INVALID_PARAMS";
+    /** Internal error - Internal JSON-RPC error (-32603) */
     MCPSDKErrorCode[MCPSDKErrorCode["INTERNAL_ERROR"] = -32603] = "INTERNAL_ERROR";
-    // MCP-specific error codes
+    /** Tool not found - Requested tool does not exist (-32001) */
     MCPSDKErrorCode[MCPSDKErrorCode["TOOL_NOT_FOUND"] = -32001] = "TOOL_NOT_FOUND";
+    /** Resource not found - Requested resource does not exist (-32002) */
     MCPSDKErrorCode[MCPSDKErrorCode["RESOURCE_NOT_FOUND"] = -32002] = "RESOURCE_NOT_FOUND";
+    /** Prompt not found - Requested prompt does not exist (-32003) */
     MCPSDKErrorCode[MCPSDKErrorCode["PROMPT_NOT_FOUND"] = -32003] = "PROMPT_NOT_FOUND";
+    /** Capability not supported - Capability is not enabled (-32004) */
     MCPSDKErrorCode[MCPSDKErrorCode["CAPABILITY_NOT_SUPPORTED"] = -32004] = "CAPABILITY_NOT_SUPPORTED";
 })(MCPSDKErrorCode || (MCPSDKErrorCode = {}));
 /**
- * MCP SDK Error class
+ * MCP SDK Error class.
+ *
+ * @description
+ * Error class for MCP SDK operations. Encapsulates error code, message,
+ * and optional data. Can be converted to JSON-RPC format.
+ *
+ * @class MCPSDKError
+ * @extends Error
+ *
+ * @example
+ * throw new MCPSDKError(
+ *   MCPSDKErrorCode.TOOL_NOT_FOUND,
+ *   'Tool "unknown" not found'
+ * )
  */
 export class MCPSDKError extends Error {
+    /** The error code */
     code;
+    /** Optional additional error data */
     data;
+    /**
+     * Create a new MCP SDK error.
+     * @param code - The error code
+     * @param message - Human-readable error message
+     * @param data - Optional additional data
+     */
     constructor(code, message, data) {
         super(message);
         this.code = code;
         this.data = data;
         this.name = 'MCPSDKError';
     }
+    /**
+     * Convert to JSON-RPC error format.
+     * @returns Object suitable for JSON-RPC error responses
+     */
     toJSONRPC() {
         const result = {
             code: this.code,
@@ -47,28 +127,85 @@ export class MCPSDKError extends Error {
     }
 }
 /**
- * MCP SDK Adapter class
+ * MCP SDK Adapter class.
+ *
+ * @description
+ * Full-featured MCP adapter with advanced features including:
+ * - Multiple transport support (stdio, SSE, HTTP)
+ * - Connection lifecycle management with events
+ * - Request tracking, cancellation, and progress reporting
+ * - Session management with client capabilities
+ * - Health checking via ping/pong
+ * - Graceful shutdown with request draining
+ *
+ * @class MCPSDKAdapter
+ *
+ * @example
+ * const adapter = new MCPSDKAdapter({
+ *   name: 'git-server',
+ *   version: '1.0.0',
+ *   capabilities: { tools: { listChanged: true } }
+ * })
+ *
+ * adapter.onConnected(() => console.log('Connected!'))
+ * adapter.onError((err) => console.error(err))
+ *
+ * adapter.registerGitdoTools()
+ * await adapter.start()
  */
 export class MCPSDKAdapter {
+    /** @internal */
     config;
+    /** @internal */
     connectionState = 'disconnected';
+    /** @internal */
     tools = new Map();
+    /** @internal */
     toolIdCounter = 0;
+    /** @internal */
     session = null;
+    /** @internal */
     stateChangeListeners = [];
+    /** @internal */
     connectedListeners = [];
+    /** @internal */
     disconnectedListeners = [];
+    /** @internal */
     notificationListeners = new Map();
+    /** @internal */
     progressListeners = [];
+    /** @internal */
     errorListeners = [];
+    /** @internal */
     pongListeners = [];
+    /** @internal */
     connectionTimeoutListeners = [];
+    /** @internal */
     pendingRequests = new Map();
+    /** @internal */
     currentRequestId = 0;
+    /** Current transport connection */
     transport = null;
+    /** @internal */
     clientResponsive = true;
+    /** @internal */
     pingTimeoutId = null;
+    /** Whether to cleanup tools on shutdown */
     cleanupOnShutdown = false;
+    /**
+     * Create a new MCP SDK adapter.
+     *
+     * @param config - Optional configuration options
+     * @throws {Error} If name is explicitly set to empty string
+     *
+     * @example
+     * const adapter = new MCPSDKAdapter({
+     *   name: 'my-server',
+     *   version: '1.0.0',
+     *   mode: 'production',
+     *   logger: console
+     * })
+     */
     constructor(config) {
         // Validate configuration
         if (config?.name !== undefined && config.name === '') {
@@ -88,43 +225,50 @@ export class MCPSDKAdapter {
         };
     }
     /**
-     * Get the adapter configuration
+     * Get the adapter configuration.
+     * @returns Copy of the current configuration
      */
     getConfig() {
         return { ...this.config };
     }
     /**
-     * Get supported transports
+     * Get supported transports.
+     * @returns Array of supported transport types
      */
     getSupportedTransports() {
         return [...(this.config.transports || ['stdio'])];
     }
     /**
-     * Get protocol version
+     * Get protocol version.
+     * @returns The MCP protocol version string
      */
     getProtocolVersion() {
         return this.config.protocolVersion || '2024-11-05';
     }
     /**
-     * Get SDK version
+     * Get SDK version.
+     * @returns The SDK version string
      */
     getSDKVersion() {
         return '1.0.0';
     }
     /**
-     * Get capabilities
+     * Get capabilities.
+     * @returns Copy of the server capabilities configuration
      */
     getCapabilities() {
         return { ...this.config.capabilities };
     }
     /**
-     * Get connection state
+     * Get connection state.
+     * @returns Current connection state
      */
     getConnectionState() {
         return this.connectionState;
     }
     /**
-     * Set connection state and notify listeners
+     * Set connection state and notify listeners.
+     * @internal
      */
     setConnectionState(state) {
         this.connectionState = state;
@@ -143,25 +287,34 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Register a state change listener
+     * Register a state change listener.
+     * @param listener - Callback invoked when connection state changes
+     * @example
+     * adapter.onStateChange((state) => {
+     *   console.log(`State changed to: ${state}`)
+     * })
      */
     onStateChange(listener) {
         this.stateChangeListeners.push(listener);
     }
     /**
-     * Register a connected listener
+     * Register a connected listener.
+     * @param listener - Callback invoked when connection is established
      */
     onConnected(listener) {
         this.connectedListeners.push(listener);
     }
     /**
-     * Register a disconnected listener
+     * Register a disconnected listener.
+     * @param listener - Callback invoked when connection is lost
      */
     onDisconnected(listener) {
         this.disconnectedListeners.push(listener);
     }
     /**
-     * Register a notification listener
+     * Register a notification listener.
+     * @param type - Notification type to listen for (e.g., 'tools/list_changed')
+     * @param listener - Callback invoked when notification is emitted
      */
     onNotification(type, listener) {
         const listeners = this.notificationListeners.get(type) || [];
@@ -169,7 +322,8 @@ export class MCPSDKAdapter {
         this.notificationListeners.set(type, listeners);
     }
     /**
-     * Emit a notification
+     * Emit a notification.
+     * @internal
      */
     emitNotification(type) {
         const listeners = this.notificationListeners.get(type) || [];
@@ -178,31 +332,45 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Register a progress listener
+     * Register a progress listener.
+     * @param listener - Callback invoked when tool reports progress
      */
     onProgress(listener) {
         this.progressListeners.push(listener);
     }
     /**
-     * Register an error listener
+     * Register an error listener.
+     * @param listener - Callback invoked when an error occurs
      */
     onError(listener) {
         this.errorListeners.push(listener);
     }
     /**
-     * Register a pong listener
+     * Register a pong listener.
+     * @param listener - Callback invoked when pong response is received
      */
     onPong(listener) {
         this.pongListeners.push(listener);
     }
     /**
-     * Register a connection timeout listener
+     * Register a connection timeout listener.
+     * @param listener - Callback invoked when connection times out
      */
     onConnectionTimeout(listener) {
         this.connectionTimeoutListeners.push(listener);
     }
     /**
-     * Start the adapter
+     * Start the adapter.
+     *
+     * @description
+     * Initializes the adapter and transitions to connected state.
+     * Must be called before handling any requests.
+     *
+     * @returns Promise that resolves when started
+     * @throws {Error} If adapter is already started
+     *
+     * @example
+     * await adapter.start()
      */
     async start() {
         if (this.connectionState !== 'disconnected') {
@@ -214,7 +382,13 @@ export class MCPSDKAdapter {
         this.setConnectionState('connected');
     }
     /**
-     * Connect with a transport
+     * Connect with a transport.
+     *
+     * @description
+     * Attaches a transport and starts the adapter if not already running.
+     *
+     * @param transport - The transport to connect with
+     * @returns Promise that resolves when connected
      */
     async connect(transport) {
         this.transport = transport;
@@ -223,7 +397,20 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Shutdown the adapter
+     * Shutdown the adapter.
+     *
+     * @description
+     * Gracefully shuts down the adapter, optionally waiting for pending
+     * requests and cleaning up registered tools.
+     *
+     * @param options - Shutdown options
+     * @param options.graceful - If true, wait for pending requests
+     * @param options.timeout - Max time to wait for pending requests (ms)
+     * @param options.cleanup - If true, clear all registered tools
+     * @returns Promise that resolves when shutdown is complete
+     *
+     * @example
+     * await adapter.shutdown({ graceful: true, timeout: 5000, cleanup: true })
      */
     async shutdown(options) {
         const cleanup = options?.cleanup ?? false;
@@ -245,7 +432,8 @@ export class MCPSDKAdapter {
         this.setConnectionState('disconnected');
     }
     /**
-     * Wait for all pending requests to complete
+     * Wait for all pending requests to complete.
+     * @internal
      */
     async waitForPendingRequests() {
         while (this.pendingRequests.size > 0) {
@@ -253,7 +441,15 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Handle client initialization
+     * Handle client initialization.
+     *
+     * @description
+     * Processes the client's initialize request, validates protocol version,
+     * and creates a session.
+     *
+     * @param request - Client initialization request
+     * @returns Server info and capabilities
+     * @throws {MCPSDKError} If protocol version is incompatible
      */
     async handleClientInitialize(request) {
         // Validate protocol version
@@ -276,13 +472,31 @@ export class MCPSDKAdapter {
         };
     }
     /**
-     * Get current session
+     * Get current session.
+     * @returns Current session or null if not initialized
      */
     getSession() {
         return this.session;
     }
     /**
-     * Register a tool
+     * Register a tool.
+     *
+     * @description
+     * Adds a tool to the adapter's registry. Emits tools/list_changed notification.
+     *
+     * @param registration - Tool registration details
+     * @throws {Error} If schema type is invalid
+     * @throws {Error} If tool with same name already exists
+     *
+     * @example
+     * adapter.registerTool({
+     *   name: 'my_tool',
+     *   description: 'Does something',
+     *   inputSchema: { type: 'object', properties: {} },
+     *   handler: async (params, ctx) => ({
+     *     content: [{ type: 'text', text: 'Done' }]
+     *   })
+     * })
      */
     registerTool(registration) {
         // Validate schema type
@@ -304,7 +518,15 @@ export class MCPSDKAdapter {
         this.emitNotification('tools/list_changed');
     }
     /**
-     * Register multiple tools
+     * Register multiple tools.
+     *
+     * @description
+     * Batch registers multiple tools. More efficient than registering
+     * individually as it only emits one notification.
+     *
+     * @param registrations - Array of tool registrations
+     * @throws {Error} If any schema type is invalid
+     * @throws {Error} If any tool name already exists
      */
     registerTools(registrations) {
         for (const registration of registrations) {
@@ -328,14 +550,17 @@ export class MCPSDKAdapter {
         this.emitNotification('tools/list_changed');
     }
     /**
-     * Unregister a tool
+     * Unregister a tool.
+     * @param name - Name of the tool to unregister
      */
     unregisterTool(name) {
         this.tools.delete(name);
         this.emitNotification('tools/list_changed');
     }
     /**
-     * Get a tool by name
+     * Get a tool by name.
+     * @param name - Name of the tool to retrieve
+     * @returns Tool metadata (without handler) or undefined if not found
      */
     getTool(name) {
         const tool = this.tools.get(name);
@@ -349,7 +574,8 @@ export class MCPSDKAdapter {
         };
     }
     /**
-     * List all tools
+     * List all tools.
+     * @returns Array of tool metadata (without handlers)
      */
     listTools() {
         const result = [];
@@ -364,7 +590,11 @@ export class MCPSDKAdapter {
         return result;
     }
     /**
-     * Register gitdo tools
+     * Register gitdo tools.
+     *
+     * @description
+     * Convenience method that registers all built-in git tools.
+     * Skips tools that are already registered.
      */
     registerGitdoTools() {
         for (const tool of gitTools) {
@@ -379,7 +609,14 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Handle tools/list request
+     * Handle tools/list request.
+     *
+     * @description
+     * Returns paginated list of registered tools. Supports cursor-based pagination.
+     *
+     * @param options - Pagination options
+     * @param options.cursor - Pagination cursor from previous response
+     * @returns Paginated tool list with optional next cursor
      */
     async handleToolsList(options) {
         const allTools = this.listTools();
@@ -404,7 +641,23 @@ export class MCPSDKAdapter {
         return result;
     }
     /**
-     * Handle tools/call request
+     * Handle tools/call request.
+     *
+     * @description
+     * Executes a tool and returns the result. Provides progress reporting
+     * and cancellation support through the tool context.
+     *
+     * @param request - Tool call request with name and arguments
+     * @returns Promise with result and requestId for tracking
+     * @throws {MCPSDKError} If tool not found or parameters invalid
+     *
+     * @example
+     * const call = adapter.handleToolsCall({
+     *   name: 'git_status',
+     *   arguments: { short: true }
+     * })
+     * console.log(`Request ID: ${call.requestId}`)
+     * const result = await call
      */
     handleToolsCall(request) {
         // Generate requestId upfront for consistent tracking
@@ -473,7 +726,13 @@ export class MCPSDKAdapter {
         return promise;
     }
     /**
-     * Cancel a request
+     * Cancel a request.
+     *
+     * @description
+     * Marks a pending request as cancelled. The tool handler can check
+     * cancellation status via context.isCancelled().
+     *
+     * @param requestId - The request ID to cancel
      */
     cancelRequest(requestId) {
         if (requestId) {
@@ -484,7 +743,14 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Handle raw JSON-RPC message
+     * Handle raw JSON-RPC message.
+     *
+     * @description
+     * Parses and processes a raw JSON-RPC message string. Routes to
+     * appropriate handlers based on the method.
+     *
+     * @param message - Raw JSON-RPC message string
+     * @returns JSON-RPC response string
      */
     async handleMessage(message) {
         let parsed;
@@ -565,7 +831,8 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Simulate a pending request (for testing)
+     * Simulate a pending request (for testing).
+     * @internal
      */
     simulatePendingRequest() {
         const requestId = `sim-req-${++this.currentRequestId}`;
@@ -577,7 +844,8 @@ export class MCPSDKAdapter {
         };
     }
     /**
-     * Simulate an internal error (for testing)
+     * Simulate an internal error (for testing).
+     * @internal
      */
     simulateInternalError(error) {
         const mcpError = new MCPSDKError(MCPSDKErrorCode.INTERNAL_ERROR, error.message);
@@ -586,7 +854,7 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Send ping
+     * Send ping to check client responsiveness.
      */
     sendPing() {
         // Simulate ping/pong
@@ -609,7 +877,8 @@ export class MCPSDKAdapter {
         }
     }
     /**
-     * Simulate client becoming unresponsive (for testing)
+     * Simulate client becoming unresponsive (for testing).
+     * @internal
      */
     simulateClientUnresponsive() {
         this.clientResponsive = false;
@@ -618,7 +887,21 @@ export class MCPSDKAdapter {
     }
 }
 /**
- * Transport factory
+ * Transport factory.
+ *
+ * @description
+ * Factory object for creating transport instances. Provides methods
+ * for creating stdio, SSE, and HTTP transports.
+ *
+ * @example
+ * // Create a stdio transport
+ * const transport = MCPSDKTransport.createStdio()
+ *
+ * // Create an SSE transport
+ * const sseTransport = MCPSDKTransport.createSSE({ endpoint: '/sse' })
+ *
+ * // Create an HTTP transport
+ * const httpTransport = MCPSDKTransport.createHTTP({ endpoint: '/api' })
  */
 export const MCPSDKTransport = {
     createStdio(_options) {
@@ -664,7 +947,26 @@ export const MCPSDKTransport = {
     },
 };
 /**
- * Factory function to create an MCP SDK adapter
+ * Factory function to create an MCP SDK adapter.
+ *
+ * @description
+ * Convenience function for creating a new MCP SDK adapter instance.
+ * Equivalent to using `new MCPSDKAdapter(config)`.
+ *
+ * @param config - Optional adapter configuration
+ * @returns A new MCPSDKAdapter instance
+ *
+ * @example
+ * import { createMCPSDKAdapter } from './sdk-adapter'
+ *
+ * const adapter = createMCPSDKAdapter({
+ *   name: 'git-server',
+ *   version: '1.0.0',
+ *   capabilities: { tools: { listChanged: true } }
+ * })
+ *
+ * adapter.registerGitdoTools()
+ * await adapter.start()
  */
 export function createMCPSDKAdapter(config) {
     return new MCPSDKAdapter(config);

@@ -1,26 +1,68 @@
 /**
- * Git receive-pack protocol implementation
+ * @fileoverview Git receive-pack Protocol Implementation
  *
- * The receive-pack service is the server-side of git push. It:
- * 1. Advertises refs and capabilities
- * 2. Receives ref updates and pack data
- * 3. Validates and applies the updates
+ * This module implements the server-side of Git's receive-pack service, which
+ * handles `git-push` operations. It receives ref updates and packfile data
+ * from clients and applies them to the repository.
  *
- * Protocol flow:
- * 1. Server advertises refs with capabilities
- * 2. Client sends ref update commands (old-sha new-sha refname)
- * 3. Client sends packfile with new objects
- * 4. Server validates packfile and updates refs
- * 5. Server sends status report (if report-status enabled)
+ * @module wire/receive-pack
  *
- * Reference: https://git-scm.com/docs/pack-protocol
- *            https://git-scm.com/docs/git-receive-pack
+ * ## Protocol Flow
+ *
+ * 1. **Ref Advertisement**: Server advertises current refs and capabilities
+ * 2. **Command Reception**: Client sends ref update commands (old-sha new-sha refname)
+ * 3. **Packfile Reception**: Client sends packfile with new objects (if needed)
+ * 4. **Validation**: Server validates packfile and ref updates
+ * 5. **Application**: Server applies updates and sends status report
+ *
+ * ## Security Considerations
+ *
+ * - Validates all SHA-1 hashes before processing
+ * - Checks fast-forward constraints for updates
+ * - Supports atomic pushes for consistency
+ * - Validates ref names according to Git rules
+ * - Supports pre-receive, update, and post-receive hooks
+ *
+ * @see {@link https://git-scm.com/docs/pack-protocol} Git Pack Protocol
+ * @see {@link https://git-scm.com/docs/git-receive-pack} git-receive-pack Documentation
+ *
+ * @example Basic push handling
+ * ```typescript
+ * import {
+ *   createReceiveSession,
+ *   advertiseReceiveRefs,
+ *   handleReceivePack
+ * } from './wire/receive-pack'
+ *
+ * // Create session and advertise refs
+ * const session = createReceiveSession('my-repo')
+ * const advertisement = await advertiseReceiveRefs(store, { atomic: true })
+ *
+ * // Handle push request
+ * const response = await handleReceivePack(session, requestBody, store)
+ * ```
  */
 import { encodePktLine, FLUSH_PKT } from './pkt-line';
 // ============================================================================
 // Constants
 // ============================================================================
-/** Zero SHA - used for ref creation and deletion */
+/**
+ * Zero SHA - used for ref creation and deletion.
+ *
+ * @description
+ * This 40-character string of zeros is used as a placeholder:
+ * - In `oldSha`: indicates a ref is being created (doesn't exist yet)
+ * - In `newSha`: indicates a ref is being deleted
+ *
+ * @example
+ * ```typescript
+ * // Check if this is a create operation
+ * const isCreate = cmd.oldSha === ZERO_SHA
+ *
+ * // Check if this is a delete operation
+ * const isDelete = cmd.newSha === ZERO_SHA
+ * ```
+ */
 export const ZERO_SHA = '0'.repeat(40);
 /** SHA-1 regex for validation */
 const SHA1_REGEX = /^[0-9a-f]{40}$/i;
@@ -31,7 +73,27 @@ const decoder = new TextDecoder();
 // Capability Functions
 // ============================================================================
 /**
- * Build capability string for receive-pack
+ * Build capability string for receive-pack advertisement.
+ *
+ * @description
+ * Converts a capabilities object into a space-separated string suitable
+ * for inclusion in the ref advertisement. Boolean capabilities become
+ * simple names, while capabilities with values become "name=value".
+ *
+ * @param capabilities - Capabilities to advertise
+ * @returns Space-separated capability string
+ *
+ * @example
+ * ```typescript
+ * const caps: ReceivePackCapabilities = {
+ *   reportStatus: true,
+ *   deleteRefs: true,
+ *   atomic: true,
+ *   agent: 'my-server/1.0'
+ * }
+ * const str = buildReceiveCapabilityString(caps)
+ * // 'report-status delete-refs atomic agent=my-server/1.0'
+ * ```
  */
 export function buildReceiveCapabilityString(capabilities) {
     const caps = [];
@@ -56,7 +118,25 @@ export function buildReceiveCapabilityString(capabilities) {
     return caps.join(' ');
 }
 /**
- * Parse capabilities from string
+ * Parse capabilities from string.
+ *
+ * @description
+ * Parses a space-separated capability string into a structured
+ * capabilities object.
+ *
+ * @param capsString - Space-separated capabilities
+ * @returns Parsed capabilities object
+ *
+ * @example
+ * ```typescript
+ * const caps = parseReceiveCapabilities(
+ *   'report-status delete-refs atomic agent=git/2.30.0'
+ * )
+ * // caps.reportStatus === true
+ * // caps.deleteRefs === true
+ * // caps.atomic === true
+ * // caps.agent === 'git/2.30.0'
+ * ```
  */
 export function parseReceiveCapabilities(capsString) {
     const caps = {};
@@ -90,7 +170,21 @@ export function parseReceiveCapabilities(capsString) {
 // Session Management
 // ============================================================================
 /**
- * Create a new receive-pack session
+ * Create a new receive-pack session.
+ *
+ * @description
+ * Initializes a new session for a receive-pack operation. The session
+ * tracks state across the protocol phases.
+ *
+ * @param repoId - Repository identifier for logging/tracking
+ * @returns New session object
+ *
+ * @example
+ * ```typescript
+ * const session = createReceiveSession('my-repo')
+ * // session.capabilities === {}
+ * // session.commands === []
+ * ```
  */
 export function createReceiveSession(repoId) {
     return {
@@ -103,7 +197,28 @@ export function createReceiveSession(repoId) {
 // Ref Advertisement
 // ============================================================================
 /**
- * Advertise refs to client
+ * Advertise refs to client.
+ *
+ * @description
+ * Generates the ref advertisement response for the initial phase of
+ * receive-pack. This includes:
+ * - HEAD reference with capabilities (or zero SHA for empty repos)
+ * - All refs sorted alphabetically
+ * - Peeled refs for annotated tags
+ *
+ * @param store - Object store to get refs from
+ * @param capabilities - Optional server capabilities to advertise
+ * @returns Pkt-line formatted ref advertisement
+ *
+ * @example
+ * ```typescript
+ * const advertisement = await advertiseReceiveRefs(store, {
+ *   reportStatus: true,
+ *   deleteRefs: true,
+ *   atomic: true
+ * })
+ * // Send as response to GET /info/refs?service=git-receive-pack
+ * ```
  */
 export async function advertiseReceiveRefs(store, capabilities) {
     const refs = await store.getRefs();
@@ -157,7 +272,31 @@ export async function advertiseReceiveRefs(store, capabilities) {
 // Command Parsing
 // ============================================================================
 /**
- * Parse a single command line
+ * Parse a single command line.
+ *
+ * @description
+ * Parses a ref update command line in the format:
+ * `<old-sha> <new-sha> <refname>[NUL<capabilities>]`
+ *
+ * The first command line may include capabilities after a NUL byte.
+ *
+ * @param line - Command line to parse
+ * @returns Parsed command object
+ *
+ * @throws {Error} If the line format is invalid or SHAs are malformed
+ *
+ * @example
+ * ```typescript
+ * // Simple command
+ * const cmd = parseCommandLine(
+ *   'abc123... def456... refs/heads/main'
+ * )
+ *
+ * // Command with capabilities (first line)
+ * const cmdWithCaps = parseCommandLine(
+ *   'abc123... def456... refs/heads/main\0report-status atomic'
+ * )
+ * ```
  */
 export function parseCommandLine(line) {
     // Check for capabilities after NUL byte
@@ -205,7 +344,9 @@ export function parseCommandLine(line) {
 }
 /**
  * Find flush packet index - must be at start of string or preceded by newline,
- * and not be part of a 40-character SHA
+ * and not be part of a 40-character SHA.
+ *
+ * @internal
  */
 function findFlushPacket(str, startPos = 0) {
     let searchPos = startPos;
@@ -232,7 +373,28 @@ function findFlushPacket(str, startPos = 0) {
     return -1;
 }
 /**
- * Parse complete receive-pack request
+ * Parse complete receive-pack request.
+ *
+ * @description
+ * Parses the full receive-pack request body, extracting:
+ * - Ref update commands
+ * - Capabilities (from first command)
+ * - Push options (if enabled)
+ * - Packfile data
+ *
+ * @param data - Raw request body as Uint8Array
+ * @returns Parsed request object
+ *
+ * @throws {Error} If the request format is invalid
+ *
+ * @example
+ * ```typescript
+ * const request = parseReceivePackRequest(requestBody)
+ * // request.commands - array of RefUpdateCommand
+ * // request.capabilities - capabilities from first command
+ * // request.packfile - packfile binary data
+ * // request.pushOptions - push options (if enabled)
+ * ```
  */
 export function parseReceivePackRequest(data) {
     const str = decoder.decode(data);
@@ -309,7 +471,28 @@ export function parseReceivePackRequest(data) {
 // Packfile Validation
 // ============================================================================
 /**
- * Validate packfile structure
+ * Validate packfile structure.
+ *
+ * @description
+ * Validates a packfile's structure, including:
+ * - PACK signature (4 bytes)
+ * - Version number (must be 2 or 3)
+ * - Object count
+ * - Checksum (if verifyChecksum option is true)
+ *
+ * @param packfile - Packfile binary data
+ * @param options - Validation options
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * const result = await validatePackfile(packData, { verifyChecksum: true })
+ * if (!result.valid) {
+ *   console.error('Invalid packfile:', result.error)
+ * } else {
+ *   console.log('Objects in pack:', result.objectCount)
+ * }
+ * ```
  */
 export async function validatePackfile(packfile, options) {
     // Handle empty packfile
@@ -361,7 +544,27 @@ export async function validatePackfile(packfile, options) {
     return { valid: true, objectCount };
 }
 /**
- * Unpack objects from packfile
+ * Unpack objects from packfile.
+ *
+ * @description
+ * Extracts and stores objects from a packfile into the object store.
+ * Handles both regular objects and delta-compressed objects.
+ *
+ * @param packfile - Packfile binary data
+ * @param _store - Object store to store unpacked objects
+ * @param options - Unpack options
+ * @returns Unpack result
+ *
+ * @example
+ * ```typescript
+ * const result = await unpackObjects(packfile, store, {
+ *   resolveDelta: true,
+ *   onProgress: (msg) => console.log(msg)
+ * })
+ * if (result.success) {
+ *   console.log('Unpacked', result.objectsUnpacked, 'objects')
+ * }
+ * ```
  */
 export async function unpackObjects(packfile, _store, options) {
     const unpackedShas = [];
@@ -409,7 +612,29 @@ export async function unpackObjects(packfile, _store, options) {
 // Ref Validation
 // ============================================================================
 /**
- * Validate ref name according to git rules
+ * Validate ref name according to git rules.
+ *
+ * @description
+ * Validates a ref name against Git's naming rules:
+ * - Must not be empty
+ * - Must not start or end with `/`
+ * - Must not contain `//` or `..`
+ * - Must not contain control characters
+ * - Must not contain spaces, `~`, `^`, `:`, or `@{`
+ * - Must not end with `.lock`
+ * - Components must not start with `.`
+ *
+ * @param refName - Ref name to validate
+ * @returns true if the ref name is valid
+ *
+ * @example
+ * ```typescript
+ * validateRefName('refs/heads/main')      // true
+ * validateRefName('refs/heads/feature')   // true
+ * validateRefName('refs/heads/.hidden')   // false (starts with .)
+ * validateRefName('refs/heads/a..b')      // false (contains ..)
+ * validateRefName('refs/heads/a b')       // false (contains space)
+ * ```
  */
 export function validateRefName(refName) {
     // Must not be empty
@@ -461,7 +686,30 @@ export function validateRefName(refName) {
     return true;
 }
 /**
- * Validate fast-forward update
+ * Validate fast-forward update.
+ *
+ * @description
+ * Checks if updating a ref from oldSha to newSha is a fast-forward.
+ * A fast-forward means oldSha is an ancestor of newSha.
+ *
+ * Creation and deletion are always allowed (not fast-forward questions).
+ *
+ * @param oldSha - Current ref value (or ZERO_SHA for create)
+ * @param newSha - New ref value (or ZERO_SHA for delete)
+ * @param store - Object store to check ancestry
+ * @returns true if the update is allowed
+ *
+ * @example
+ * ```typescript
+ * // Fast-forward update
+ * const ok = await validateFastForward(parent, child, store)  // true
+ *
+ * // Non-fast-forward update
+ * const notOk = await validateFastForward(child, parent, store)  // false
+ *
+ * // Creation always allowed
+ * const create = await validateFastForward(ZERO_SHA, sha, store)  // true
+ * ```
  */
 export async function validateFastForward(oldSha, newSha, store) {
     // Creation is always allowed
@@ -476,7 +724,29 @@ export async function validateFastForward(oldSha, newSha, store) {
     return store.isAncestor(oldSha, newSha);
 }
 /**
- * Check ref permissions
+ * Check ref permissions.
+ *
+ * @description
+ * Checks whether a ref operation is allowed based on:
+ * - Protected refs (cannot be modified)
+ * - Allowed ref patterns (must match at least one)
+ * - Force push restrictions on protected branches
+ *
+ * @param refName - Ref being modified
+ * @param operation - Type of operation
+ * @param options - Permission check options
+ * @returns Permission check result
+ *
+ * @example
+ * ```typescript
+ * const result = await checkRefPermissions(
+ *   'refs/heads/main',
+ *   'force-update',
+ *   { protectedRefs: ['refs/heads/main'] }
+ * )
+ * // result.allowed === false
+ * // result.reason === 'force push not allowed on protected branch'
+ * ```
  */
 export async function checkRefPermissions(refName, operation, options) {
     // Check protected refs
@@ -502,7 +772,8 @@ export async function checkRefPermissions(refName, operation, options) {
     return { allowed: true };
 }
 /**
- * Simple glob pattern matching
+ * Simple glob pattern matching.
+ * @internal
  */
 function matchPattern(str, pattern) {
     // Convert glob pattern to regex
@@ -517,7 +788,31 @@ function matchPattern(str, pattern) {
 // Ref Updates
 // ============================================================================
 /**
- * Process ref update commands
+ * Process ref update commands.
+ *
+ * @description
+ * Validates and processes ref update commands without actually
+ * applying them. Checks:
+ * - Ref name validity
+ * - Current ref state matches expected old SHA
+ * - Fast-forward constraints (unless force push)
+ * - Delete-refs capability for deletions
+ *
+ * @param session - Current session state
+ * @param commands - Commands to process
+ * @param store - Object store
+ * @param options - Processing options
+ * @returns Processing result with per-ref status
+ *
+ * @example
+ * ```typescript
+ * const result = await processCommands(session, commands, store)
+ * for (const refResult of result.results) {
+ *   if (!refResult.success) {
+ *     console.error(`Failed to update ${refResult.refName}: ${refResult.error}`)
+ *   }
+ * }
+ * ```
  */
 export async function processCommands(session, commands, store, options) {
     const results = [];
@@ -573,7 +868,20 @@ export async function processCommands(session, commands, store, options) {
     return { results };
 }
 /**
- * Update refs in the store
+ * Update refs in the store.
+ *
+ * @description
+ * Actually applies ref updates to the object store. Should only be
+ * called after validation via processCommands.
+ *
+ * @param commands - Commands to apply
+ * @param store - Object store
+ *
+ * @example
+ * ```typescript
+ * // After validation
+ * await updateRefs(commands, store)
+ * ```
  */
 export async function updateRefs(commands, store) {
     for (const cmd of commands) {
@@ -586,7 +894,25 @@ export async function updateRefs(commands, store) {
     }
 }
 /**
- * Atomic ref update - all or nothing
+ * Atomic ref update - all or nothing.
+ *
+ * @description
+ * Applies all ref updates atomically. If any update fails, all
+ * changes are rolled back to the original state.
+ *
+ * @param commands - Commands to apply
+ * @param store - Object store
+ * @returns Atomic update result
+ *
+ * @example
+ * ```typescript
+ * const result = await atomicRefUpdate(commands, store)
+ * if (result.success) {
+ *   console.log('All refs updated successfully')
+ * } else {
+ *   console.error('Atomic push failed, all changes rolled back')
+ * }
+ * ```
  */
 export async function atomicRefUpdate(commands, store) {
     const results = [];
@@ -642,7 +968,32 @@ export async function atomicRefUpdate(commands, store) {
     }
 }
 /**
- * Execute pre-receive hook
+ * Execute pre-receive hook.
+ *
+ * @description
+ * Runs the pre-receive hook before any refs are updated.
+ * The hook receives all commands and can reject the entire push.
+ *
+ * @param commands - Commands to be executed
+ * @param _store - Object store
+ * @param hookFn - Hook function to execute
+ * @param env - Environment variables for the hook
+ * @param options - Hook options
+ * @returns Hook result
+ *
+ * @example
+ * ```typescript
+ * const result = await executePreReceiveHook(
+ *   commands,
+ *   store,
+ *   async (cmds, env) => {
+ *     // Validate commands
+ *     return { success: true }
+ *   },
+ *   { GIT_DIR: '/path/to/repo' },
+ *   { timeout: 30000 }
+ * )
+ * ```
  */
 export async function executePreReceiveHook(commands, _store, hookFn, env = {}, options) {
     const timeout = options?.timeout || 30000;
@@ -661,7 +1012,30 @@ export async function executePreReceiveHook(commands, _store, hookFn, env = {}, 
     }
 }
 /**
- * Execute update hook for each ref
+ * Execute update hook for each ref.
+ *
+ * @description
+ * Runs the update hook for each ref being updated.
+ * Unlike pre-receive, this hook can reject individual refs.
+ *
+ * @param commands - Commands being executed
+ * @param _store - Object store
+ * @param hookFn - Hook function to execute per-ref
+ * @param env - Environment variables for the hook
+ * @returns Results for each ref
+ *
+ * @example
+ * ```typescript
+ * const { results } = await executeUpdateHook(
+ *   commands,
+ *   store,
+ *   async (refName, oldSha, newSha, env) => {
+ *     // Check if update is allowed for this ref
+ *     return { success: true }
+ *   },
+ *   { GIT_DIR: '/path/to/repo' }
+ * )
+ * ```
  */
 export async function executeUpdateHook(commands, _store, hookFn, env = {}) {
     const results = [];
@@ -676,7 +1050,33 @@ export async function executeUpdateHook(commands, _store, hookFn, env = {}) {
     return { results };
 }
 /**
- * Execute post-receive hook
+ * Execute post-receive hook.
+ *
+ * @description
+ * Runs the post-receive hook after all refs are updated.
+ * This hook cannot affect the push result but is useful for
+ * notifications, CI triggers, etc.
+ *
+ * @param commands - Commands that were executed
+ * @param results - Results of ref updates
+ * @param _store - Object store
+ * @param hookFn - Hook function to execute
+ * @param options - Hook options
+ * @returns Hook execution result
+ *
+ * @example
+ * ```typescript
+ * const { hookSuccess } = await executePostReceiveHook(
+ *   commands,
+ *   results,
+ *   store,
+ *   async (cmds, results, env) => {
+ *     // Trigger CI, send notifications, etc.
+ *     return { success: true }
+ *   },
+ *   { pushOptions: ['ci.skip'] }
+ * )
+ * ```
  */
 export async function executePostReceiveHook(commands, results, _store, hookFn, options) {
     // Filter to only successful updates
@@ -696,7 +1096,27 @@ export async function executePostReceiveHook(commands, results, _store, hookFn, 
     };
 }
 /**
- * Execute post-update hook
+ * Execute post-update hook.
+ *
+ * @description
+ * Runs the post-update hook with the names of successfully updated refs.
+ * Simpler than post-receive, takes only ref names as arguments.
+ *
+ * @param _commands - Commands that were executed
+ * @param results - Results of ref updates
+ * @param hookFn - Hook function to execute
+ *
+ * @example
+ * ```typescript
+ * await executePostUpdateHook(
+ *   commands,
+ *   results,
+ *   async (refNames) => {
+ *     console.log('Updated refs:', refNames)
+ *     return { success: true }
+ *   }
+ * )
+ * ```
  */
 export async function executePostUpdateHook(_commands, results, hookFn) {
     // Get successfully updated ref names
@@ -710,7 +1130,29 @@ export async function executePostUpdateHook(_commands, results, hookFn) {
 // Report Status Formatting
 // ============================================================================
 /**
- * Format report-status response
+ * Format report-status response.
+ *
+ * @description
+ * Creates a pkt-line formatted status report response to send
+ * to the client after processing the push. The format is:
+ * 1. Unpack status: "unpack ok" or "unpack <error>"
+ * 2. Ref status lines: "ok <refname>" or "ng <refname> <error>"
+ * 3. Flush packet
+ *
+ * @param input - Status report data
+ * @returns Pkt-line formatted status report
+ *
+ * @example
+ * ```typescript
+ * const report = formatReportStatus({
+ *   unpackStatus: 'ok',
+ *   refResults: [
+ *     { refName: 'refs/heads/main', success: true },
+ *     { refName: 'refs/heads/feature', success: false, error: 'non-fast-forward' }
+ *   ]
+ * })
+ * // "0010unpack ok\n0019ok refs/heads/main\n002cng refs/heads/feature non-fast-forward\n0000"
+ * ```
  */
 export function formatReportStatus(input) {
     const lines = [];
@@ -731,7 +1173,26 @@ export function formatReportStatus(input) {
     return lines.join('');
 }
 /**
- * Format report-status-v2 response
+ * Format report-status-v2 response.
+ *
+ * @description
+ * Creates an extended status report for report-status-v2 capability.
+ * Adds option lines before the unpack status and supports forced
+ * update indication.
+ *
+ * @param input - Status report data
+ * @returns Pkt-line formatted v2 status report
+ *
+ * @example
+ * ```typescript
+ * const report = formatReportStatusV2({
+ *   unpackStatus: 'ok',
+ *   refResults: [
+ *     { refName: 'refs/heads/main', success: true, forced: true }
+ *   ],
+ *   options: { 'object-format': 'sha1' }
+ * })
+ * ```
  */
 export function formatReportStatusV2(input) {
     const lines = [];
@@ -762,7 +1223,27 @@ export function formatReportStatusV2(input) {
     return lines.join('');
 }
 /**
- * Format rejection message
+ * Format rejection message.
+ *
+ * @description
+ * Creates a rejection message in the appropriate format based
+ * on the client's capabilities (side-band or report-status).
+ *
+ * @param refName - Ref that was rejected
+ * @param reason - Reason for rejection
+ * @param options - Formatting options
+ * @returns Formatted rejection message
+ *
+ * @example
+ * ```typescript
+ * // Side-band format
+ * const msg = rejectPush('refs/heads/main', 'protected branch', { sideBand: true })
+ * // Returns Uint8Array with side-band channel 3 message
+ *
+ * // Report-status format
+ * const msg = rejectPush('refs/heads/main', 'protected branch', { reportStatus: true })
+ * // Returns "ng refs/heads/main protected branch"
+ * ```
  */
 export function rejectPush(refName, reason, options) {
     if (options.sideBand) {
@@ -784,7 +1265,27 @@ export function rejectPush(refName, reason, options) {
 // Full Receive-Pack Handler
 // ============================================================================
 /**
- * Handle complete receive-pack request
+ * Handle complete receive-pack request.
+ *
+ * @description
+ * This is the main entry point that handles the full receive-pack
+ * protocol flow:
+ * 1. Parse request (commands, capabilities, packfile)
+ * 2. Validate and unpack packfile (if present)
+ * 3. Process each ref update command
+ * 4. Return status report (if requested)
+ *
+ * @param session - Receive pack session
+ * @param request - Raw request data
+ * @param store - Object store
+ * @returns Response data (status report or empty)
+ *
+ * @example
+ * ```typescript
+ * const session = createReceiveSession('my-repo')
+ * const response = await handleReceivePack(session, requestBody, store)
+ * // response contains status report if report-status was enabled
+ * ```
  */
 export async function handleReceivePack(session, request, store) {
     // Parse the request

@@ -1,0 +1,523 @@
+/**
+ * @fileoverview CLI Entry Point for gitx
+ *
+ * This module provides the main command-line interface for gitx, a git-compatible
+ * version control system. It handles argument parsing, command routing, and
+ * provides the foundation for all CLI subcommands.
+ *
+ * @module cli/index
+ *
+ * @example
+ * // Create and run CLI programmatically
+ * import { createCLI, runCLI } from './cli'
+ *
+ * const cli = createCLI({ name: 'gitx', version: '1.0.0' })
+ * cli.registerCommand('status', statusHandler)
+ * await cli.run(['status', '--short'])
+ *
+ * @example
+ * // Parse arguments without running
+ * import { parseArgs } from './cli'
+ *
+ * const parsed = parseArgs(['status', '--short', '--branch'])
+ * console.log(parsed.command) // 'status'
+ * console.log(parsed.options) // { short: true, branch: true }
+ */
+import cac from 'cac';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
+// ============================================================================
+// Constants
+// ============================================================================
+/** Available subcommands for the CLI */
+const SUBCOMMANDS = ['status', 'diff', 'log', 'blame', 'commit', 'branch', 'review', 'web'];
+/** Current CLI version */
+const VERSION = '0.0.1';
+/** CLI name */
+const NAME = 'gitx';
+// ============================================================================
+// CLI Class
+// ============================================================================
+/**
+ * Main CLI class for gitx command-line interface.
+ *
+ * @description Provides command registration, argument parsing, help generation,
+ * and command execution. Supports custom output streams for testing.
+ *
+ * @example
+ * const cli = new CLI({ name: 'gitx', version: '1.0.0' })
+ * cli.registerCommand('status', statusHandler)
+ * const result = await cli.run(['status', '--short'])
+ *
+ * @example
+ * // With custom output streams for testing
+ * const output: string[] = []
+ * const cli = new CLI({
+ *   stdout: (msg) => output.push(msg),
+ *   stderr: (msg) => output.push(`ERROR: ${msg}`)
+ * })
+ */
+export class CLI {
+    /** The name of the CLI tool */
+    name;
+    /** The version of the CLI tool */
+    version;
+    /** Registered command handlers */
+    handlers = new Map();
+    /** Function for standard output */
+    stdout;
+    /** Function for error output */
+    stderr;
+    /**
+     * Creates a new CLI instance.
+     *
+     * @description Initializes the CLI with optional name, version, and I/O functions.
+     * Defaults are provided for all options.
+     *
+     * @param options - Configuration options
+     * @param options.name - CLI name (default: 'gitx')
+     * @param options.version - CLI version (default: '0.0.1')
+     * @param options.stdout - Standard output function (default: console.log)
+     * @param options.stderr - Error output function (default: console.error)
+     *
+     * @example
+     * const cli = new CLI({ name: 'my-tool', version: '2.0.0' })
+     */
+    constructor(options = {}) {
+        this.name = options.name ?? NAME;
+        this.version = options.version ?? VERSION;
+        this.stdout = options.stdout ?? console.log;
+        this.stderr = options.stderr ?? console.error;
+    }
+    /**
+     * Registers a command handler for a subcommand.
+     *
+     * @description Associates a handler function with a command name. The handler
+     * will be invoked when that command is executed.
+     *
+     * @param name - The command name (e.g., 'status', 'diff')
+     * @param handler - The function to handle the command
+     *
+     * @example
+     * cli.registerCommand('status', async (ctx) => {
+     *   const status = await getStatus(ctx.cwd)
+     *   ctx.stdout(formatStatus(status))
+     * })
+     */
+    registerCommand(name, handler) {
+        this.handlers.set(name, handler);
+    }
+    /**
+     * Runs the CLI with the provided arguments.
+     *
+     * @description Parses arguments, handles help/version flags, validates commands,
+     * and executes the appropriate handler. Returns a result object with exit code.
+     *
+     * @param args - Command-line arguments (excluding 'node' and script name)
+     * @param options - Run options
+     * @param options.skipCwdCheck - Skip validation of --cwd directory existence
+     * @returns Promise<CLIResult> with exitCode, command, and potential error
+     *
+     * @throws Never throws directly - errors are captured in CLIResult.error
+     *
+     * @example
+     * const result = await cli.run(['status', '--short'])
+     * if (result.exitCode === 0) {
+     *   console.log('Success!')
+     * } else {
+     *   console.error('Failed:', result.error?.message)
+     * }
+     *
+     * @example
+     * // Skip cwd validation for testing
+     * const result = await cli.run(['status'], { skipCwdCheck: true })
+     */
+    async run(args, options = {}) {
+        const parsed = parseArgs(args);
+        // Check for help flag
+        if (parsed.options.help || parsed.options.h) {
+            if (parsed.command) {
+                this.stdout(this.getSubcommandHelp(parsed.command));
+            }
+            else {
+                this.stdout(this.getHelp());
+            }
+            return { exitCode: 0, command: parsed.command };
+        }
+        // Check for version flag (only when no command is specified)
+        // When a command is present, -v should be interpreted as verbose for that command
+        if (!parsed.command && (parsed.options.version || parsed.options.v)) {
+            this.stdout(`${this.name} ${this.version}`);
+            return { exitCode: 0 };
+        }
+        // For --version flag without command
+        if (!parsed.command && parsed.options.version) {
+            this.stdout(`${this.name} ${this.version}`);
+            return { exitCode: 0 };
+        }
+        // Check for unknown flags (flags starting with -- that aren't recognized)
+        const knownFlags = ['cwd', 'C', 'help', 'h', 'version', 'v', 'short', 'branch', 'staged',
+            'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'D', 'list',
+            'interactive', 'port', 'open', 'verbose', 'vv'];
+        for (const key of Object.keys(parsed.options)) {
+            if (!knownFlags.includes(key) && key !== '--') {
+                this.stderr(`Unknown option: --${key}\nRun 'gitx --help' for available commands.`);
+                return { exitCode: 1, error: new Error(`Unknown option: --${key}`) };
+            }
+        }
+        // If no command, show help
+        if (!parsed.command) {
+            this.stdout(this.getHelp());
+            return { exitCode: 0 };
+        }
+        // Check if command exists
+        if (!SUBCOMMANDS.includes(parsed.command) && !this.handlers.has(parsed.command)) {
+            const suggestion = this.suggestCommand(parsed.command);
+            let errorMsg = `Unknown command: ${parsed.command}`;
+            if (suggestion) {
+                errorMsg += `\nDid you mean '${suggestion}'?`;
+            }
+            errorMsg += `\nRun 'gitx --help' for available commands.`;
+            this.stderr(errorMsg);
+            return { exitCode: 1, command: parsed.command, error: new Error(`Unknown command: ${parsed.command}`) };
+        }
+        // Execute command handler if registered
+        const handler = this.handlers.get(parsed.command);
+        if (handler) {
+            try {
+                await handler({
+                    cwd: parsed.cwd,
+                    args: parsed.args,
+                    options: parsed.options,
+                    rawArgs: parsed.rawArgs,
+                    stdout: this.stdout,
+                    stderr: this.stderr
+                });
+                return { exitCode: 0, command: parsed.command };
+            }
+            catch (err) {
+                const error = err instanceof Error ? err : new Error(String(err));
+                this.stderr(`Error: ${error.message}`);
+                return { exitCode: 1, command: parsed.command, error };
+            }
+        }
+        // Check if --cwd directory exists (only for built-in commands without handlers)
+        if (parsed.cwd !== process.cwd() && !options.skipCwdCheck) {
+            if (!existsSync(parsed.cwd)) {
+                this.stderr(`Error: directory does not exist: ${parsed.cwd}`);
+                return { exitCode: 1, command: parsed.command, error: new Error(`directory does not exist: ${parsed.cwd}`) };
+            }
+        }
+        // Default behavior for built-in commands without handler
+        return { exitCode: 0, command: parsed.command };
+    }
+    /**
+     * Generates the main help text for the CLI.
+     *
+     * @description Creates formatted help output showing available commands,
+     * options, and usage information.
+     *
+     * @returns Formatted help string
+     */
+    getHelp() {
+        return `${this.name} v${this.version}
+
+Usage: ${this.name} [options] <command> [args...]
+
+Commands:
+  status    Show the working tree status
+  diff      Show changes between commits
+  log       Show commit logs
+  blame     Show what revision and author last modified each line
+  commit    Record changes to the repository
+  branch    List, create, or delete branches
+  review    Review pull requests
+  web       Start the web interface
+
+Options:
+  -h, --help     Show help
+  -v, --version  Show version
+  -C, --cwd      Set the working directory`;
+    }
+    /**
+     * Generates help text for a specific subcommand.
+     *
+     * @description Creates formatted help output for a specific command
+     * including its description and usage pattern.
+     *
+     * @param command - The command name to get help for
+     * @returns Formatted help string for the command
+     */
+    getSubcommandHelp(command) {
+        const descriptions = {
+            status: 'Show the working tree status',
+            diff: 'Show changes between commits',
+            log: 'Show commit logs',
+            blame: 'Show what revision and author last modified each line',
+            commit: 'Record changes to the repository',
+            branch: 'List, create, or delete branches',
+            review: 'Review pull requests',
+            web: 'Start the web interface'
+        };
+        return `${this.name} ${command}
+
+${descriptions[command] || 'Command help'}
+
+Usage: ${this.name} ${command} [options] [args...]`;
+    }
+    /**
+     * Suggests a command based on a misspelled input.
+     *
+     * @description Uses Levenshtein distance to find the closest matching
+     * command when the user enters an unknown command. Only suggests
+     * commands within a distance of 3 edits.
+     *
+     * @param input - The misspelled command input
+     * @returns The suggested command name, or null if no close match
+     */
+    suggestCommand(input) {
+        // Simple Levenshtein distance for typo detection
+        let minDistance = Infinity;
+        let suggestion = null;
+        for (const cmd of SUBCOMMANDS) {
+            const distance = levenshteinDistance(input, cmd);
+            if (distance < minDistance && distance <= 3) {
+                minDistance = distance;
+                suggestion = cmd;
+            }
+        }
+        return suggestion;
+    }
+}
+// ============================================================================
+// Utility Functions
+// ============================================================================
+/**
+ * Calculates the Levenshtein distance between two strings.
+ *
+ * @description Computes the minimum number of single-character edits
+ * (insertions, deletions, or substitutions) required to change one
+ * string into the other. Used for command suggestion/typo detection.
+ *
+ * @param a - First string
+ * @param b - Second string
+ * @returns The edit distance between the strings
+ *
+ * @example
+ * levenshteinDistance('status', 'staus') // Returns 1
+ * levenshteinDistance('commit', 'comit') // Returns 1
+ * levenshteinDistance('diff', 'branch') // Returns 6
+ */
+function levenshteinDistance(a, b) {
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+        matrix[0][j] = j;
+    }
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            }
+            else {
+                matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+            }
+        }
+    }
+    return matrix[b.length][a.length];
+}
+// ============================================================================
+// Exported Functions
+// ============================================================================
+/**
+ * Creates a new CLI instance with the provided options.
+ *
+ * @description Factory function for creating CLI instances. Provides a
+ * convenient way to instantiate the CLI with custom configuration.
+ *
+ * @param options - Configuration options for the CLI
+ * @param options.name - CLI name (default: 'gitx')
+ * @param options.version - CLI version (default: '0.0.1')
+ * @param options.stdout - Standard output function (default: console.log)
+ * @param options.stderr - Error output function (default: console.error)
+ * @returns A new CLI instance
+ *
+ * @example
+ * const cli = createCLI({ name: 'my-git', version: '1.0.0' })
+ * cli.registerCommand('status', statusHandler)
+ * await cli.run(['status'])
+ *
+ * @example
+ * // For testing with captured output
+ * const output: string[] = []
+ * const cli = createCLI({
+ *   stdout: (msg) => output.push(msg)
+ * })
+ */
+export function createCLI(options = {}) {
+    return new CLI(options);
+}
+/**
+ * Parses command-line arguments into a structured format.
+ *
+ * @description Uses the cac library to parse arguments, extracting the command,
+ * positional arguments, options/flags, and handling special cases like --cwd
+ * and the '--' separator for raw arguments.
+ *
+ * @param args - Array of command-line arguments (excluding 'node' and script name)
+ * @returns ParsedArgs object with command, args, options, rawArgs, and cwd
+ *
+ * @example
+ * const parsed = parseArgs(['status', '--short', '--branch'])
+ * // Returns: {
+ * //   command: 'status',
+ * //   args: [],
+ * //   options: { short: true, branch: true },
+ * //   rawArgs: [],
+ * //   cwd: process.cwd()
+ * // }
+ *
+ * @example
+ * const parsed = parseArgs(['--cwd', '/repo', 'diff', '--staged'])
+ * // Returns: {
+ * //   command: 'diff',
+ * //   args: [],
+ * //   options: { staged: true, cwd: '/repo' },
+ * //   rawArgs: [],
+ * //   cwd: '/repo'
+ * // }
+ *
+ * @example
+ * // With raw args after '--'
+ * const parsed = parseArgs(['commit', '-m', 'msg', '--', 'file.txt'])
+ * // Returns: {
+ * //   command: 'commit',
+ * //   args: [],
+ * //   options: { m: 'msg' },
+ * //   rawArgs: ['file.txt'],
+ * //   cwd: process.cwd()
+ * // }
+ */
+export function parseArgs(args) {
+    const cli = cac('gitx');
+    // Global options
+    cli.option('-C, --cwd <path>', 'Set the working directory');
+    cli.option('-h, --help', 'Show help');
+    cli.option('-v, --version', 'Show version');
+    // Status command options
+    cli.option('--short', 'Give the output in short format');
+    cli.option('--branch', 'Show the branch info');
+    // Diff command options
+    cli.option('--staged', 'Show staged changes');
+    cli.option('--cached', 'Show cached changes (alias for staged)');
+    // Log command options
+    cli.option('-n <count>', 'Limit the number of commits');
+    cli.option('--oneline', 'Show each commit on a single line');
+    cli.option('--graph', 'Draw a text-based graph');
+    cli.option('--all', 'Show all refs');
+    cli.option('--format <format>', 'Pretty-print format');
+    // Blame command options
+    cli.option('-L <range>', 'Line range');
+    // Commit command options
+    cli.option('-m <message>', 'Commit message');
+    cli.option('--amend', 'Amend the previous commit');
+    cli.option('-a', 'Stage all modified files');
+    // Branch command options
+    cli.option('-d', 'Delete a branch');
+    cli.option('-D', 'Force delete a branch');
+    cli.option('--list', 'List branches');
+    cli.option('-v, --verbose', 'Verbose output');
+    cli.option('-vv', 'Very verbose output');
+    // Review command options
+    cli.option('--interactive', 'Interactive review mode');
+    // Web command options
+    cli.option('--port <port>', 'Port number');
+    cli.option('--open', 'Open in browser');
+    // Parse arguments
+    const parsed = cli.parse(['node', 'gitx', ...args], { run: false });
+    // Extract command and args
+    const positionalArgs = parsed.args.slice(); // Clone to avoid mutation
+    let command;
+    const commandArgs = [];
+    let rawArgs = [];
+    // Find command from positional args
+    for (let i = 0; i < positionalArgs.length; i++) {
+        const arg = positionalArgs[i];
+        if (!command && SUBCOMMANDS.includes(arg)) {
+            command = arg;
+        }
+        else if (arg === '--') {
+            rawArgs = positionalArgs.slice(i + 1);
+            break;
+        }
+        else if (command) {
+            commandArgs.push(arg);
+        }
+        else if (!arg.startsWith('-')) {
+            // This is either a command we don't recognize or a positional arg before command
+            command = arg;
+        }
+    }
+    // Handle --cwd option
+    let cwd = process.cwd();
+    if (parsed.options.cwd) {
+        cwd = resolve(process.cwd(), parsed.options.cwd);
+    }
+    else if (parsed.options.C) {
+        cwd = resolve(process.cwd(), parsed.options.C);
+    }
+    // Get rawArgs from cac's '--' key
+    if (parsed.options['--'] && Array.isArray(parsed.options['--'])) {
+        rawArgs = parsed.options['--'];
+    }
+    // Clean up options object
+    const options = { ...parsed.options };
+    delete options['--'];
+    // Convert numeric options
+    if (options.n !== undefined && typeof options.n === 'string') {
+        options.n = parseInt(options.n, 10);
+    }
+    if (options.port !== undefined && typeof options.port === 'string') {
+        options.port = parseInt(options.port, 10);
+    }
+    return {
+        command,
+        args: commandArgs,
+        options,
+        rawArgs,
+        cwd
+    };
+}
+/**
+ * Convenience function to create a CLI and run it with the provided arguments.
+ *
+ * @description Creates a new CLI instance with the provided options and
+ * immediately runs it with the given arguments. Useful for simple one-off
+ * CLI executions.
+ *
+ * @param args - Command-line arguments to run
+ * @param options - CLI options including output streams
+ * @returns Promise<CLIResult> with exitCode, command, and potential error
+ *
+ * @example
+ * const result = await runCLI(['status', '--short'])
+ * console.log(result.exitCode) // 0 or 1
+ *
+ * @example
+ * // With custom output handling
+ * const output: string[] = []
+ * const result = await runCLI(['status'], {
+ *   stdout: (msg) => output.push(msg),
+ *   stderr: (msg) => console.error(msg)
+ * })
+ */
+export async function runCLI(args, options = {}) {
+    const cli = createCLI({
+        stdout: options.stdout,
+        stderr: options.stderr
+    });
+    return cli.run(args);
+}
+//# sourceMappingURL=index.js.map

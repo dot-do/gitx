@@ -1,17 +1,83 @@
 /**
- * Commit Graph Traversal
+ * @fileoverview Commit Graph Traversal
  *
  * Provides functionality for walking commit graphs, finding ancestors,
  * topological sorting, and revision range parsing.
+ *
+ * ## Features
+ *
+ * - Commit graph walking with various traversal strategies
+ * - Topological and date-based sorting
+ * - Revision range parsing (A..B, A...B syntax)
+ * - Ancestor and merge base finding
+ * - Path-based commit filtering
+ * - Author/date/message filtering
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { walkCommits, CommitWalker } from './ops/commit-traversal'
+ *
+ * // Walk commits from HEAD
+ * for await (const commit of walkCommits(provider, headSha, {
+ *   maxCount: 10,
+ *   sort: 'topological'
+ * })) {
+ *   console.log(commit.sha, commit.commit.message)
+ * }
+ *
+ * // Use CommitWalker for more control
+ * const walker = new CommitWalker(provider)
+ * walker.push(startSha)
+ * walker.hide(excludeSha) // Exclude this commit and its ancestors
+ *
+ * while (walker.hasNext()) {
+ *   const commit = await walker.next()
+ *   // Process commit...
+ * }
+ * ```
+ *
+ * @module ops/commit-traversal
  */
 // ============================================================================
 // CommitWalker Class
 // ============================================================================
 /**
- * Walker for traversing commit graphs
+ * Walker for traversing commit graphs.
  *
  * Supports various traversal strategies including topological sorting,
  * date-based sorting, path filtering, and revision ranges.
+ *
+ * The walker maintains state and can be used for incremental traversal,
+ * making it suitable for large repositories where you want to process
+ * commits in batches.
+ *
+ * @class CommitWalker
+ *
+ * @example
+ * ```typescript
+ * // Create walker
+ * const walker = new CommitWalker(provider, { firstParentOnly: true })
+ *
+ * // Add starting points
+ * walker.push('abc123')
+ * walker.push('def456')
+ *
+ * // Exclude certain commits
+ * walker.hide('old-base-sha')
+ *
+ * // Iterate
+ * let commit = await walker.next()
+ * while (commit) {
+ *   console.log(commit.sha)
+ *   commit = await walker.next()
+ * }
+ *
+ * // Or use async iteration
+ * for await (const commit of walker) {
+ *   console.log(commit.sha)
+ * }
+ * ```
  */
 export class CommitWalker {
     provider;

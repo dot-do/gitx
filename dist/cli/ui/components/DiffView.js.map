@@ -1,0 +1,1 @@
+{"version":3,"file":"DiffView.js","sourceRoot":"","sources":["../../../../src/cli/ui/components/DiffView.tsx"],"names":[],"mappings":"AAAA,2CAA2C;AAC3C,6BAA6B;AAS7B,MAAM,UAAU,QAAQ,CAAC,KAAoB;IAC3C,OAAO;QACL,IAAI,EAAE,UAAU;QAChB,KAAK;QACL,IAAI,EAAE,KAAK,CAAC,IAAI;QAChB,QAAQ,EAAE,KAAK,CAAC,QAAQ;KACzB,CAAA;AACH,CAAC"}

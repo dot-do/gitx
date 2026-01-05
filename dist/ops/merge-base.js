@@ -1,20 +1,56 @@
 /**
- * Merge Base Finding Operations
+ * @fileoverview Merge Base Finding Operations
  *
  * Provides functionality for finding merge bases between commits,
  * which is essential for merge operations, rebasing, and understanding
  * branch relationships in the commit graph.
  *
+ * ## What is a Merge Base?
+ *
  * A merge base is the best common ancestor(s) of two or more commits.
  * The "best" common ancestor is one that is not an ancestor of any
  * other common ancestor (i.e., a maximal common ancestor).
+ *
+ * ## Features
+ *
+ * - Find merge base(s) between two commits
+ * - Find merge bases for multiple commits (octopus merge)
+ * - Fork point detection
+ * - Ancestor relationship checking
+ * - Independent commit detection
+ * - Recursive merge base computation
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { findMergeBase, isAncestor } from './ops/merge-base'
+ *
+ * // Find the merge base between two branches
+ * const result = await findMergeBase(provider, [branchA, branchB])
+ * if (result.hasCommonHistory) {
+ *   console.log('Merge base:', result.bases[0])
+ * }
+ *
+ * // Check if one commit is an ancestor of another
+ * const isOld = await isAncestor(provider, oldCommit, newCommit)
+ * ```
+ *
+ * @module ops/merge-base
  */
 // ============================================================================
 // Helper Functions
 // ============================================================================
 /**
- * Get all ancestors of a commit (including itself)
- * Uses iterative BFS to avoid stack overflow with deep histories
+ * Gets all ancestors of a commit (including itself).
+ *
+ * Uses iterative BFS to avoid stack overflow with deep histories.
+ * This is the core function used by merge base finding algorithms.
+ *
+ * @param provider - The commit provider for fetching commits
+ * @param sha - The starting commit SHA
+ * @returns Set of all ancestor SHAs including the starting commit
+ *
+ * @internal
  */
 async function getAncestors(provider, sha) {
     const visited = new Set();
@@ -38,7 +74,16 @@ async function getAncestors(provider, sha) {
     return visited;
 }
 /**
- * Find all common ancestors of two commits
+ * Finds all common ancestors of two commits.
+ *
+ * Computes the intersection of ancestor sets for both commits.
+ *
+ * @param provider - The commit provider for fetching commits
+ * @param sha1 - First commit SHA
+ * @param sha2 - Second commit SHA
+ * @returns Set of all common ancestor SHAs
+ *
+ * @internal
  */
 async function findCommonAncestors(provider, sha1, sha2) {
     const ancestors1 = await getAncestors(provider, sha1);
@@ -52,8 +97,16 @@ async function findCommonAncestors(provider, sha1, sha2) {
     return common;
 }
 /**
- * Filter common ancestors to only keep maximal ones
- * (those that are not ancestors of any other common ancestor)
+ * Filters common ancestors to only keep maximal ones.
+ *
+ * A maximal ancestor is one that is not an ancestor of any other
+ * common ancestor. These are the "best" merge bases.
+ *
+ * @param provider - The commit provider for fetching commits
+ * @param commonAncestors - Set of all common ancestors
+ * @returns Array of maximal ancestor SHAs (the merge bases)
+ *
+ * @internal
  */
 async function filterToMaximalAncestors(provider, commonAncestors) {
     const ancestorsList = Array.from(commonAncestors);
@@ -355,12 +408,34 @@ export async function isAncestor(provider, potentialAncestor, commit) {
     return ancestors.has(potentialAncestor);
 }
 /**
- * Check ancestor relationship and return additional information
+ * Checks ancestor relationship and returns additional information.
+ *
+ * Unlike `isAncestor`, this function also computes the distance
+ * (number of commits) between the two commits if they are related.
+ *
+ * @description
+ * Uses BFS to find the shortest path from `commit` to `potentialAncestor`,
+ * which gives the minimum distance between them.
  *
  * @param provider - The commit provider for fetching commits
  * @param potentialAncestor - The commit to check as potential ancestor
  * @param commit - The commit to start walking from
- * @returns Detailed ancestor check result
+ * @returns Detailed ancestor check result with distance information
+ *
+ * @example
+ * ```typescript
+ * const result = await checkAncestor(provider, 'abc123', 'def456')
+ *
+ * if (result.isAncestor) {
+ *   if (result.distance === 0) {
+ *     console.log('Same commit')
+ *   } else {
+ *     console.log(`abc123 is ${result.distance} commits behind def456`)
+ *   }
+ * } else {
+ *   console.log('Not an ancestor')
+ * }
+ * ```
  */
 export async function checkAncestor(provider, potentialAncestor, commit) {
     // Same commit
@@ -511,11 +586,26 @@ export async function computeThreeWayMergeBase(provider, ours, theirs) {
     return findMergeBase(provider, [ours, theirs]);
 }
 /**
- * Check if commits have any common history
+ * Checks if commits have any common history.
+ *
+ * For multiple commits to share common history, every pair of commits
+ * must have at least one common ancestor.
+ *
+ * @description
+ * This is useful for detecting if branches can be merged without
+ * creating unrelated histories.
  *
  * @param provider - The commit provider for fetching commits
  * @param commits - List of commit SHAs to check
  * @returns True if all commits share common history
+ *
+ * @example
+ * ```typescript
+ * const canMerge = await hasCommonHistory(provider, [branchA, branchB, branchC])
+ * if (!canMerge) {
+ *   console.log('Warning: branches have unrelated histories')
+ * }
+ * ```
  */
 export async function hasCommonHistory(provider, commits) {
     if (commits.length <= 1) {
@@ -533,15 +623,35 @@ export async function hasCommonHistory(provider, commits) {
     return true;
 }
 /**
- * Calculate merge base for a recursive merge
+ * Calculates merge base for a recursive merge.
  *
  * When there are multiple merge bases (criss-cross merge situation),
- * this creates a virtual merge base by merging the merge bases.
+ * this creates a virtual merge base by recursively merging the merge bases.
+ *
+ * @description
+ * In a criss-cross merge situation, there can be multiple merge bases.
+ * The recursive strategy handles this by first finding the merge base
+ * of the merge bases, creating a "virtual" common ancestor.
+ *
+ * This is similar to Git's recursive merge strategy.
  *
  * @param provider - The commit provider for fetching commits
  * @param commit1 - First commit SHA
  * @param commit2 - Second commit SHA
- * @returns The recursive merge base
+ * @returns The recursive merge base result
+ *
+ * @example
+ * ```typescript
+ * // For a criss-cross merge situation:
+ * //     A---B---C (branch1)
+ * //    / \ / \
+ * //   O   X   (merge)
+ * //    \ / \ /
+ * //     D---E---F (branch2)
+ *
+ * const result = await computeRecursiveMergeBase(provider, 'C', 'F')
+ * // Returns a single merge base by recursively merging B and E's common ancestor
+ * ```
  */
 export async function computeRecursiveMergeBase(provider, commit1, commit2) {
     const allBases = await findAllMergeBases(provider, commit1, commit2);

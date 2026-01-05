@@ -1,34 +1,110 @@
 /**
- * Three-way merge implementation for Git
+ * @fileoverview Three-way Merge Implementation for Git
  *
- * This module provides functionality for merging branches using
- * three-way merge algorithm, including conflict detection and resolution.
+ * This module provides a complete implementation of Git's three-way merge algorithm,
+ * enabling branch merging with automatic conflict detection and resolution capabilities.
+ *
+ * ## Overview
+ *
+ * The three-way merge algorithm works by:
+ * 1. Finding the common ancestor (merge base) of two commits
+ * 2. Comparing both branches against this base to identify changes
+ * 3. Automatically merging non-conflicting changes
+ * 4. Detecting and reporting conflicts for manual resolution
+ *
+ * ## Supported Features
+ *
+ * - Fast-forward merges when possible
+ * - Three-way content merging for text files
+ * - Binary file detection and handling
+ * - Multiple conflict types (content, add-add, modify-delete, etc.)
+ * - Conflict resolution strategies (ours, theirs, custom)
+ * - Merge state persistence for multi-step conflict resolution
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { merge, resolveConflict, continueMerge } from './ops/merge'
+ *
+ * // Perform a merge
+ * const result = await merge(storage, currentBranchSha, featureBranchSha, {
+ *   message: 'Merge feature branch',
+ *   allowFastForward: true
+ * })
+ *
+ * if (result.status === 'conflicted') {
+ *   // Resolve conflicts
+ *   for (const conflict of result.conflicts) {
+ *     await resolveConflict(storage, conflict.path, { resolution: 'ours' })
+ *   }
+ *   // Complete the merge
+ *   await continueMerge(storage)
+ * }
+ * ```
+ *
+ * @module ops/merge
  */
 /**
  * Performs a three-way merge between the current branch and another commit.
  *
+ * @description
  * This function implements Git's three-way merge algorithm:
  * 1. Find the common ancestor (merge base) of the two commits
  * 2. Compare both sides against the base to identify changes
  * 3. Apply non-conflicting changes automatically
  * 4. Identify and report conflicts for manual resolution
  *
- * @param storage - The storage interface for reading/writing objects
+ * The merge can result in several outcomes:
+ * - **fast-forward**: If the current branch is an ancestor of the target,
+ *   the branch pointer is simply moved forward
+ * - **merged**: Changes were successfully combined into a merge commit
+ * - **conflicted**: Some changes conflict and require manual resolution
+ * - **up-to-date**: The target is already merged; nothing to do
+ *
+ * @param storage - The storage interface for reading/writing Git objects
  * @param oursSha - SHA of the current branch's HEAD commit
- * @param theirsSha - SHA of the commit to merge
- * @param options - Merge options
- * @returns MergeResult with status and any conflicts
+ * @param theirsSha - SHA of the commit to merge into the current branch
+ * @param options - Configuration options for the merge operation
+ *
+ * @returns A promise resolving to the merge result with status and any conflicts
+ *
+ * @throws {Error} When commit objects cannot be read
+ * @throws {Error} When tree objects cannot be parsed
+ * @throws {Error} When fastForwardOnly is true but fast-forward is not possible
  *
  * @example
  * ```typescript
+ * // Basic merge
  * const result = await merge(storage, 'abc123', 'def456', {
- *   message: 'Merge feature branch',
- *   allowFastForward: true
+ *   message: 'Merge feature branch'
  * })
  *
- * if (result.status === 'conflicted') {
- *   console.log('Conflicts:', result.conflicts)
+ * if (result.status === 'merged') {
+ *   console.log('Merge successful:', result.commitSha)
  * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Fast-forward only merge
+ * try {
+ *   const result = await merge(storage, 'abc123', 'def456', {
+ *     fastForwardOnly: true
+ *   })
+ *   console.log('Fast-forwarded to:', result.treeSha)
+ * } catch (error) {
+ *   console.log('Cannot fast-forward, branches have diverged')
+ * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Merge with auto-resolve conflicts using 'ours' strategy
+ * const result = await merge(storage, 'abc123', 'def456', {
+ *   autoResolve: true,
+ *   conflictStrategy: 'ours',
+ *   message: 'Merge with our changes taking precedence'
+ * })
  * ```
  */
 export async function merge(storage, oursSha, theirsSha, options = {}) {
@@ -210,7 +286,16 @@ export async function merge(storage, oursSha, theirsSha, options = {}) {
     };
 }
 /**
- * Generate a proper hex SHA string
+ * Generates a deterministic 40-character hex SHA from a seed string.
+ *
+ * @description
+ * Creates a SHA-like string for internal use. This is a simplified
+ * implementation for testing; production code should use proper SHA-1.
+ *
+ * @param seed - Input string to generate SHA from
+ * @returns 40-character hexadecimal string
+ *
+ * @internal
  */
 function generateHexSha(seed) {
     // Generate a proper 40-character hex string
@@ -225,7 +310,18 @@ function generateHexSha(seed) {
     return hex.padStart(8, '0').repeat(5).slice(0, 40);
 }
 /**
- * Get all entries from a tree recursively
+ * Recursively retrieves all entries from a tree object.
+ *
+ * @description
+ * Walks the tree structure recursively, collecting all file entries
+ * with their full paths from the repository root.
+ *
+ * @param storage - Storage interface for reading tree objects
+ * @param treeSha - SHA of the tree to read
+ * @param prefix - Path prefix for nested entries
+ * @returns Map of full path to tree entry info
+ *
+ * @internal
  */
 async function getTreeEntries(storage, treeSha, prefix = '') {
     const entries = new Map();
@@ -262,7 +358,16 @@ async function getTreeEntries(storage, treeSha, prefix = '') {
     return entries;
 }
 /**
- * Parse tree entries from raw tree data
+ * Parses tree entries from raw Git tree object data.
+ *
+ * @description
+ * Git tree format is: mode SP name NUL sha (20 bytes binary)
+ * This function parses that binary format into structured entries.
+ *
+ * @param data - Raw tree object content
+ * @returns Array of parsed tree entries
+ *
+ * @internal
  */
 function parseTreeEntries(data) {
     const entries = [];
@@ -291,7 +396,24 @@ function parseTreeEntries(data) {
     return entries;
 }
 /**
- * Merge a single file/entry
+ * Merges a single file entry using three-way merge logic.
+ *
+ * @description
+ * Compares the base, ours, and theirs versions of a single file
+ * and determines the merge result. Handles various cases:
+ * - File unchanged in one or both sides
+ * - File added/deleted on one or both sides
+ * - File modified on one or both sides (with content merge)
+ *
+ * @param storage - Storage interface for reading blob content
+ * @param path - Path of the file being merged
+ * @param baseEntry - Entry from the base (common ancestor)
+ * @param oursEntry - Entry from our branch
+ * @param theirsEntry - Entry from their branch
+ * @param stats - Statistics object to update
+ * @returns Merge result with either an entry or a conflict
+ *
+ * @internal
  */
 async function mergeEntry(storage, path, baseEntry, oursEntry, theirsEntry, stats) {
     // Case 1: File unchanged in both (same SHA and mode)
@@ -468,7 +590,13 @@ async function mergeEntry(storage, path, baseEntry, oursEntry, theirsEntry, stat
     return {};
 }
 /**
- * Get blob content from storage
+ * Retrieves blob content from storage.
+ *
+ * @param storage - Storage interface
+ * @param sha - SHA of the blob to read
+ * @returns Blob content or null if not found
+ *
+ * @internal
  */
 async function getBlobContent(storage, sha) {
     const obj = await storage.readObject(sha);
@@ -478,7 +606,17 @@ async function getBlobContent(storage, sha) {
     return obj.data;
 }
 /**
- * Build a tree from entries and write it to storage
+ * Builds a tree object from entries and writes it to storage.
+ *
+ * @description
+ * Takes a flat map of paths to entries and constructs the nested
+ * tree structure required by Git, writing subtrees as needed.
+ *
+ * @param storage - Storage interface for writing tree objects
+ * @param entries - Map of full paths to tree entries
+ * @returns SHA of the root tree object
+ *
+ * @internal
  */
 async function buildAndWriteTree(storage, entries) {
     // Group entries by top-level directory
@@ -553,7 +691,12 @@ async function buildAndWriteTree(storage, entries) {
     return storage.writeObject('tree', treeData);
 }
 /**
- * Convert hex string to bytes
+ * Converts a hex string to a 20-byte Uint8Array.
+ *
+ * @param hex - 40-character hexadecimal string
+ * @returns 20-byte array
+ *
+ * @internal
  */
 function hexToBytes(hex) {
     const bytes = new Uint8Array(20);
@@ -563,26 +706,54 @@ function hexToBytes(hex) {
     return bytes;
 }
 /**
- * Resolves a single merge conflict.
+ * Resolves a single merge conflict with the specified strategy.
  *
+ * @description
  * After a merge results in conflicts, use this function to resolve
- * individual files. Once all conflicts are resolved, use continueMerge()
- * to complete the merge.
+ * individual files. The resolution can use one of the three versions
+ * (ours, theirs, base) or provide custom merged content.
  *
- * @param storage - The storage interface
- * @param path - Path to the conflicted file
- * @param options - Resolution options
- * @returns ResolveResult indicating success and remaining conflicts
+ * Once all conflicts are resolved, use {@link continueMerge} to create
+ * the merge commit and complete the operation.
+ *
+ * @param storage - The storage interface for reading/writing objects
+ * @param path - Path to the conflicted file to resolve
+ * @param options - Resolution options specifying which version to use
+ *
+ * @returns A promise resolving to the resolution result
+ *
+ * @throws {Error} When no merge is in progress
+ * @throws {Error} When the specified path has no conflict
  *
  * @example
  * ```typescript
- * // Resolve using "ours" strategy
- * await resolveConflict(storage, 'src/file.ts', { resolution: 'ours' })
+ * // Resolve using our version
+ * const result = await resolveConflict(storage, 'src/file.ts', {
+ *   resolution: 'ours'
+ * })
+ * console.log(`${result.remainingConflicts} conflicts remaining`)
+ * ```
  *
- * // Resolve with custom content
- * await resolveConflict(storage, 'src/file.ts', {
+ * @example
+ * ```typescript
+ * // Resolve using their version
+ * await resolveConflict(storage, 'config.json', {
+ *   resolution: 'theirs'
+ * })
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Resolve with manually merged content
+ * const mergedContent = new TextEncoder().encode(`
+ *   // Manually resolved: kept both features
+ *   export function feature1() { ... }
+ *   export function feature2() { ... }
+ * `)
+ *
+ * await resolveConflict(storage, 'src/features.ts', {
  *   resolution: 'custom',
- *   customContent: new TextEncoder().encode('merged content')
+ *   customContent: mergedContent
  * })
  * ```
  */
@@ -691,17 +862,28 @@ export async function resolveConflict(storage, path, options) {
 /**
  * Aborts an in-progress merge operation.
  *
- * This restores the repository to its state before the merge began,
- * discarding any changes made during conflict resolution.
+ * @description
+ * Cancels the current merge and restores the repository to its state
+ * before the merge began. Any conflict resolutions or staged changes
+ * from the merge will be discarded.
+ *
+ * This is equivalent to `git merge --abort`.
  *
  * @param storage - The storage interface
- * @returns MergeOperationResult indicating success
+ *
+ * @returns A promise resolving to the operation result
+ *
+ * @throws {Error} When no merge is in progress
  *
  * @example
  * ```typescript
+ * // User decides to cancel the merge
  * const result = await abortMerge(storage)
+ *
  * if (result.success) {
- *   console.log('Merge aborted, HEAD is now', result.headSha)
+ *   console.log('Merge aborted, HEAD restored to', result.headSha)
+ * } else {
+ *   console.error('Failed to abort:', result.error)
  * }
  * ```
  */
@@ -728,20 +910,38 @@ export async function abortMerge(storage) {
 /**
  * Continues a merge after all conflicts have been resolved.
  *
- * This creates the merge commit with the resolved files and
- * cleans up the merge state.
+ * @description
+ * After resolving all conflicts using {@link resolveConflict}, call this
+ * function to create the merge commit and complete the merge operation.
+ * The merge state will be cleaned up automatically.
+ *
+ * This is equivalent to `git merge --continue` or `git commit` after
+ * resolving conflicts.
  *
  * @param storage - The storage interface
- * @param message - Optional commit message (overrides stored message)
- * @returns MergeOperationResult with the new commit SHA
+ * @param message - Optional commit message (overrides the stored message)
+ *
+ * @returns A promise resolving to the operation result with the new commit SHA
+ *
+ * @throws {Error} When no merge is in progress
+ * @throws {Error} When unresolved conflicts remain
  *
  * @example
  * ```typescript
  * // After resolving all conflicts
  * const result = await continueMerge(storage)
+ *
  * if (result.success) {
- *   console.log('Merge completed with commit', result.headSha)
+ *   console.log('Merge completed:', result.headSha)
+ * } else {
+ *   console.error('Cannot continue:', result.error)
  * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Continue with a custom commit message
+ * const result = await continueMerge(storage, 'Merge feature-x with conflict resolution')
  * ```
  */
 export async function continueMerge(storage, message) {
@@ -777,18 +977,42 @@ export async function continueMerge(storage, message) {
     };
 }
 /**
- * Helper to generate SHA-like strings
+ * Creates a SHA-like string from a prefix.
+ *
+ * @param prefix - String to use as the basis for the SHA
+ * @returns 40-character string
+ *
+ * @internal
  */
 function makeSha(prefix) {
     return prefix.padEnd(40, '0');
 }
 /**
- * Finds the best common ancestor (merge base) for two commits.
+ * Finds the best common ancestor (merge base) of two commits.
  *
- * @param storage - The storage interface
- * @param commit1 - First commit SHA
- * @param commit2 - Second commit SHA
- * @returns SHA of the merge base, or null if no common ancestor exists
+ * @description
+ * Implements the merge base algorithm by finding the most recent commit
+ * that is an ancestor of both input commits. This is the commit from
+ * which both branches diverged.
+ *
+ * Uses a breadth-first search from both commits to find their
+ * intersection in the commit graph.
+ *
+ * @param storage - The storage interface for reading commit objects
+ * @param commit1 - SHA of the first commit
+ * @param commit2 - SHA of the second commit
+ *
+ * @returns A promise resolving to the merge base SHA, or null if no common ancestor exists
+ *
+ * @example
+ * ```typescript
+ * const base = await findMergeBase(storage, 'feature-sha', 'main-sha')
+ * if (base) {
+ *   console.log('Common ancestor:', base)
+ * } else {
+ *   console.log('No common history')
+ * }
+ * ```
  */
 export async function findMergeBase(storage, commit1, commit2) {
     // Get all ancestors of commit1 (including itself)
@@ -836,7 +1060,13 @@ export async function findMergeBase(storage, commit1, commit2) {
     return null;
 }
 /**
- * Parse parent SHAs from commit data or get from extended object
+ * Parses parent commit SHAs from raw commit data.
+ *
+ * @param data - Raw commit object content
+ * @param extendedParents - Pre-parsed parents if available
+ * @returns Array of parent commit SHAs
+ *
+ * @internal
  */
 function parseCommitParents(data, extendedParents) {
     // If extended parents are provided, use them directly
@@ -857,7 +1087,13 @@ function parseCommitParents(data, extendedParents) {
     return parents;
 }
 /**
- * Parse tree SHA from commit data or get from extended object
+ * Parses the tree SHA from raw commit data.
+ *
+ * @param data - Raw commit object content
+ * @param treeSha - Pre-parsed tree SHA if available
+ * @returns Tree SHA or null if not found
+ *
+ * @internal
  */
 function parseCommitTree(data, treeSha) {
     // If extended tree SHA is provided, use it directly
@@ -876,7 +1112,12 @@ function parseCommitTree(data, treeSha) {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 /**
- * Split content into lines, preserving line endings
+ * Splits content into lines while preserving line endings.
+ *
+ * @param content - Binary content to split
+ * @returns Array of lines (without line ending characters)
+ *
+ * @internal
  */
 function splitLines(content) {
     const text = decoder.decode(content);
@@ -888,7 +1129,18 @@ function splitLines(content) {
     return text.split(/\r?\n/);
 }
 /**
- * Compute the longest common subsequence of two arrays
+ * Computes the longest common subsequence of two arrays.
+ *
+ * @description
+ * Uses dynamic programming to find the longest subsequence common
+ * to both arrays. Used as a building block for the diff algorithm.
+ *
+ * @param a - First array
+ * @param b - Second array
+ * @param equals - Function to compare elements for equality
+ * @returns Array containing the longest common subsequence
+ *
+ * @internal
  */
 function lcs(a, b, equals) {
     const m = a.length;
@@ -925,7 +1177,13 @@ function lcs(a, b, equals) {
     return result;
 }
 /**
- * Compute diff hunks between base and target
+ * Computes diff hunks between base and target line arrays.
+ *
+ * @param base - Original lines
+ * @param target - Modified lines
+ * @returns Array of hunks describing the differences
+ *
+ * @internal
  */
 function computeHunks(base, target) {
     const hunks = [];
@@ -966,7 +1224,13 @@ function computeHunks(base, target) {
     return hunks;
 }
 /**
- * Check if two hunks overlap in the base
+ * Checks if two hunks overlap in their base ranges.
+ *
+ * @param h1 - First hunk
+ * @param h2 - Second hunk
+ * @returns true if the hunks overlap
+ *
+ * @internal
  */
 function hunksOverlap(h1, h2) {
     // Hunks overlap if their base ranges intersect
@@ -975,7 +1239,13 @@ function hunksOverlap(h1, h2) {
     return !(end1 <= h2.baseStart || end2 <= h1.baseStart);
 }
 /**
- * Check if two hunks are at the same position (same base range and direction)
+ * Checks if two hunks represent the same change.
+ *
+ * @param h1 - First hunk
+ * @param h2 - Second hunk
+ * @returns true if the hunks are identical
+ *
+ * @internal
  */
 function hunksSameChange(h1, h2) {
     if (h1.baseStart !== h2.baseStart || h1.baseCount !== h2.baseCount) {
@@ -994,10 +1264,39 @@ function hunksSameChange(h1, h2) {
 /**
  * Performs a content-level three-way merge on text files.
  *
+ * @description
+ * Takes three versions of a file (base, ours, theirs) and attempts to
+ * automatically merge them. Non-conflicting changes are combined
+ * automatically. Conflicting changes are marked with standard Git
+ * conflict markers.
+ *
+ * The algorithm:
+ * 1. Compute the diff hunks from base to ours
+ * 2. Compute the diff hunks from base to theirs
+ * 3. Process hunks in order, detecting overlaps
+ * 4. Non-overlapping hunks are applied automatically
+ * 5. Overlapping hunks with identical changes are deduplicated
+ * 6. Overlapping hunks with different changes create conflict markers
+ *
  * @param base - Content of the base (common ancestor) version
- * @param ours - Content of our (current) version
- * @param theirs - Content of their (merged) version
- * @returns Merged content and any conflict markers
+ * @param ours - Content of our (current branch) version
+ * @param theirs - Content of their (merged branch) version
+ *
+ * @returns Object containing merged content, conflict flag, and marker locations
+ *
+ * @example
+ * ```typescript
+ * const result = mergeContent(baseContent, oursContent, theirsContent)
+ *
+ * if (result.hasConflicts) {
+ *   console.log('Content has conflicts at:', result.markers)
+ *   // Write file with conflict markers for manual resolution
+ *   await writeFile(path, result.merged)
+ * } else {
+ *   console.log('Content merged cleanly')
+ *   await writeFile(path, result.merged)
+ * }
+ * ```
  */
 export function mergeContent(base, ours, theirs) {
     const baseLines = splitLines(base);
@@ -1143,10 +1442,27 @@ export function mergeContent(base, ours, theirs) {
     };
 }
 /**
- * Checks if a file is binary (non-text).
+ * Determines if a file is binary (non-text) based on its content.
  *
- * @param content - File content to check
- * @returns true if the file appears to be binary
+ * @description
+ * Uses Git's heuristic: a file is considered binary if it contains
+ * null bytes (0x00) within the first 8000 bytes, or if it has
+ * specific binary file magic numbers (PNG, JPEG, GIF).
+ *
+ * Binary files cannot be automatically merged and always result
+ * in conflicts when both sides modify them.
+ *
+ * @param content - File content to analyze
+ *
+ * @returns true if the file appears to be binary, false for text files
+ *
+ * @example
+ * ```typescript
+ * const content = await readFile('image.png')
+ * if (isBinaryFile(content)) {
+ *   console.log('Cannot perform text merge on binary file')
+ * }
+ * ```
  */
 export function isBinaryFile(content) {
     // Empty files are considered text
@@ -1184,8 +1500,25 @@ export function isBinaryFile(content) {
 /**
  * Gets the current merge state if a merge is in progress.
  *
+ * @description
+ * Returns the persisted merge state, which includes information about
+ * the merge in progress, any unresolved conflicts, and the original
+ * merge options.
+ *
  * @param storage - The storage interface
- * @returns MergeState if merge is in progress, null otherwise
+ *
+ * @returns A promise resolving to the merge state, or null if no merge is in progress
+ *
+ * @example
+ * ```typescript
+ * const state = await getMergeState(storage)
+ * if (state) {
+ *   console.log('Merging', state.mergeHead, 'into', state.origHead)
+ *   console.log('Unresolved conflicts:', state.unresolvedConflicts.length)
+ * } else {
+ *   console.log('No merge in progress')
+ * }
+ * ```
  */
 export async function getMergeState(storage) {
     return storage.readMergeState();
@@ -1193,8 +1526,23 @@ export async function getMergeState(storage) {
 /**
  * Checks if a merge is currently in progress.
  *
+ * @description
+ * Quick check to determine if there's an active merge that hasn't
+ * been completed or aborted. Useful for UI state and command validation.
+ *
  * @param storage - The storage interface
- * @returns true if a merge is in progress
+ *
+ * @returns A promise resolving to true if a merge is in progress
+ *
+ * @example
+ * ```typescript
+ * if (await isMergeInProgress(storage)) {
+ *   console.log('Please complete or abort the current merge first')
+ * } else {
+ *   // Safe to start a new merge
+ *   await merge(storage, oursSha, theirsSha, options)
+ * }
+ * ```
  */
 export async function isMergeInProgress(storage) {
     const state = await storage.readMergeState();

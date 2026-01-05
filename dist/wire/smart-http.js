@@ -1,47 +1,94 @@
 /**
- * Git Smart HTTP Protocol Implementation
+ * @fileoverview Git Smart HTTP Protocol Implementation
  *
- * Implements the Git Smart HTTP protocol for server-side handling of:
- * - Fetch discovery (GET /info/refs?service=git-upload-pack)
- * - Push discovery (GET /info/refs?service=git-receive-pack)
- * - Fetch data transfer (POST /git-upload-pack)
- * - Push data transfer (POST /git-receive-pack)
+ * This module implements the Git Smart HTTP protocol for server-side handling of
+ * Git fetch and push operations over HTTP. It provides handlers for:
  *
- * Reference: https://git-scm.com/docs/http-protocol
+ * - **Ref Discovery** (`GET /info/refs?service=git-upload-pack|git-receive-pack`)
+ *   Advertises available refs and server capabilities to clients.
+ *
+ * - **Fetch Data Transfer** (`POST /git-upload-pack`)
+ *   Handles client fetch requests by processing wants/haves and returning packfiles.
+ *
+ * - **Push Data Transfer** (`POST /git-receive-pack`)
+ *   Handles client push requests by processing ref updates and incoming packfiles.
+ *
+ * @module wire/smart-http
+ * @see {@link https://git-scm.com/docs/http-protocol} Git HTTP Protocol Documentation
+ * @see {@link https://git-scm.com/docs/protocol-common} Git Protocol Common
+ *
+ * @example Basic server integration
+ * ```typescript
+ * import { handleInfoRefs, handleUploadPack, handleReceivePack } from './wire/smart-http'
+ *
+ * // Handle GET /repo.git/info/refs?service=git-upload-pack
+ * app.get('/:repo/info/refs', async (req, res) => {
+ *   const request: SmartHTTPRequest = {
+ *     method: 'GET',
+ *     path: '/info/refs',
+ *     query: { service: req.query.service },
+ *     headers: req.headers,
+ *     repository: req.params.repo
+ *   }
+ *   const response = await handleInfoRefs(request, repositoryProvider, capabilities)
+ *   res.status(response.status).set(response.headers).send(response.body)
+ * })
+ * ```
  */
 import { encodePktLine, pktLineStream, FLUSH_PKT } from './pkt-line';
 /**
- * Content-Type for git-upload-pack advertisement
+ * Content-Type for git-upload-pack advertisement response.
+ * @see {@link https://git-scm.com/docs/http-protocol#_smart_server_response}
  */
 export const CONTENT_TYPE_UPLOAD_PACK_ADVERTISEMENT = 'application/x-git-upload-pack-advertisement';
 /**
- * Content-Type for git-receive-pack advertisement
+ * Content-Type for git-receive-pack advertisement response.
+ * @see {@link https://git-scm.com/docs/http-protocol#_smart_server_response}
  */
 export const CONTENT_TYPE_RECEIVE_PACK_ADVERTISEMENT = 'application/x-git-receive-pack-advertisement';
 /**
- * Content-Type for git-upload-pack request
+ * Content-Type for git-upload-pack request body.
  */
 export const CONTENT_TYPE_UPLOAD_PACK_REQUEST = 'application/x-git-upload-pack-request';
 /**
- * Content-Type for git-upload-pack result
+ * Content-Type for git-upload-pack response body.
  */
 export const CONTENT_TYPE_UPLOAD_PACK_RESULT = 'application/x-git-upload-pack-result';
 /**
- * Content-Type for git-receive-pack request
+ * Content-Type for git-receive-pack request body.
  */
 export const CONTENT_TYPE_RECEIVE_PACK_REQUEST = 'application/x-git-receive-pack-request';
 /**
- * Content-Type for git-receive-pack result
+ * Content-Type for git-receive-pack response body.
  */
 export const CONTENT_TYPE_RECEIVE_PACK_RESULT = 'application/x-git-receive-pack-result';
 /**
- * Zero SHA constant used for ref creation/deletion
+ * Zero SHA constant used for ref creation/deletion.
+ *
+ * @description
+ * This 40-character string of zeros is used as a placeholder SHA:
+ * - In oldSha: indicates a ref is being created (doesn't exist yet)
+ * - In newSha: indicates a ref is being deleted
+ *
+ * @example
+ * ```typescript
+ * // Check if this is a create operation
+ * const isCreate = command.oldSha === ZERO_SHA
+ *
+ * // Check if this is a delete operation
+ * const isDelete = command.newSha === ZERO_SHA
+ * ```
  */
 export const ZERO_SHA = '0000000000000000000000000000000000000000';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 /**
- * Get HTTP status text from status code
+ * Get HTTP status text from status code.
+ *
+ * @param statusCode - HTTP status code
+ * @returns Human-readable status text
+ *
+ * @internal
  */
 function getStatusText(statusCode) {
     const statusTexts = {
@@ -56,7 +103,12 @@ function getStatusText(statusCode) {
     return statusTexts[statusCode] || 'Unknown';
 }
 /**
- * Check if a string is a valid SHA-1 hex string (40 characters)
+ * Check if a string is a valid SHA-1 hex string (40 characters).
+ *
+ * @param sha - String to validate
+ * @returns true if the string is a valid SHA-1 hash
+ *
+ * @internal
  */
 function isValidSha(sha) {
     return /^[0-9a-f]{40}$/i.test(sha);
@@ -64,14 +116,45 @@ function isValidSha(sha) {
 /**
  * Handle GET /info/refs requests for ref discovery.
  *
- * This endpoint is called by git clients to discover refs and capabilities
- * before performing fetch or push operations.
+ * @description
+ * This is the first endpoint called by git clients when initiating a fetch
+ * or push operation. It returns:
+ * 1. The service being requested
+ * 2. A list of all refs with their current SHA values
+ * 3. Server capabilities on the first ref line
+ *
+ * The response format is pkt-line encoded for compatibility with Git's
+ * smart HTTP protocol.
  *
  * @param request - The incoming HTTP request
  * @param repository - Repository provider for fetching refs
- * @param capabilities - Server capabilities to advertise
- * @returns HTTP response with ref advertisement
- * @throws SmartHTTPError for invalid requests or repository errors
+ * @param capabilities - Optional server capabilities to advertise
+ * @returns Promise resolving to HTTP response with ref advertisement
+ *
+ * @throws {SmartHTTPError} 400 if service parameter is missing or invalid
+ * @throws {SmartHTTPError} 403 if permission is denied
+ * @throws {SmartHTTPError} 404 if repository does not exist
+ *
+ * @example
+ * ```typescript
+ * // Handle ref discovery request
+ * const request: SmartHTTPRequest = {
+ *   method: 'GET',
+ *   path: '/info/refs',
+ *   query: { service: 'git-upload-pack' },
+ *   headers: {},
+ *   repository: 'my-repo'
+ * }
+ *
+ * const capabilities: ServerCapabilities = {
+ *   sideBand64k: true,
+ *   thinPack: true
+ * }
+ *
+ * const response = await handleInfoRefs(request, repoProvider, capabilities)
+ * // response.status === 200
+ * // response.headers['Content-Type'] === 'application/x-git-upload-pack-advertisement'
+ * ```
  */
 export async function handleInfoRefs(request, repository, capabilities) {
     // Check service parameter
@@ -114,13 +197,38 @@ export async function handleInfoRefs(request, repository, capabilities) {
 /**
  * Handle POST /git-upload-pack requests for fetch data transfer.
  *
- * This endpoint receives the client's wants/haves and returns a packfile
- * containing the requested objects.
+ * @description
+ * This endpoint processes fetch requests from git clients. It:
+ * 1. Parses the client's wants (objects they need) and haves (objects they have)
+ * 2. Negotiates which objects need to be sent
+ * 3. Generates and returns a packfile containing the required objects
+ *
+ * The response includes ACK/NAK lines followed by the packfile data,
+ * optionally wrapped in side-band format for progress reporting.
  *
  * @param request - The incoming HTTP request with wants/haves
  * @param repository - Repository provider for creating packfile
- * @returns HTTP response with packfile data
- * @throws SmartHTTPError for invalid requests or repository errors
+ * @returns Promise resolving to HTTP response with packfile data
+ *
+ * @throws {SmartHTTPError} 400 if request body is missing or malformed
+ * @throws {SmartHTTPError} 403 if permission is denied
+ * @throws {SmartHTTPError} 415 if content type is invalid
+ *
+ * @example
+ * ```typescript
+ * // Handle fetch request
+ * const request: SmartHTTPRequest = {
+ *   method: 'POST',
+ *   path: '/git-upload-pack',
+ *   query: {},
+ *   headers: { 'Content-Type': 'application/x-git-upload-pack-request' },
+ *   body: requestBody, // pkt-line encoded wants/haves
+ *   repository: 'my-repo'
+ * }
+ *
+ * const response = await handleUploadPack(request, repoProvider)
+ * // response.body contains NAK + packfile data
+ * ```
  */
 export async function handleUploadPack(request, repository) {
     // Check content type
@@ -175,13 +283,38 @@ export async function handleUploadPack(request, repository) {
 /**
  * Handle POST /git-receive-pack requests for push data transfer.
  *
- * This endpoint receives ref update commands and a packfile from the client,
- * updates refs accordingly, and returns a status report.
+ * @description
+ * This endpoint processes push requests from git clients. It:
+ * 1. Parses ref update commands (create, update, delete)
+ * 2. Extracts and validates the incoming packfile
+ * 3. Applies ref updates (if packfile is valid)
+ * 4. Returns a status report (if report-status capability was requested)
+ *
+ * The response includes unpack status and individual ref update results.
  *
  * @param request - The incoming HTTP request with commands and packfile
  * @param repository - Repository provider for processing push
- * @returns HTTP response with status report
- * @throws SmartHTTPError for invalid requests or repository errors
+ * @returns Promise resolving to HTTP response with status report
+ *
+ * @throws {SmartHTTPError} 400 if request body is missing or malformed
+ * @throws {SmartHTTPError} 403 if permission is denied
+ * @throws {SmartHTTPError} 415 if content type is invalid
+ *
+ * @example
+ * ```typescript
+ * // Handle push request
+ * const request: SmartHTTPRequest = {
+ *   method: 'POST',
+ *   path: '/git-receive-pack',
+ *   query: {},
+ *   headers: { 'Content-Type': 'application/x-git-receive-pack-request' },
+ *   body: requestBody, // commands + packfile
+ *   repository: 'my-repo'
+ * }
+ *
+ * const response = await handleReceivePack(request, repoProvider)
+ * // response.body contains "unpack ok" + ref status lines
+ * ```
  */
 export async function handleReceivePack(request, repository) {
     // Check content type
@@ -228,16 +361,33 @@ export async function handleReceivePack(request, repository) {
 /**
  * Format ref advertisement for info/refs response.
  *
- * Creates pkt-line formatted ref advertisement including:
- * - Service header
- * - Capability advertisement on first ref
- * - All refs with their SHAs
- * - Flush packet
+ * @description
+ * Creates a pkt-line formatted ref advertisement that includes:
+ * 1. Service announcement line (e.g., "# service=git-upload-pack")
+ * 2. Flush packet
+ * 3. First ref with capabilities (or zero SHA for empty repos)
+ * 4. Remaining refs
+ * 5. Peeled refs for annotated tags
+ * 6. Final flush packet
  *
  * @param service - The git service (git-upload-pack or git-receive-pack)
  * @param refs - Array of refs to advertise
- * @param capabilities - Server capabilities to include
+ * @param capabilities - Optional server capabilities to include
  * @returns Formatted ref advertisement as Uint8Array
+ *
+ * @example
+ * ```typescript
+ * const refs: GitRef[] = [
+ *   { sha: 'abc123...', name: 'refs/heads/main' },
+ *   { sha: 'def456...', name: 'refs/heads/feature' }
+ * ]
+ *
+ * const advertisement = formatRefAdvertisement(
+ *   'git-upload-pack',
+ *   refs,
+ *   { sideBand64k: true, thinPack: true }
+ * )
+ * ```
  */
 export function formatRefAdvertisement(service, refs, capabilities) {
     let output = '';
@@ -283,11 +433,35 @@ export function formatRefAdvertisement(service, refs, capabilities) {
 /**
  * Parse upload-pack request body.
  *
+ * @description
  * Extracts wants, haves, and capabilities from the pkt-line formatted
- * request body sent by git fetch.
+ * request body sent by git fetch. The format is:
+ * 1. Want lines: "want <sha> [capabilities]" (caps only on first)
+ * 2. Shallow/filter commands (optional)
+ * 3. Flush packet
+ * 4. Have lines: "have <sha>"
+ * 5. "done" line (or flush for multi_ack)
  *
  * @param body - Request body as Uint8Array
- * @returns Parsed wants, haves, and capabilities
+ * @returns Parsed wants, haves, capabilities, and done flag
+ *
+ * @throws {Error} If the request is malformed (invalid pkt-line format)
+ *
+ * @example
+ * ```typescript
+ * const body = encoder.encode(
+ *   '0032want abc123... side-band-64k\n' +
+ *   '0000' +
+ *   '0032have def456...\n' +
+ *   '0009done\n'
+ * )
+ *
+ * const { wants, haves, capabilities, done } = parseUploadPackRequest(body)
+ * // wants = ['abc123...']
+ * // haves = ['def456...']
+ * // capabilities = ['side-band-64k']
+ * // done = true
+ * ```
  */
 export function parseUploadPackRequest(body) {
     const text = decoder.decode(body);
@@ -343,11 +517,32 @@ export function parseUploadPackRequest(body) {
 /**
  * Parse receive-pack request body.
  *
+ * @description
  * Extracts ref update commands, capabilities, and packfile data from
- * the request body sent by git push.
+ * the request body sent by git push. The format is:
+ * 1. Command lines: "<old-sha> <new-sha> <refname>" (caps on first via NUL)
+ * 2. Flush packet
+ * 3. Push options (optional, if push-options capability)
+ * 4. Flush packet (if push options present)
+ * 5. PACK data (packfile)
  *
  * @param body - Request body as Uint8Array
  * @returns Parsed commands, capabilities, and packfile
+ *
+ * @throws {Error} If the request is malformed
+ *
+ * @example
+ * ```typescript
+ * const body = encoder.encode(
+ *   '0077' + ZERO_SHA + ' abc123... refs/heads/new\0report-status\n' +
+ *   '0000' +
+ *   'PACK...' // packfile data
+ * )
+ *
+ * const { commands, capabilities, packfile } = parseReceivePackRequest(body)
+ * // commands = [{ oldSha: ZERO_SHA, newSha: 'abc123...', refName: 'refs/heads/new' }]
+ * // capabilities = ['report-status']
+ * ```
  */
 export function parseReceivePackRequest(body) {
     const text = decoder.decode(body);
@@ -413,14 +608,33 @@ export function parseReceivePackRequest(body) {
 /**
  * Format upload-pack response.
  *
+ * @description
  * Creates the response body for git-upload-pack POST request,
  * including NAK/ACK responses and packfile data with optional sideband.
+ * The response format is:
+ * 1. NAK or ACK lines (based on negotiation)
+ * 2. Packfile data (optionally wrapped in side-band)
+ * 3. Flush packet
  *
  * @param packData - The packfile data to send
- * @param useSideBand - Whether to use side-band encoding
+ * @param useSideBand - Whether to use side-band encoding (channel 1 for data)
  * @param hasCommonObjects - Whether there are common objects (for ACK vs NAK)
- * @param haves - The have SHAs from the client
+ * @param haves - The have SHAs from the client (first one is ACKed if common)
  * @returns Formatted response as Uint8Array
+ *
+ * @example
+ * ```typescript
+ * // Simple NAK response with packfile
+ * const response = formatUploadPackResponse(packData, false, false, [])
+ *
+ * // Side-band response with ACK
+ * const response = formatUploadPackResponse(
+ *   packData,
+ *   true,
+ *   true,
+ *   ['abc123...']
+ * )
+ * ```
  */
 export function formatUploadPackResponse(packData, useSideBand, hasCommonObjects, haves) {
     let output = '';
@@ -475,11 +689,29 @@ export function formatUploadPackResponse(packData, useSideBand, hasCommonObjects
 /**
  * Format receive-pack response.
  *
+ * @description
  * Creates the response body for git-receive-pack POST request,
- * including unpack status and ref update results.
+ * including unpack status and ref update results. The format is:
+ * 1. Unpack status line: "unpack ok" or "unpack error"
+ * 2. Ref status lines: "ok <refname>" or "ng <refname> <error>"
+ * 3. Flush packet
  *
  * @param result - Result of the receive-pack operation
  * @returns Formatted response as Uint8Array
+ *
+ * @example
+ * ```typescript
+ * const result: ReceivePackResult = {
+ *   success: true,
+ *   refResults: [
+ *     { refName: 'refs/heads/main', success: true },
+ *     { refName: 'refs/heads/feature', success: false, error: 'non-fast-forward' }
+ *   ]
+ * }
+ *
+ * const response = formatReceivePackResponse(result)
+ * // "unpack ok\nok refs/heads/main\nng refs/heads/feature non-fast-forward\n0000"
+ * ```
  */
 export function formatReceivePackResponse(result) {
     let output = '';
@@ -506,8 +738,25 @@ export function formatReceivePackResponse(result) {
 /**
  * Convert ServerCapabilities to capability string list.
  *
+ * @description
+ * Converts the ServerCapabilities object into an array of capability
+ * strings suitable for inclusion in ref advertisements. Boolean capabilities
+ * become simple strings, while capabilities with values become "name=value".
+ *
  * @param capabilities - Server capabilities object
  * @returns Array of capability strings
+ *
+ * @example
+ * ```typescript
+ * const caps: ServerCapabilities = {
+ *   sideBand64k: true,
+ *   thinPack: true,
+ *   agent: 'my-server/1.0'
+ * }
+ *
+ * const strings = capabilitiesToStrings(caps)
+ * // ['side-band-64k', 'thin-pack', 'agent=my-server/1.0']
+ * ```
  */
 export function capabilitiesToStrings(capabilities) {
     const result = [];
@@ -562,8 +811,21 @@ export function capabilitiesToStrings(capabilities) {
 /**
  * Parse capability strings into ServerCapabilities object.
  *
+ * @description
+ * Converts an array of capability strings (as received from a client or
+ * server) into a structured ServerCapabilities object for easier access.
+ *
  * @param capStrings - Array of capability strings
  * @returns Parsed capabilities object
+ *
+ * @example
+ * ```typescript
+ * const strings = ['side-band-64k', 'thin-pack', 'agent=git/2.30.0']
+ * const caps = parseCapabilities(strings)
+ * // caps.sideBand64k === true
+ * // caps.thinPack === true
+ * // caps.agent === 'git/2.30.0'
+ * ```
  */
 export function parseCapabilities(capStrings) {
     const result = {};
@@ -621,9 +883,25 @@ export function parseCapabilities(capStrings) {
 /**
  * Validate Content-Type header for a request.
  *
- * @param contentType - The Content-Type header value
+ * @description
+ * Compares the provided Content-Type header against an expected value,
+ * handling case-insensitivity and stripping charset or other parameters.
+ *
+ * @param contentType - The Content-Type header value from the request
  * @param expectedType - The expected Content-Type
- * @returns true if valid, false otherwise
+ * @returns true if the content type matches, false otherwise
+ *
+ * @example
+ * ```typescript
+ * validateContentType(
+ *   'application/x-git-upload-pack-request; charset=utf-8',
+ *   'application/x-git-upload-pack-request'
+ * )
+ * // Returns true
+ *
+ * validateContentType('text/plain', 'application/x-git-upload-pack-request')
+ * // Returns false
+ * ```
  */
 export function validateContentType(contentType, expectedType) {
     if (!contentType) {
@@ -637,9 +915,22 @@ export function validateContentType(contentType, expectedType) {
 /**
  * Create an error response with appropriate status code and message.
  *
- * @param statusCode - HTTP status code
- * @param message - Error message
- * @returns SmartHTTPResponse with error
+ * @description
+ * Helper function to create a properly formatted error response with
+ * the correct HTTP status code, status text, and plain text body.
+ *
+ * @param statusCode - HTTP status code (e.g., 400, 403, 404)
+ * @param message - Error message to include in the response body
+ * @returns SmartHTTPResponse with error information
+ *
+ * @example
+ * ```typescript
+ * const response = createErrorResponse(404, 'Repository not found')
+ * // response.status === 404
+ * // response.statusText === 'Not Found'
+ * // response.headers['Content-Type'] === 'text/plain'
+ * // response.body contains 'Repository not found'
+ * ```
  */
 export function createErrorResponse(statusCode, message) {
     return {

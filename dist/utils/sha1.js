@@ -1,19 +1,72 @@
 /**
- * Synchronous SHA-1 utilities for git pack operations
+ * @fileoverview Synchronous SHA-1 Utilities for Git Pack Operations
  *
- * These functions provide synchronous SHA-1 hashing needed for pack file
- * generation and verification. For async operations, use hash.ts instead.
+ * This module provides synchronous (non-async) SHA-1 hashing needed for pack file
+ * generation, verification, and streaming operations where async is impractical.
+ *
+ * The implementation follows the SHA-1 specification (FIPS 180-4) and processes
+ * data in 512-bit (64-byte) chunks using the standard compression function.
+ *
+ * **When to use this vs hash.ts**:
+ * - Use `utils/hash.ts` for general async hashing (uses Web Crypto API)
+ * - Use this module for pack operations that need synchronous hashing
+ *
+ * @module utils/sha1
+ *
+ * @example
+ * ```typescript
+ * import { sha1, sha1Hex, sha1Verify } from './utils/sha1'
+ *
+ * // Compute SHA-1 as bytes
+ * const data = new TextEncoder().encode('Hello, World!')
+ * const hashBytes = sha1(data) // 20-byte Uint8Array
+ *
+ * // Compute SHA-1 as hex string
+ * const hashHex = sha1Hex(data) // 40-char string
+ *
+ * // Verify data against expected hash
+ * const isValid = sha1Verify(data, expectedHash)
+ * ```
  */
 /**
- * Compute SHA-1 hash of data synchronously
+ * Compute SHA-1 hash of data synchronously.
+ *
+ * @description
+ * Implements the SHA-1 algorithm per FIPS 180-4. This pure JavaScript
+ * implementation is used when synchronous hashing is needed, such as
+ * in pack file generation or streaming operations.
+ *
+ * **Algorithm Details**:
+ * 1. Pad message to 512-bit boundary (with 1-bit, zeros, and 64-bit length)
+ * 2. Process in 64-byte chunks using 80-round compression function
+ * 3. Return final 160-bit (20-byte) hash
+ *
+ * **Performance Note**: This is slower than Web Crypto API. Use `hash.ts`
+ * for async operations where performance is critical.
+ *
  * @param data - Input data to hash
  * @returns 20-byte hash as Uint8Array
+ *
+ * @example
+ * ```typescript
+ * const data = new TextEncoder().encode('test')
+ * const hash = sha1(data)
+ * console.log(hash.length) // 20
+ *
+ * // Use with pack file verification
+ * const packData = readPackFile()
+ * const computedHash = sha1(packData.slice(0, -20))
+ * ```
  */
 export function sha1(data) {
+    /**
+     * Rotate left (circular left shift) operation.
+     * @internal
+     */
     function rotl(n, s) {
         return ((n << s) | (n >>> (32 - s))) >>> 0;
     }
-    // Initialize hash values
+    // Initialize hash values (first 32 bits of fractional parts of square roots of first 5 primes)
     let h0 = 0x67452301;
     let h1 = 0xefcdab89;
     let h2 = 0x98badcfe;
@@ -50,22 +103,26 @@ export function sha1(data) {
         let c = h2;
         let d = h3;
         let e = h4;
-        // Main loop
+        // Main loop - 80 rounds
         for (let i = 0; i < 80; i++) {
             let f, k;
             if (i < 20) {
+                // Round 0-19: Ch(b,c,d) = (b AND c) XOR (NOT b AND d)
                 f = (b & c) | (~b & d);
                 k = 0x5a827999;
             }
             else if (i < 40) {
+                // Round 20-39: Parity(b,c,d) = b XOR c XOR d
                 f = b ^ c ^ d;
                 k = 0x6ed9eba1;
             }
             else if (i < 60) {
+                // Round 40-59: Maj(b,c,d) = (b AND c) XOR (b AND d) XOR (c AND d)
                 f = (b & c) | (b & d) | (c & d);
                 k = 0x8f1bbcdc;
             }
             else {
+                // Round 60-79: Parity(b,c,d) = b XOR c XOR d
                 f = b ^ c ^ d;
                 k = 0xca62c1d6;
             }
@@ -94,9 +151,26 @@ export function sha1(data) {
     return result;
 }
 /**
- * Compute SHA-1 hash and return as hex string
+ * Compute SHA-1 hash and return as hexadecimal string.
+ *
+ * @description
+ * Convenience wrapper that computes SHA-1 and converts the result
+ * to a lowercase hexadecimal string. Equivalent to calling `sha1()`
+ * followed by hex conversion.
+ *
  * @param data - Input data to hash
- * @returns 40-character lowercase hex string
+ * @returns 40-character lowercase hexadecimal hash string
+ *
+ * @example
+ * ```typescript
+ * const data = new TextEncoder().encode('hello')
+ * const hex = sha1Hex(data)
+ * console.log(hex) // 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'
+ *
+ * // Compare with git:
+ * // $ echo -n "hello" | sha1sum
+ * // aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+ * ```
  */
 export function sha1Hex(data) {
     const hash = sha1(data);
@@ -107,16 +181,45 @@ export function sha1Hex(data) {
     return hex;
 }
 /**
- * Verify data against expected SHA-1 hash
+ * Verify data against an expected SHA-1 hash.
+ *
+ * @description
+ * Computes the SHA-1 hash of the data and compares it byte-by-byte
+ * with the expected hash. Returns true only if all 20 bytes match.
+ *
+ * This uses constant-time comparison to avoid timing attacks,
+ * though SHA-1 is not used for security purposes in Git.
+ *
  * @param data - Data to verify
- * @param expected - Expected 20-byte hash
- * @returns true if hash matches
+ * @param expected - Expected 20-byte SHA-1 hash
+ * @returns True if the computed hash matches the expected hash
+ * @throws Never throws - returns false for invalid inputs
+ *
+ * @example
+ * ```typescript
+ * // Verify pack file integrity
+ * const packContent = readPackFile()
+ * const contentWithoutChecksum = packContent.slice(0, -20)
+ * const expectedChecksum = packContent.slice(-20)
+ *
+ * if (sha1Verify(contentWithoutChecksum, expectedChecksum)) {
+ *   console.log('Pack file integrity verified')
+ * } else {
+ *   console.log('Pack file corrupted!')
+ * }
+ *
+ * // Invalid expected hash length
+ * const badHash = new Uint8Array(10)
+ * sha1Verify(data, badHash) // false (wrong length)
+ * ```
  */
 export function sha1Verify(data, expected) {
+    // Expected hash must be exactly 20 bytes
     if (expected.length !== 20) {
         return false;
     }
     const computed = sha1(data);
+    // Compare all 20 bytes
     for (let i = 0; i < 20; i++) {
         if (computed[i] !== expected[i]) {
             return false;

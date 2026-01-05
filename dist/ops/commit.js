@@ -1,16 +1,51 @@
 /**
- * Commit Creation Operations
+ * @fileoverview Commit Creation Operations
  *
  * Provides functionality for creating, formatting, and amending git commits.
  * Supports author/committer info, parent handling, GPG signing, and message formatting.
+ *
+ * ## Features
+ *
+ * - Create new commits with full metadata
+ * - Amend existing commits
+ * - GPG signature support
+ * - Message formatting and validation
+ * - Empty commit detection
+ * - Author/committer timestamp handling
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { createCommit, formatCommitMessage } from './ops/commit'
+ *
+ * // Create a commit
+ * const result = await createCommit(store, {
+ *   message: 'Add new feature',
+ *   tree: treeHash,
+ *   parents: [parentHash],
+ *   author: { name: 'John Doe', email: 'john@example.com' }
+ * })
+ *
+ * console.log('Created commit:', result.sha)
+ * ```
+ *
+ * @module ops/commit
  */
 // ============================================================================
 // Author/Timestamp Utilities
 // ============================================================================
 /**
- * Get the current timezone offset string
+ * Gets the current timezone offset string.
  *
- * @returns Timezone offset like '+0000' or '-0500'
+ * Returns the local timezone in Git's format (e.g., '+0000', '-0500').
+ *
+ * @returns Timezone offset string
+ *
+ * @example
+ * ```typescript
+ * const tz = getCurrentTimezone()
+ * // Returns something like '-0800' for Pacific time
+ * ```
  */
 export function getCurrentTimezone() {
     const offset = new Date().getTimezoneOffset();
@@ -21,20 +56,34 @@ export function getCurrentTimezone() {
     return `${sign}${String(hours).padStart(2, '0')}${String(minutes).padStart(2, '0')}`;
 }
 /**
- * Format a timestamp and timezone as git author/committer format
+ * Formats a timestamp and timezone as git author/committer format.
  *
  * @param timestamp - Unix timestamp in seconds
  * @param timezone - Timezone offset string (e.g., '+0000', '-0500')
  * @returns Formatted string like "1234567890 +0000"
+ *
+ * @example
+ * ```typescript
+ * const formatted = formatTimestamp(1609459200, '+0000')
+ * // Returns "1609459200 +0000"
+ * ```
  */
 export function formatTimestamp(timestamp, timezone) {
     return `${timestamp} ${timezone}`;
 }
 /**
- * Parse a git timestamp string
+ * Parses a git timestamp string.
  *
  * @param timestampStr - Timestamp string like "1234567890 +0000"
- * @returns Object with timestamp and timezone
+ * @returns Object with parsed timestamp and timezone
+ *
+ * @throws {Error} If the format is invalid
+ *
+ * @example
+ * ```typescript
+ * const { timestamp, timezone } = parseTimestamp("1609459200 -0500")
+ * // timestamp = 1609459200, timezone = "-0500"
+ * ```
  */
 export function parseTimestamp(timestampStr) {
     const match = timestampStr.match(/^(\d+) ([+-]\d{4})$/);
@@ -47,12 +96,21 @@ export function parseTimestamp(timestampStr) {
     };
 }
 /**
- * Create an Author object with current timestamp
+ * Creates an Author object with current timestamp.
+ *
+ * Convenience function for creating author information with
+ * the current time and local timezone.
  *
  * @param name - Author name
  * @param email - Author email
  * @param timezone - Optional timezone (defaults to local timezone)
  * @returns Author object with current timestamp
+ *
+ * @example
+ * ```typescript
+ * const author = createAuthor('John Doe', 'john@example.com')
+ * // { name: 'John Doe', email: 'john@example.com', timestamp: <now>, timezone: <local> }
+ * ```
  */
 export function createAuthor(name, email, timezone) {
     return {
@@ -66,7 +124,8 @@ export function createAuthor(name, email, timezone) {
 // Message Formatting
 // ============================================================================
 /**
- * Wrap text at a specified column width
+ * Wraps text at a specified column width.
+ * @internal
  */
 function wrapText(text, column) {
     if (column <= 0)
@@ -92,11 +151,29 @@ function wrapText(text, column) {
     return lines.join('\n');
 }
 /**
- * Format a commit message according to git conventions
+ * Formats a commit message according to git conventions.
+ *
+ * Applies various transformations based on the cleanup mode:
+ * - Strips comments
+ * - Normalizes whitespace
+ * - Wraps long lines
+ * - Removes scissors markers
  *
  * @param message - The raw commit message
  * @param options - Formatting options
  * @returns The formatted commit message
+ *
+ * @example
+ * ```typescript
+ * // Clean up a message
+ * const formatted = formatCommitMessage(`
+ *   Add feature
+ *
+ *   # This is a comment
+ *   Long description here
+ * `, { cleanup: 'strip' })
+ * // Returns: "Add feature\n\nLong description here"
+ * ```
  */
 export function formatCommitMessage(message, options = {}) {
     const { cleanup = 'default', commentChar = '#', wrapColumn = 0 } = options;
@@ -173,10 +250,22 @@ export function formatCommitMessage(message, options = {}) {
     return result;
 }
 /**
- * Parse a commit message into subject and body
+ * Parses a commit message into subject and body.
+ *
+ * The subject is the first line. The body starts after the first
+ * blank line following the subject.
  *
  * @param message - The commit message
  * @returns Object with subject (first line) and body (rest)
+ *
+ * @example
+ * ```typescript
+ * const { subject, body } = parseCommitMessage(
+ *   'Add feature\n\nThis adds the new feature'
+ * )
+ * // subject = 'Add feature'
+ * // body = 'This adds the new feature'
+ * ```
  */
 export function parseCommitMessage(message) {
     if (!message) {
@@ -196,10 +285,23 @@ export function parseCommitMessage(message) {
     return { subject, body };
 }
 /**
- * Validate a commit message format
+ * Validates a commit message format.
+ *
+ * Checks for common issues and provides warnings for style violations.
+ * Returns errors for critical issues that would prevent commit creation.
  *
  * @param message - The commit message to validate
- * @returns Object with valid flag and any error messages
+ * @returns Object with valid flag and any error/warning messages
+ *
+ * @example
+ * ```typescript
+ * const result = validateCommitMessage('Fix bug.')
+ * // {
+ * //   valid: true,
+ * //   errors: [],
+ * //   warnings: ['Subject line should not end with a period']
+ * // }
+ * ```
  */
 export function validateCommitMessage(message) {
     const errors = [];
@@ -228,30 +330,41 @@ export function validateCommitMessage(message) {
 // GPG Signing
 // ============================================================================
 /**
- * Check if a commit is signed
+ * Checks if a commit is signed.
  *
  * @param commit - The commit object
  * @returns true if the commit has a GPG signature
+ *
+ * @example
+ * ```typescript
+ * if (isCommitSigned(commit)) {
+ *   const sig = extractCommitSignature(commit)
+ *   // Verify signature...
+ * }
+ * ```
  */
 export function isCommitSigned(commit) {
     const signedCommit = commit;
     return signedCommit.gpgsig !== undefined && signedCommit.gpgsig !== null;
 }
 /**
- * Extract the GPG signature from a signed commit
+ * Extracts the GPG signature from a signed commit.
  *
  * @param commit - The commit object
- * @returns The signature if present, null otherwise
+ * @returns The signature string if present, null otherwise
  */
 export function extractCommitSignature(commit) {
     const signedCommit = commit;
     return signedCommit.gpgsig ?? null;
 }
 /**
- * Add a GPG signature to a commit
+ * Adds a GPG signature to a commit.
+ *
+ * Creates a new commit object with the signature attached.
+ * Does not modify the original commit object.
  *
  * @param commit - The unsigned commit object
- * @param signature - The GPG signature
+ * @param signature - The GPG signature string
  * @returns The signed commit object
  */
 export function addSignatureToCommit(commit, signature) {
@@ -265,7 +378,8 @@ export function addSignatureToCommit(commit, signature) {
 // Empty Commit Detection
 // ============================================================================
 /**
- * Extract tree SHA from commit data
+ * Extracts tree SHA from raw commit data.
+ * @internal
  */
 function extractTreeFromCommitData(data) {
     const decoder = new TextDecoder();
@@ -274,12 +388,23 @@ function extractTreeFromCommitData(data) {
     return match ? match[1] : null;
 }
 /**
- * Check if a commit would be empty (same tree as parent)
+ * Checks if a commit would be empty (same tree as parent).
+ *
+ * A commit is considered empty if its tree SHA is identical to
+ * its parent's tree SHA, meaning no files were changed.
  *
  * @param store - The object store for reading objects
  * @param tree - The tree SHA for the new commit
  * @param parent - The parent commit SHA (or null for initial commit)
  * @returns true if the commit would have no changes
+ *
+ * @example
+ * ```typescript
+ * const isEmpty = await isEmptyCommit(store, newTreeSha, parentSha)
+ * if (isEmpty && !options.allowEmpty) {
+ *   throw new Error('Nothing to commit')
+ * }
+ * ```
  */
 export async function isEmptyCommit(store, tree, parent) {
     // Initial commits are never "empty"
@@ -298,13 +423,25 @@ export async function isEmptyCommit(store, tree, parent) {
 // Validation Helpers
 // ============================================================================
 const SHA_REGEX = /^[0-9a-f]{40}$/;
+/**
+ * Validates a SHA format.
+ * @internal
+ */
 function isValidSha(sha) {
     return SHA_REGEX.test(sha);
 }
+/**
+ * Validates an email format.
+ * @internal
+ */
 function isValidEmail(email) {
     // Basic email validation - must contain @ and have something before and after
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
+/**
+ * Validates an author name.
+ * @internal
+ */
 function validateAuthorName(name) {
     if (name.includes('<') || name.includes('>')) {
         throw new Error('Author name cannot contain angle brackets');
@@ -313,6 +450,10 @@ function validateAuthorName(name) {
         throw new Error('Author name cannot contain newlines');
     }
 }
+/**
+ * Validates commit options.
+ * @internal
+ */
 function validateCommitOptions(options) {
     // Validate tree
     if (!options.tree) {
@@ -360,7 +501,8 @@ function validateCommitOptions(options) {
 // Commit Creation
 // ============================================================================
 /**
- * Resolve a CommitAuthor to a full Author with timestamp and timezone
+ * Resolves a CommitAuthor to a full Author with timestamp and timezone.
+ * @internal
  */
 function resolveAuthor(commitAuthor) {
     return {
@@ -371,7 +513,8 @@ function resolveAuthor(commitAuthor) {
     };
 }
 /**
- * Serialize commit content to bytes (without the header)
+ * Serializes commit content to bytes (without the header).
+ * @internal
  */
 function serializeCommitContent(commit) {
     const encoder = new TextEncoder();
@@ -395,10 +538,25 @@ function serializeCommitContent(commit) {
     return encoder.encode(lines.join('\n'));
 }
 /**
- * Create a new commit from raw data without storing
+ * Builds a commit object from options without storing it.
+ *
+ * Useful for creating commit objects for inspection or testing
+ * without actually persisting them to the object store.
  *
  * @param options - Commit creation options
  * @returns The commit object (not stored)
+ *
+ * @example
+ * ```typescript
+ * const commit = buildCommitObject({
+ *   message: 'Test commit',
+ *   tree: treeSha,
+ *   parents: [parentSha],
+ *   author: { name: 'Test', email: 'test@example.com' }
+ * })
+ *
+ * console.log(commit.message) // 'Test commit'
+ * ```
  */
 export function buildCommitObject(options) {
     const author = resolveAuthor(options.author);
@@ -424,12 +582,51 @@ export function buildCommitObject(options) {
     return commit;
 }
 /**
- * Create a new commit
+ * Creates a new commit.
+ *
+ * Creates a commit object with the specified options and stores it
+ * in the object store. Handles validation, empty commit detection,
+ * and optional GPG signing.
  *
  * @param store - The object store for reading/writing objects
  * @param options - Commit creation options
  * @returns The created commit result with SHA and commit object
- * @throws Error if required options are missing or invalid
+ *
+ * @throws {Error} If tree SHA is missing or invalid
+ * @throws {Error} If author is missing or invalid
+ * @throws {Error} If commit message is empty
+ * @throws {Error} If commit would be empty and allowEmpty is false
+ *
+ * @example
+ * ```typescript
+ * // Basic commit
+ * const result = await createCommit(store, {
+ *   message: 'Add new feature',
+ *   tree: treeSha,
+ *   parents: [headSha],
+ *   author: { name: 'John', email: 'john@example.com' }
+ * })
+ *
+ * // Signed commit
+ * const signedResult = await createCommit(store, {
+ *   message: 'Signed commit',
+ *   tree: treeSha,
+ *   parents: [headSha],
+ *   author: { name: 'John', email: 'john@example.com' },
+ *   signing: {
+ *     sign: true,
+ *     signer: async (data) => myGpgSign(data)
+ *   }
+ * })
+ *
+ * // Initial commit (no parents)
+ * const initialResult = await createCommit(store, {
+ *   message: 'Initial commit',
+ *   tree: treeSha,
+ *   parents: [],
+ *   author: { name: 'John', email: 'john@example.com' }
+ * })
+ * ```
  */
 export async function createCommit(store, options) {
     // Validate options
@@ -478,8 +675,9 @@ export async function createCommit(store, options) {
 // Commit Amendment
 // ============================================================================
 /**
- * Parse a stored commit object from data
- * Supports both git text format and JSON format (for testing)
+ * Parses a stored commit object from raw data.
+ * Supports both git text format and JSON format (for testing).
+ * @internal
  */
 function parseStoredCommit(data) {
     const decoder = new TextDecoder();
@@ -552,13 +750,35 @@ function parseStoredCommit(data) {
     return { tree, parents, author, committer, message };
 }
 /**
- * Amend an existing commit
+ * Amends an existing commit.
+ *
+ * Creates a new commit that replaces the specified commit.
+ * The original commit is not modified. Only specified fields
+ * in options will be changed from the original.
+ *
+ * Note: This does not update any refs. The caller is responsible
+ * for updating HEAD or branch refs to point to the new commit.
  *
  * @param store - The object store for reading/writing objects
  * @param commitSha - SHA of the commit to amend
- * @param options - Amendment options
+ * @param options - Amendment options (only specified fields are changed)
  * @returns The new commit result (original commit is not modified)
- * @throws Error if the commit doesn't exist or options are invalid
+ *
+ * @throws {Error} If the commit doesn't exist
+ *
+ * @example
+ * ```typescript
+ * // Change just the message
+ * const newCommit = await amendCommit(store, headSha, {
+ *   message: 'Better commit message'
+ * })
+ *
+ * // Update tree and committer
+ * const newCommit = await amendCommit(store, headSha, {
+ *   tree: newTreeSha,
+ *   committer: { name: 'New Name', email: 'new@example.com' }
+ * })
+ * ```
  */
 export async function amendCommit(store, commitSha, options) {
     // Get the original commit

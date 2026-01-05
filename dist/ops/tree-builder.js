@@ -1,18 +1,43 @@
 /**
- * Tree Builder - builds git tree objects from index entries
+ * @fileoverview Tree Builder - builds git tree objects from index entries
  *
- * Supports:
+ * Provides functionality for creating Git tree objects from a flat list
+ * of index entries, handling directory hierarchies, proper sorting,
+ * and deduplication.
+ *
+ * ## Features
+ *
  * - File modes (100644 regular, 100755 executable, 040000 directory, 120000 symlink, 160000 submodule)
  * - Proper tree entry format (mode + space + name + null + sha)
  * - Sorted entries (git requires lexicographic ordering)
  * - Nested tree building for directory hierarchies
  * - Tree SHA computation
- * - Tree deduplication
+ * - Tree deduplication for identical subtrees
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { buildTreeFromIndex } from './ops/tree-builder'
+ *
+ * // Build tree from index entries
+ * const entries = [
+ *   { path: 'src/main.ts', sha: 'abc123...', mode: '100644', ... },
+ *   { path: 'src/utils/helper.ts', sha: 'def456...', mode: '100644', ... },
+ *   { path: 'README.md', sha: 'ghi789...', mode: '100644', ... }
+ * ]
+ *
+ * const result = await buildTreeFromIndex(store, entries)
+ * console.log('Root tree SHA:', result.sha)
+ * console.log('Trees created:', result.treeCount)
+ * console.log('Deduplicated:', result.deduplicatedCount)
+ * ```
+ *
+ * @module ops/tree-builder
  */
 import { hexToBytes } from '../utils/hash';
-// Valid file modes in git
+/** Valid file modes in git */
 const VALID_MODES = new Set(['100644', '100755', '040000', '120000', '160000']);
-// Text encoder/decoder
+/** Text encoder for creating tree data */
 const encoder = new TextEncoder();
 /**
  * Validate an index entry

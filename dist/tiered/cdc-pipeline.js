@@ -1,23 +1,131 @@
 /**
- * CDC (Change Data Capture) Pipeline for Git Operations
+ * @fileoverview CDC (Change Data Capture) Pipeline for Git Operations
  *
- * Provides functionality to capture, transform, batch, and output git operation events:
- * - Event capture from git operations (push, fetch, commits, etc.)
- * - Parquet transformation for analytics storage
- * - Batching with size and time-based flushing
- * - Error handling with retry policies
+ * @description
+ * This module provides a comprehensive Change Data Capture system for Git operations,
+ * enabling real-time event streaming, transformation, and analytics for Git repository events.
  *
- * gitdo: CDC pipeline implementation
+ * ## Key Features
+ *
+ * - **Event Capture**: Captures git operations (push, fetch, commits, branches, tags, merges)
+ * - **Parquet Transformation**: Converts events to columnar Parquet format for analytics
+ * - **Batching**: Efficient event batching with configurable size and time-based flushing
+ * - **Retry Policies**: Configurable exponential backoff with jitter for resilient processing
+ * - **Dead Letter Queue**: Handles failed events for later reprocessing
+ * - **Metrics**: Built-in tracking for events processed, batches, errors, and latency
+ *
+ * ## Architecture
+ *
+ * The pipeline consists of several components:
+ * 1. **CDCEventCapture**: Captures git operations and converts them to CDCEvents
+ * 2. **CDCBatcher**: Batches events for efficient processing
+ * 3. **ParquetTransformer**: Transforms events to Parquet format
+ * 4. **CDCPipeline**: Orchestrates the entire flow with error handling
+ *
+ * ## Event Flow
+ *
+ * ```
+ * Git Operation -> CDCEventCapture -> CDCBatcher -> ParquetTransformer -> Output
+ *                                         |
+ *                                         v
+ *                              (On failure) Dead Letter Queue
+ * ```
+ *
+ * @module tiered/cdc-pipeline
+ *
+ * @example
+ * ```typescript
+ * // Create and start a pipeline
+ * const pipeline = new CDCPipeline({
+ *   batchSize: 100,
+ *   flushIntervalMs: 5000,
+ *   maxRetries: 3,
+ *   parquetCompression: 'snappy',
+ *   outputPath: '/analytics',
+ *   schemaVersion: 1
+ * })
+ *
+ * await pipeline.start()
+ *
+ * // Process events
+ * pipeline.onOutput((output) => {
+ *   console.log(`Generated batch: ${output.batchId}`)
+ *   console.log(`Events: ${output.events.length}`)
+ *   console.log(`Parquet size: ${output.parquetBuffer.length} bytes`)
+ * })
+ *
+ * pipeline.onDeadLetter((events, error) => {
+ *   console.error(`Failed events: ${events.length}`, error)
+ * })
+ *
+ * // Create and process an event
+ * const event = createCDCEvent('COMMIT_CREATED', 'push', {
+ *   operation: 'commit-create',
+ *   sha: 'abc123...',
+ *   treeSha: 'def456...',
+ *   parentShas: ['parent1...']
+ * })
+ *
+ * await pipeline.process(event)
+ *
+ * // Get metrics
+ * const metrics = pipeline.getMetrics()
+ * console.log(`Processed: ${metrics.eventsProcessed}`)
+ * console.log(`Batches: ${metrics.batchesGenerated}`)
+ *
+ * // Stop the pipeline
+ * await pipeline.stop()
+ * ```
+ *
+ * @see {@link CDCPipeline} - Main pipeline orchestration class
+ * @see {@link CDCEventCapture} - Event capture from git operations
+ * @see {@link ParquetTransformer} - Parquet format transformation
  */
 // ============================================================================
 // Error Classes
 // ============================================================================
 /**
- * Custom error class for CDC operations
+ * Custom error class for CDC operations.
+ *
+ * @description
+ * CDCError provides structured error information for CDC pipeline failures,
+ * including an error type for programmatic handling and optional cause for
+ * error chaining.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await pipeline.process(event)
+ * } catch (error) {
+ *   if (error instanceof CDCError) {
+ *     switch (error.type) {
+ *       case 'VALIDATION_ERROR':
+ *         console.log('Invalid event:', error.message)
+ *         break
+ *       case 'PROCESSING_ERROR':
+ *         console.log('Processing failed:', error.message)
+ *         if (error.cause) {
+ *           console.log('Caused by:', error.cause.message)
+ *         }
+ *         break
+ *     }
+ *   }
+ * }
+ * ```
+ *
+ * @class CDCError
+ * @extends Error
  */
 export class CDCError extends Error {
     type;
     cause;
+    /**
+     * Creates a new CDCError.
+     *
+     * @param type - Error type for categorization
+     * @param message - Human-readable error message
+     * @param cause - Optional underlying error that caused this error
+     */
     constructor(type, message, cause) {
         super(message);
         this.type = type;
@@ -26,16 +134,98 @@ export class CDCError extends Error {
     }
 }
 /**
- * Retry policy with exponential backoff
+ * Retry policy implementing exponential backoff with optional jitter.
+ *
+ * @description
+ * Provides a robust retry mechanism for handling transient failures.
+ * Uses exponential backoff to space out retry attempts, with optional
+ * jitter to prevent synchronized retries from multiple clients.
+ *
+ * **Backoff Formula:**
+ * `delay = min(initialDelay * (multiplier ^ attempt), maxDelay)`
+ *
+ * **With Jitter:**
+ * `delay = delay * random(0.5, 1.5)`
+ *
+ * @example
+ * ```typescript
+ * const policy = new CDCRetryPolicy({
+ *   maxRetries: 3,
+ *   initialDelayMs: 100,
+ *   maxDelayMs: 5000,
+ *   backoffMultiplier: 2,
+ *   jitter: true
+ * })
+ *
+ * let attempts = 0
+ * while (attempts < 10) {
+ *   try {
+ *     await doOperation()
+ *     break
+ *   } catch (error) {
+ *     attempts++
+ *     if (!policy.shouldRetry(attempts)) {
+ *       throw new Error('Max retries exceeded')
+ *     }
+ *     const delay = policy.getDelay(attempts)
+ *     console.log(`Retry ${attempts} after ${delay}ms`)
+ *     await sleep(delay)
+ *   }
+ * }
+ * ```
+ *
+ * @class CDCRetryPolicy
  */
 export class CDCRetryPolicy {
+    /**
+     * Retry configuration.
+     * @private
+     */
     config;
+    /**
+     * Creates a new retry policy.
+     *
+     * @param config - Retry policy configuration
+     */
     constructor(config) {
         this.config = config;
     }
+    /**
+     * Determines whether another retry should be attempted.
+     *
+     * @param attemptCount - Number of attempts already made
+     * @returns true if more retries are allowed, false otherwise
+     *
+     * @example
+     * ```typescript
+     * if (policy.shouldRetry(3)) {
+     *   // Retry is allowed
+     * }
+     * ```
+     */
     shouldRetry(attemptCount) {
         return attemptCount < this.config.maxRetries;
     }
+    /**
+     * Calculates the delay before the next retry.
+     *
+     * @description
+     * Computes delay using exponential backoff, capped at maxDelayMs.
+     * If jitter is enabled, applies a random factor between 0.5x and 1.5x.
+     *
+     * @param attemptCount - Number of attempts already made (1-indexed)
+     * @returns Delay in milliseconds before next retry
+     *
+     * @example
+     * ```typescript
+     * // With initialDelay=100, multiplier=2:
+     * // Attempt 1: 100ms * 2^0 = 100ms
+     * // Attempt 2: 100ms * 2^1 = 200ms
+     * // Attempt 3: 100ms * 2^2 = 400ms
+     * const delay = policy.getDelay(attemptCount)
+     * await sleep(delay)
+     * ```
+     */
     getDelay(attemptCount) {
         let delay = this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attemptCount);
         delay = Math.min(delay, this.config.maxDelayMs);
@@ -51,19 +241,89 @@ export class CDCRetryPolicy {
 // CDC Event Capture
 // ============================================================================
 /**
- * Captures git operations and converts them to CDC events
+ * Captures git operations and converts them to CDC events.
+ *
+ * @description
+ * CDCEventCapture hooks into git operations and generates CDCEvents for each
+ * operation. It maintains an internal buffer of events that can be flushed
+ * manually or automatically when the buffer reaches a configured size.
+ *
+ * **Supported Operations:**
+ * - Object creation/deletion (blobs, trees, commits, tags)
+ * - Reference updates (branches, tags)
+ * - Commit creation
+ * - Pack reception
+ * - Branch creation/deletion
+ * - Tag creation
+ * - Merge completion
+ *
+ * **Event Ordering:**
+ * Events are assigned monotonically increasing sequence numbers within a
+ * capture session. This ensures proper ordering for replay and analytics.
+ *
+ * @example
+ * ```typescript
+ * const capture = new CDCEventCapture({ maxBufferSize: 100 })
+ *
+ * // Add a listener for real-time processing
+ * capture.addListener((event) => {
+ *   console.log(`Event: ${event.type} - ${event.id}`)
+ * })
+ *
+ * // Capture git operations
+ * await capture.onCommitCreated('abc123...', 'tree456...', ['parent789...'])
+ * await capture.onRefUpdate('refs/heads/main', 'old...', 'new...')
+ *
+ * // Get buffered events
+ * console.log(`Buffer size: ${capture.getBufferSize()}`)
+ *
+ * // Flush buffer
+ * const events = await capture.flush()
+ * console.log(`Flushed ${events.length} events`)
+ * ```
+ *
+ * @class CDCEventCapture
  */
 export class CDCEventCapture {
+    /**
+     * Buffer of captured events.
+     * @private
+     */
     events = [];
+    /**
+     * Monotonically increasing sequence counter.
+     * @private
+     */
     sequenceCounter = 0;
+    /**
+     * Registered event listeners.
+     * @private
+     */
     listeners = [];
+    /**
+     * Maximum buffer size before auto-flush.
+     * @private
+     */
     maxBufferSize;
+    /**
+     * Creates a new CDC event capture instance.
+     *
+     * @param options - Configuration options
+     */
     constructor(options = {}) {
         this.maxBufferSize = options.maxBufferSize ?? Infinity;
     }
+    /**
+     * Generates a unique event ID.
+     * @private
+     */
     generateEventId() {
         return `evt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     }
+    /**
+     * Emits an event to the buffer and notifies listeners.
+     * @private
+     */
     async emitEvent(event) {
         // Auto-flush if buffer is full
         if (this.events.length >= this.maxBufferSize) {
@@ -75,9 +335,28 @@ export class CDCEventCapture {
             listener(event);
         }
     }
+    /**
+     * Returns the next sequence number.
+     * @private
+     */
     nextSequence() {
         return ++this.sequenceCounter;
     }
+    /**
+     * Captures an object put (creation) operation.
+     *
+     * @description
+     * Called when a git object (blob, tree, commit, tag) is written to storage.
+     *
+     * @param sha - SHA-1 hash of the object
+     * @param type - Object type (blob, tree, commit, tag)
+     * @param data - Raw object data
+     *
+     * @example
+     * ```typescript
+     * await capture.onObjectPut('abc123...', 'blob', blobData)
+     * ```
+     */
     async onObjectPut(sha, type, data) {
         const event = {
             id: this.generateEventId(),
@@ -95,6 +374,19 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures an object deletion operation.
+     *
+     * @description
+     * Called when a git object is deleted, typically during garbage collection.
+     *
+     * @param sha - SHA-1 hash of the deleted object
+     *
+     * @example
+     * ```typescript
+     * await capture.onObjectDelete('abc123...')
+     * ```
+     */
     async onObjectDelete(sha) {
         const event = {
             id: this.generateEventId(),
@@ -110,6 +402,25 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a reference update operation.
+     *
+     * @description
+     * Called when a git reference (branch, tag) is updated to point to a new commit.
+     *
+     * @param refName - Full reference name (e.g., 'refs/heads/main')
+     * @param oldSha - Previous SHA (all zeros for new refs)
+     * @param newSha - New SHA (all zeros for deleted refs)
+     *
+     * @example
+     * ```typescript
+     * await capture.onRefUpdate(
+     *   'refs/heads/main',
+     *   'oldcommit123...',
+     *   'newcommit456...'
+     * )
+     * ```
+     */
     async onRefUpdate(refName, oldSha, newSha) {
         const event = {
             id: this.generateEventId(),
@@ -127,6 +438,25 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a commit creation operation.
+     *
+     * @description
+     * Called when a new commit object is created.
+     *
+     * @param commitSha - SHA-1 hash of the commit
+     * @param treeSha - SHA-1 hash of the tree the commit points to
+     * @param parentShas - Array of parent commit SHAs
+     *
+     * @example
+     * ```typescript
+     * await capture.onCommitCreated(
+     *   'commitabc123...',
+     *   'treedef456...',
+     *   ['parent1...', 'parent2...']
+     * )
+     * ```
+     */
     async onCommitCreated(commitSha, treeSha, parentShas) {
         const event = {
             id: this.generateEventId(),
@@ -144,6 +474,20 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a pack reception operation.
+     *
+     * @description
+     * Called when a packfile is received during a push or fetch operation.
+     *
+     * @param packData - Raw packfile data
+     * @param objectCount - Number of objects in the pack
+     *
+     * @example
+     * ```typescript
+     * await capture.onPackReceived(packBuffer, 42)
+     * ```
+     */
     async onPackReceived(packData, objectCount) {
         const event = {
             id: this.generateEventId(),
@@ -160,6 +504,17 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a branch creation operation.
+     *
+     * @param branchName - Name of the branch (without refs/heads/ prefix)
+     * @param sha - SHA-1 hash the branch points to
+     *
+     * @example
+     * ```typescript
+     * await capture.onBranchCreated('feature-x', 'abc123...')
+     * ```
+     */
     async onBranchCreated(branchName, sha) {
         const event = {
             id: this.generateEventId(),
@@ -176,6 +531,16 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a branch deletion operation.
+     *
+     * @param branchName - Name of the deleted branch
+     *
+     * @example
+     * ```typescript
+     * await capture.onBranchDeleted('feature-x')
+     * ```
+     */
     async onBranchDeleted(branchName) {
         const event = {
             id: this.generateEventId(),
@@ -191,6 +556,17 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a tag creation operation.
+     *
+     * @param tagName - Name of the tag
+     * @param sha - SHA-1 hash the tag points to
+     *
+     * @example
+     * ```typescript
+     * await capture.onTagCreated('v1.0.0', 'abc123...')
+     * ```
+     */
     async onTagCreated(tagName, sha) {
         const event = {
             id: this.generateEventId(),
@@ -207,6 +583,18 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Captures a merge completion operation.
+     *
+     * @param mergeSha - SHA-1 hash of the merge commit
+     * @param baseSha - SHA-1 hash of the base commit
+     * @param headSha - SHA-1 hash of the head commit being merged
+     *
+     * @example
+     * ```typescript
+     * await capture.onMergeCompleted('merge123...', 'base456...', 'head789...')
+     * ```
+     */
     async onMergeCompleted(mergeSha, baseSha, headSha) {
         const event = {
             id: this.generateEventId(),
@@ -224,20 +612,66 @@ export class CDCEventCapture {
         };
         await this.emitEvent(event);
     }
+    /**
+     * Returns a copy of all buffered events.
+     *
+     * @returns Array of buffered events
+     */
     getEvents() {
         return [...this.events];
     }
+    /**
+     * Returns the current buffer size.
+     *
+     * @returns Number of events in the buffer
+     */
     getBufferSize() {
         return this.events.length;
     }
+    /**
+     * Flushes all buffered events.
+     *
+     * @description
+     * Returns and clears all events from the buffer. The returned events
+     * can be processed, serialized, or forwarded to downstream systems.
+     *
+     * @returns Array of flushed events
+     *
+     * @example
+     * ```typescript
+     * const events = await capture.flush()
+     * console.log(`Flushed ${events.length} events`)
+     * await sendToAnalytics(events)
+     * ```
+     */
     async flush() {
         const flushed = [...this.events];
         this.events = [];
         return flushed;
     }
+    /**
+     * Adds an event listener.
+     *
+     * @description
+     * Listeners are called synchronously for each event as it is captured.
+     *
+     * @param listener - Callback function to invoke for each event
+     *
+     * @example
+     * ```typescript
+     * capture.addListener((event) => {
+     *   console.log(`New event: ${event.type}`)
+     * })
+     * ```
+     */
     addListener(listener) {
         this.listeners.push(listener);
     }
+    /**
+     * Removes an event listener.
+     *
+     * @param listener - The listener to remove
+     */
     removeListener(listener) {
         const index = this.listeners.indexOf(listener);
         if (index !== -1) {
@@ -248,6 +682,10 @@ export class CDCEventCapture {
 // ============================================================================
 // Parquet Schema
 // ============================================================================
+/**
+ * Default field definitions for CDC event Parquet schema.
+ * @internal
+ */
 const CDC_EVENT_FIELDS = [
     { name: 'event_id', type: 'STRING', nullable: false },
     { name: 'event_type', type: 'STRING', nullable: false },
@@ -259,13 +697,54 @@ const CDC_EVENT_FIELDS = [
     { name: 'sha', type: 'STRING', nullable: true }
 ];
 /**
- * Parquet schema definition for CDC events
+ * Parquet schema definition for CDC events.
+ *
+ * @description
+ * Defines the column structure for CDC event Parquet files. The default
+ * schema includes standard CDC event fields and can be extended with
+ * custom fields for domain-specific data.
+ *
+ * @example
+ * ```typescript
+ * // Create default schema
+ * const schema = ParquetSchema.forCDCEvents()
+ *
+ * // Create schema with custom fields
+ * const customSchema = ParquetSchema.forCDCEvents([
+ *   { name: 'repository_id', type: 'STRING', nullable: false },
+ *   { name: 'user_id', type: 'STRING', nullable: true }
+ * ])
+ * ```
+ *
+ * @class ParquetSchema
  */
 export class ParquetSchema {
     fields;
+    /**
+     * Creates a new ParquetSchema.
+     *
+     * @param fields - Array of field definitions
+     */
     constructor(fields) {
         this.fields = fields;
     }
+    /**
+     * Creates a schema for CDC events with optional custom fields.
+     *
+     * @description
+     * Returns a schema with the standard CDC event fields. Additional
+     * custom fields can be appended for domain-specific data.
+     *
+     * @param customFields - Optional additional fields to add
+     * @returns A new ParquetSchema instance
+     *
+     * @example
+     * ```typescript
+     * const schema = ParquetSchema.forCDCEvents()
+     * // Schema includes: event_id, event_type, source, timestamp,
+     * //                  sequence, version, payload_json, sha
+     * ```
+     */
     static forCDCEvents(customFields) {
         const fields = [...CDC_EVENT_FIELDS];
         if (customFields) {
@@ -275,13 +754,64 @@ export class ParquetSchema {
     }
 }
 /**
- * Transforms CDC events to Parquet format
+ * Transforms CDC events to Parquet format.
+ *
+ * @description
+ * ParquetTransformer converts CDC events to Parquet-compatible rows and
+ * serializes batches of events to Parquet file format. It handles:
+ *
+ * - Event to row conversion (flattening the event structure)
+ * - JSON serialization of complex payloads
+ * - Batch creation with schema and metadata
+ * - Parquet file generation with compression
+ *
+ * @example
+ * ```typescript
+ * const transformer = new ParquetTransformer({ compression: 'snappy' })
+ *
+ * // Transform single event to row
+ * const row = transformer.eventToRow(event)
+ *
+ * // Transform batch of events
+ * const batch = transformer.eventsToBatch(events)
+ *
+ * // Generate Parquet file
+ * const buffer = await transformer.toParquetBuffer(batch)
+ * await r2.put('events.parquet', buffer)
+ * ```
+ *
+ * @class ParquetTransformer
  */
 export class ParquetTransformer {
+    /**
+     * Compression algorithm to use.
+     * @private
+     */
     compression;
+    /**
+     * Creates a new ParquetTransformer.
+     *
+     * @param options - Transformer configuration
+     */
     constructor(options = {}) {
         this.compression = options.compression ?? 'snappy';
     }
+    /**
+     * Converts a CDC event to a Parquet row.
+     *
+     * @description
+     * Flattens the event structure and serializes the payload to JSON
+     * for storage in Parquet format.
+     *
+     * @param event - The CDC event to convert
+     * @returns A Parquet row representation
+     *
+     * @example
+     * ```typescript
+     * const row = transformer.eventToRow(event)
+     * console.log(row.event_id, row.event_type, row.sha)
+     * ```
+     */
     eventToRow(event) {
         // Create a serializable copy of the payload (Uint8Array not JSON-serializable)
         const serializablePayload = {
@@ -299,6 +829,22 @@ export class ParquetTransformer {
             sha: event.payload.sha ?? null
         };
     }
+    /**
+     * Converts multiple CDC events to a Parquet batch.
+     *
+     * @description
+     * Transforms an array of events into a ParquetBatch structure
+     * ready for serialization to Parquet format.
+     *
+     * @param events - Array of CDC events to batch
+     * @returns A ParquetBatch ready for serialization
+     *
+     * @example
+     * ```typescript
+     * const batch = transformer.eventsToBatch(events)
+     * console.log(`Batch has ${batch.rowCount} rows`)
+     * ```
+     */
     eventsToBatch(events) {
         const rows = events.map(e => this.eventToRow(e));
         return {
@@ -309,6 +855,22 @@ export class ParquetTransformer {
             compression: this.compression
         };
     }
+    /**
+     * Serializes a ParquetBatch to a Parquet file buffer.
+     *
+     * @description
+     * Generates a Parquet-format file from the batch data. The output
+     * includes PAR1 magic bytes, compressed data, and footer metadata.
+     *
+     * @param batch - The ParquetBatch to serialize
+     * @returns Promise resolving to Parquet file as Uint8Array
+     *
+     * @example
+     * ```typescript
+     * const buffer = await transformer.toParquetBuffer(batch)
+     * await r2.put('events.parquet', buffer)
+     * ```
+     */
     async toParquetBuffer(batch) {
         // Build a simplified Parquet-like buffer
         // Real implementation would use a proper Parquet library
@@ -383,14 +945,84 @@ export class ParquetTransformer {
     }
 }
 /**
- * Batches CDC events for efficient processing
+ * Batches CDC events for efficient processing.
+ *
+ * @description
+ * CDCBatcher collects CDC events and groups them into batches based on
+ * count or time thresholds. This enables efficient downstream processing
+ * by reducing the number of I/O operations and enabling bulk operations.
+ *
+ * **Batching Strategies:**
+ * - **Count-based**: Flush when batch reaches `batchSize` events
+ * - **Time-based**: Flush after `flushIntervalMs` even if batch is not full
+ *
+ * **Features:**
+ * - Async batch handlers for non-blocking processing
+ * - Multiple handlers for parallel processing pipelines
+ * - Graceful stop with pending event flush
+ * - Batch metadata (sequences, timestamps) for tracking
+ *
+ * @example
+ * ```typescript
+ * const batcher = new CDCBatcher({
+ *   batchSize: 100,
+ *   flushIntervalMs: 5000
+ * })
+ *
+ * // Register batch handler
+ * batcher.onBatch(async (batch) => {
+ *   console.log(`Processing ${batch.eventCount} events`)
+ *   console.log(`Sequence range: ${batch.minSequence} - ${batch.maxSequence}`)
+ *   await saveToStorage(batch.events)
+ * })
+ *
+ * // Add events
+ * await batcher.add(event1)
+ * await batcher.add(event2)
+ *
+ * // Check pending events
+ * console.log(`Pending: ${batcher.getPendingCount()}`)
+ *
+ * // Manual flush
+ * const result = await batcher.flush()
+ *
+ * // Stop the batcher
+ * await batcher.stop()
+ * ```
+ *
+ * @class CDCBatcher
  */
 export class CDCBatcher {
+    /**
+     * Batch configuration.
+     * @private
+     */
     config;
+    /**
+     * Buffer of pending events.
+     * @private
+     */
     events = [];
+    /**
+     * Registered batch handlers.
+     * @private
+     */
     batchHandlers = [];
+    /**
+     * Timer for time-based flushing.
+     * @private
+     */
     flushTimer = null;
+    /**
+     * Whether the batcher has been stopped.
+     * @private
+     */
     stopped = false;
+    /**
+     * Creates a new CDCBatcher.
+     *
+     * @param config - Batch configuration
+     */
     constructor(config) {
         this.config = config;
         // Don't start timer in constructor - start when first event is added
@@ -447,6 +1079,21 @@ export class CDCBatcher {
             this.flushTimer = null;
         }
     }
+    /**
+     * Adds an event to the batch.
+     *
+     * @description
+     * Adds the event to the pending batch. If the batch reaches the
+     * configured size, it is automatically flushed. The flush timer
+     * is started/restarted as needed.
+     *
+     * @param event - The CDC event to add
+     *
+     * @example
+     * ```typescript
+     * await batcher.add(event)
+     * ```
+     */
     async add(event) {
         this.events.push(event);
         // Ensure flush timer is running when we have pending events
@@ -457,6 +1104,10 @@ export class CDCBatcher {
             // Timer will be re-started on next add() if needed
         }
     }
+    /**
+     * Internal flush implementation.
+     * @private
+     */
     async flushInternal() {
         if (this.events.length === 0) {
             return { events: [], eventCount: 0, success: true };
@@ -480,33 +1131,167 @@ export class CDCBatcher {
         }
         return result;
     }
+    /**
+     * Manually flushes pending events.
+     *
+     * @description
+     * Forces an immediate flush of all pending events, regardless of
+     * batch size or timer. Clears the flush timer.
+     *
+     * @returns Promise resolving to the batch result
+     *
+     * @example
+     * ```typescript
+     * const result = await batcher.flush()
+     * console.log(`Flushed ${result.eventCount} events`)
+     * ```
+     */
     async flush() {
         this.clearFlushTimer();
         const result = await this.flushInternal();
         // Don't restart timer - it will be started on next add() if needed
         return result;
     }
+    /**
+     * Returns the number of pending events.
+     *
+     * @returns Number of events waiting to be flushed
+     */
     getPendingCount() {
         return this.events.length;
     }
+    /**
+     * Registers a batch handler.
+     *
+     * @description
+     * Handlers are called when a batch is flushed (automatically or manually).
+     * Multiple handlers can be registered for parallel processing.
+     *
+     * @param handler - Callback function to invoke for each batch
+     *
+     * @example
+     * ```typescript
+     * batcher.onBatch(async (batch) => {
+     *   await saveToStorage(batch.events)
+     * })
+     * ```
+     */
     onBatch(handler) {
         this.batchHandlers.push(handler);
     }
+    /**
+     * Stops the batcher.
+     *
+     * @description
+     * Stops the flush timer and prevents further processing.
+     * Does NOT automatically flush pending events - call flush() first
+     * if you need to process remaining events.
+     *
+     * @example
+     * ```typescript
+     * await batcher.flush()  // Process remaining events
+     * await batcher.stop()   // Stop the timer
+     * ```
+     */
     async stop() {
         this.stopped = true;
         this.clearFlushTimer();
     }
 }
 /**
- * Main CDC Pipeline for processing git operation events
+ * Main CDC Pipeline for processing git operation events.
+ *
+ * @description
+ * CDCPipeline orchestrates the complete change data capture flow from
+ * event ingestion to Parquet output. It integrates batching, transformation,
+ * retry handling, and dead letter queue management.
+ *
+ * **Pipeline Flow:**
+ * 1. Events are submitted via `process()` or `processMany()`
+ * 2. Events are validated and added to the batcher
+ * 3. When a batch is ready, it's transformed to Parquet format
+ * 4. On success, output handlers are notified
+ * 5. On failure, retries are attempted with exponential backoff
+ * 6. After max retries, events go to dead letter queue
+ *
+ * **Features:**
+ * - Configurable batch size and flush interval
+ * - Automatic retry with exponential backoff
+ * - Dead letter queue for failed events
+ * - Real-time metrics for monitoring
+ * - Graceful shutdown with pending event flush
+ *
+ * @example
+ * ```typescript
+ * const pipeline = new CDCPipeline({
+ *   batchSize: 100,
+ *   flushIntervalMs: 5000,
+ *   maxRetries: 3,
+ *   parquetCompression: 'snappy',
+ *   outputPath: '/analytics',
+ *   schemaVersion: 1
+ * })
+ *
+ * // Register handlers
+ * pipeline.onOutput(async (output) => {
+ *   await r2.put(`cdc/${output.batchId}.parquet`, output.parquetBuffer)
+ * })
+ *
+ * pipeline.onDeadLetter((events, error) => {
+ *   console.error(`Failed ${events.length} events:`, error)
+ * })
+ *
+ * // Start the pipeline
+ * await pipeline.start()
+ *
+ * // Process events
+ * await pipeline.process(event)
+ *
+ * // Check metrics
+ * const metrics = pipeline.getMetrics()
+ *
+ * // Stop gracefully
+ * const result = await pipeline.stop()
+ * console.log(`Flushed ${result.flushedCount} events on shutdown`)
+ * ```
+ *
+ * @class CDCPipeline
  */
 export class CDCPipeline {
+    /**
+     * Pipeline configuration.
+     * @private
+     */
     config;
+    /**
+     * Current pipeline state.
+     * @private
+     */
     state = 'stopped';
+    /**
+     * Event batcher instance.
+     * @private
+     */
     batcher = null;
+    /**
+     * Parquet transformer instance.
+     * @private
+     */
     transformer;
+    /**
+     * Registered output handlers.
+     * @private
+     */
     outputHandlers = [];
+    /**
+     * Registered dead letter handlers.
+     * @private
+     */
     deadLetterHandlers = [];
+    /**
+     * Pipeline metrics.
+     * @private
+     */
     metrics = {
         eventsProcessed: 0,
         batchesGenerated: 0,
@@ -514,8 +1299,21 @@ export class CDCPipeline {
         errors: 0,
         avgProcessingLatencyMs: 0
     };
+    /**
+     * Processing latency samples.
+     * @private
+     */
     processingLatencies = [];
+    /**
+     * Retry policy instance.
+     * @private
+     */
     retryPolicy;
+    /**
+     * Creates a new CDCPipeline.
+     *
+     * @param config - Pipeline configuration
+     */
     constructor(config) {
         this.config = config;
         this.transformer = new ParquetTransformer({
@@ -528,9 +1326,27 @@ export class CDCPipeline {
             backoffMultiplier: 2
         });
     }
+    /**
+     * Returns the current pipeline state.
+     *
+     * @returns Current state ('stopped', 'running', or 'paused')
+     */
     getState() {
         return this.state;
     }
+    /**
+     * Starts the pipeline.
+     *
+     * @description
+     * Initializes the batcher and begins accepting events. If already
+     * running, this method is a no-op.
+     *
+     * @example
+     * ```typescript
+     * await pipeline.start()
+     * console.log(pipeline.getState())  // 'running'
+     * ```
+     */
     async start() {
         if (this.state === 'running')
             return;
@@ -543,6 +1359,21 @@ export class CDCPipeline {
         });
         this.state = 'running';
     }
+    /**
+     * Stops the pipeline.
+     *
+     * @description
+     * Flushes any pending events, stops the batcher, and sets state to stopped.
+     * Returns information about events flushed during shutdown.
+     *
+     * @returns Promise resolving to stop result with flushed event count
+     *
+     * @example
+     * ```typescript
+     * const result = await pipeline.stop()
+     * console.log(`Flushed ${result.flushedCount} events on shutdown`)
+     * ```
+     */
     async stop() {
         if (this.state === 'stopped') {
             return { flushedCount: 0 };
@@ -557,6 +1388,27 @@ export class CDCPipeline {
         this.state = 'stopped';
         return { flushedCount };
     }
+    /**
+     * Processes a single event.
+     *
+     * @description
+     * Validates the event and adds it to the batcher for processing.
+     * Updates metrics including latency tracking.
+     *
+     * @param event - The CDC event to process
+     * @returns Promise resolving to process result
+     *
+     * @throws {CDCError} PROCESSING_ERROR - If pipeline is not running
+     * @throws {CDCError} VALIDATION_ERROR - If event fails validation
+     *
+     * @example
+     * ```typescript
+     * const result = await pipeline.process(event)
+     * if (result.success) {
+     *   console.log(`Processed event: ${result.eventId}`)
+     * }
+     * ```
+     */
     async process(event) {
         if (this.state !== 'running') {
             throw new CDCError('PROCESSING_ERROR', 'Pipeline is not running');
@@ -571,6 +1423,22 @@ export class CDCPipeline {
         this.updateAvgLatency();
         return { success: true, eventId: event.id };
     }
+    /**
+     * Processes multiple events.
+     *
+     * @description
+     * Convenience method to process an array of events sequentially.
+     *
+     * @param events - Array of CDC events to process
+     * @returns Promise resolving to array of process results
+     *
+     * @example
+     * ```typescript
+     * const results = await pipeline.processMany(events)
+     * const successCount = results.filter(r => r.success).length
+     * console.log(`Processed ${successCount}/${events.length} events`)
+     * ```
+     */
     async processMany(events) {
         const results = [];
         for (const event of events) {
@@ -579,6 +1447,19 @@ export class CDCPipeline {
         }
         return results;
     }
+    /**
+     * Manually flushes pending events.
+     *
+     * @description
+     * Forces an immediate flush of the batcher and processes the
+     * resulting batch through the pipeline.
+     *
+     * @example
+     * ```typescript
+     * await pipeline.flush()
+     * console.log('All pending events flushed')
+     * ```
+     */
     async flush() {
         if (this.batcher) {
             const result = await this.batcher.flush();
@@ -587,6 +1468,10 @@ export class CDCPipeline {
             }
         }
     }
+    /**
+     * Handles a batch of events with retry logic.
+     * @private
+     */
     async handleBatch(batch) {
         let attempts = 0;
         let lastError = null;
@@ -624,9 +1509,17 @@ export class CDCPipeline {
             }
         }
     }
+    /**
+     * Sleeps for the specified duration.
+     * @private
+     */
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+    /**
+     * Updates the average latency metric.
+     * @private
+     */
     updateAvgLatency() {
         if (this.processingLatencies.length === 0)
             return;
@@ -637,12 +1530,66 @@ export class CDCPipeline {
         const sum = this.processingLatencies.reduce((a, b) => a + b, 0);
         this.metrics.avgProcessingLatencyMs = sum / this.processingLatencies.length;
     }
+    /**
+     * Returns current pipeline metrics.
+     *
+     * @description
+     * Returns a copy of the current metrics. Metrics are cumulative
+     * since pipeline creation.
+     *
+     * @returns Copy of current pipeline metrics
+     *
+     * @example
+     * ```typescript
+     * const metrics = pipeline.getMetrics()
+     * console.log(`Processed: ${metrics.eventsProcessed}`)
+     * console.log(`Batches: ${metrics.batchesGenerated}`)
+     * console.log(`Errors: ${metrics.errors}`)
+     * console.log(`Avg latency: ${metrics.avgProcessingLatencyMs}ms`)
+     * ```
+     */
     getMetrics() {
         return { ...this.metrics };
     }
+    /**
+     * Registers an output handler.
+     *
+     * @description
+     * Output handlers are called when a batch is successfully processed
+     * and converted to Parquet format. Multiple handlers can be registered.
+     *
+     * @param handler - Callback to invoke for each successful batch
+     *
+     * @example
+     * ```typescript
+     * pipeline.onOutput(async (output) => {
+     *   await r2.put(`cdc/${output.batchId}.parquet`, output.parquetBuffer)
+     *   console.log(`Wrote ${output.events.length} events`)
+     * })
+     * ```
+     */
     onOutput(handler) {
         this.outputHandlers.push(handler);
     }
+    /**
+     * Registers a dead letter handler.
+     *
+     * @description
+     * Dead letter handlers are called when a batch fails after all
+     * retry attempts are exhausted. Use this for alerting, logging,
+     * or storing failed events for later reprocessing.
+     *
+     * @param handler - Callback to invoke for failed events
+     *
+     * @example
+     * ```typescript
+     * pipeline.onDeadLetter((events, error) => {
+     *   console.error(`Failed to process ${events.length} events:`, error)
+     *   // Store in dead letter queue for later retry
+     *   await dlq.put(events)
+     * })
+     * ```
+     */
     onDeadLetter(handler) {
         this.deadLetterHandlers.push(handler);
     }
@@ -650,6 +1597,10 @@ export class CDCPipeline {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+/**
+ * Valid CDC event types for validation.
+ * @internal
+ */
 const VALID_EVENT_TYPES = [
     'OBJECT_CREATED',
     'OBJECT_DELETED',
@@ -663,7 +1614,36 @@ const VALID_EVENT_TYPES = [
     'MERGE_COMPLETED'
 ];
 /**
- * Create a new CDC event
+ * Creates a new CDC event.
+ *
+ * @description
+ * Factory function to create a properly structured CDC event with
+ * automatically generated ID and timestamp.
+ *
+ * @param type - The event type
+ * @param source - The event source
+ * @param payload - Event payload data
+ * @param options - Optional configuration
+ * @param options.sequence - Custom sequence number (default: 0)
+ * @returns A new CDCEvent
+ *
+ * @example
+ * ```typescript
+ * const event = createCDCEvent('COMMIT_CREATED', 'push', {
+ *   operation: 'commit-create',
+ *   sha: 'abc123...',
+ *   treeSha: 'def456...',
+ *   parentShas: ['parent1...']
+ * })
+ *
+ * // With sequence number
+ * const sequencedEvent = createCDCEvent('REF_UPDATED', 'push', {
+ *   operation: 'ref-update',
+ *   refName: 'refs/heads/main',
+ *   oldSha: 'old...',
+ *   newSha: 'new...'
+ * }, { sequence: 42 })
+ * ```
  */
 export function createCDCEvent(type, source, payload, options) {
     return {
@@ -677,7 +1657,22 @@ export function createCDCEvent(type, source, payload, options) {
     };
 }
 /**
- * Serialize a CDC event to bytes
+ * Serializes a CDC event to bytes.
+ *
+ * @description
+ * Converts a CDCEvent to a JSON-encoded Uint8Array for storage or
+ * transmission. Handles Uint8Array payload data by converting to arrays.
+ *
+ * @param event - The CDC event to serialize
+ * @returns The serialized event as a Uint8Array
+ *
+ * @example
+ * ```typescript
+ * const bytes = serializeEvent(event)
+ * await r2.put(`events/${event.id}`, bytes)
+ * ```
+ *
+ * @see {@link deserializeEvent} - Reverse operation
  */
 export function serializeEvent(event) {
     // Create a serializable copy (Uint8Array is not JSON-serializable)
@@ -692,7 +1687,24 @@ export function serializeEvent(event) {
     return new TextEncoder().encode(json);
 }
 /**
- * Deserialize bytes to a CDC event
+ * Deserializes bytes to a CDC event.
+ *
+ * @description
+ * Reconstructs a CDCEvent from JSON-encoded bytes. Handles Uint8Array
+ * restoration for payload data that was converted to arrays during
+ * serialization.
+ *
+ * @param bytes - The serialized event bytes
+ * @returns The deserialized CDCEvent
+ *
+ * @example
+ * ```typescript
+ * const bytes = await r2.get(`events/${eventId}`)
+ * const event = deserializeEvent(bytes)
+ * console.log(`Event type: ${event.type}`)
+ * ```
+ *
+ * @see {@link serializeEvent} - Reverse operation
  */
 export function deserializeEvent(bytes) {
     const json = new TextDecoder().decode(bytes);
@@ -704,7 +1716,35 @@ export function deserializeEvent(bytes) {
     return parsed;
 }
 /**
- * Validate a CDC event
+ * Validates a CDC event.
+ *
+ * @description
+ * Checks that an event has all required fields and valid values.
+ * Throws a CDCError if validation fails.
+ *
+ * **Validation Rules:**
+ * - Event must not be null/undefined
+ * - Event ID must be a non-empty string
+ * - Event type must be a valid CDCEventType
+ * - Timestamp must be a non-negative number
+ * - Sequence must be a non-negative number
+ *
+ * @param event - The CDC event to validate
+ * @returns The validated event (for chaining)
+ *
+ * @throws {CDCError} VALIDATION_ERROR - If validation fails
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   validateCDCEvent(event)
+ *   // Event is valid
+ * } catch (error) {
+ *   if (error instanceof CDCError) {
+ *     console.log(`Invalid: ${error.message}`)
+ *   }
+ * }
+ * ```
  */
 export function validateCDCEvent(event) {
     if (!event) {
@@ -727,9 +1767,37 @@ export function validateCDCEvent(event) {
 // ============================================================================
 // Pipeline Operations
 // ============================================================================
+/**
+ * Registry of active pipelines by ID.
+ * @internal
+ */
 const activePipelines = new Map();
 /**
- * Start a pipeline with the given configuration
+ * Starts a new pipeline with the given configuration.
+ *
+ * @description
+ * Creates and starts a new CDCPipeline, registering it by ID for
+ * later access. If a pipeline with the same ID already exists,
+ * it will be replaced (the old pipeline is not automatically stopped).
+ *
+ * @param id - Unique identifier for the pipeline
+ * @param config - Pipeline configuration
+ * @returns The started pipeline instance
+ *
+ * @example
+ * ```typescript
+ * const pipeline = startPipeline('main', {
+ *   batchSize: 100,
+ *   flushIntervalMs: 5000,
+ *   maxRetries: 3,
+ *   parquetCompression: 'snappy',
+ *   outputPath: '/analytics',
+ *   schemaVersion: 1
+ * })
+ *
+ * // Register handlers
+ * pipeline.onOutput((output) => console.log(`Batch: ${output.batchId}`))
+ * ```
  */
 export function startPipeline(id, config) {
     const pipeline = new CDCPipeline(config);
@@ -738,7 +1806,20 @@ export function startPipeline(id, config) {
     return pipeline;
 }
 /**
- * Stop a pipeline by ID
+ * Stops a pipeline by ID.
+ *
+ * @description
+ * Stops the pipeline identified by the given ID, flushing any pending
+ * events and removing it from the registry.
+ *
+ * @param id - Pipeline identifier
+ * @returns Promise resolving to stop result (0 if pipeline not found)
+ *
+ * @example
+ * ```typescript
+ * const result = await stopPipeline('main')
+ * console.log(`Flushed ${result.flushedCount} events on shutdown`)
+ * ```
  */
 export async function stopPipeline(id) {
     const pipeline = activePipelines.get(id);
@@ -750,7 +1831,19 @@ export async function stopPipeline(id) {
     return result;
 }
 /**
- * Flush a pipeline by ID
+ * Flushes a pipeline by ID.
+ *
+ * @description
+ * Forces an immediate flush of all pending events in the pipeline.
+ * No-op if pipeline not found.
+ *
+ * @param id - Pipeline identifier
+ *
+ * @example
+ * ```typescript
+ * await flushPipeline('main')
+ * console.log('All pending events flushed')
+ * ```
  */
 export async function flushPipeline(id) {
     const pipeline = activePipelines.get(id);
@@ -759,7 +1852,23 @@ export async function flushPipeline(id) {
     }
 }
 /**
- * Get metrics for a pipeline by ID
+ * Gets metrics for a pipeline by ID.
+ *
+ * @description
+ * Returns a copy of the current metrics for the specified pipeline.
+ * Returns null if the pipeline is not found.
+ *
+ * @param id - Pipeline identifier
+ * @returns Pipeline metrics or null if not found
+ *
+ * @example
+ * ```typescript
+ * const metrics = getPipelineMetrics('main')
+ * if (metrics) {
+ *   console.log(`Events processed: ${metrics.eventsProcessed}`)
+ *   console.log(`Errors: ${metrics.errors}`)
+ * }
+ * ```
  */
 export function getPipelineMetrics(id) {
     const pipeline = activePipelines.get(id);

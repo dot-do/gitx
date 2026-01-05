@@ -1,15 +1,53 @@
 /**
- * Git Blame Algorithm
+ * @fileoverview Git Blame Algorithm
  *
  * This module provides functionality for attributing each line of a file
- * to the commit that last modified it.
+ * to the commit that last modified it. It implements a blame algorithm
+ * similar to Git's native blame command.
+ *
+ * ## Features
+ *
+ * - Line-by-line commit attribution
+ * - Rename tracking across commits
+ * - Line range filtering
+ * - Whitespace-insensitive comparison
+ * - Date range filtering
+ * - Commit exclusion (ignore revisions)
+ * - Binary file detection
+ * - Porcelain and human-readable output formats
+ *
+ * ## Usage Example
+ *
+ * ```typescript
+ * import { blame, formatBlame } from './ops/blame'
+ *
+ * // Get blame information for a file
+ * const result = await blame(storage, 'src/main.ts', 'HEAD', {
+ *   followRenames: true,
+ *   ignoreWhitespace: true
+ * })
+ *
+ * // Format for display
+ * const output = formatBlame(result, { showLineNumbers: true })
+ * console.log(output)
+ * ```
+ *
+ * @module ops/blame
  */
 // ============================================================================
 // Helper Functions
 // ============================================================================
 const decoder = new TextDecoder();
 /**
- * Check if content is likely binary (contains null bytes or other non-text chars)
+ * Checks if content is likely binary (contains null bytes).
+ *
+ * Uses a heuristic similar to Git's binary detection:
+ * checks the first 8000 bytes for null characters.
+ *
+ * @param data - The content to check
+ * @returns True if the content appears to be binary
+ *
+ * @internal
  */
 function isBinaryContent(data) {
     // Check first 8000 bytes or entire file if smaller
@@ -22,7 +60,15 @@ function isBinaryContent(data) {
     return false;
 }
 /**
- * Split content into lines, handling various line ending styles
+ * Splits content into lines, handling various line ending styles.
+ *
+ * Handles both Unix (\n) and Windows (\r\n) line endings,
+ * normalizing output to not include trailing carriage returns.
+ *
+ * @param content - The string content to split
+ * @returns Array of lines (without line terminators)
+ *
+ * @internal
  */
 function splitLines(content) {
     if (content === '')
@@ -37,7 +83,13 @@ function splitLines(content) {
     return lines.map(line => line.replace(/\r$/, ''));
 }
 /**
- * Normalize line for comparison (optionally ignoring whitespace)
+ * Normalizes a line for comparison (optionally ignoring whitespace).
+ *
+ * @param line - The line to normalize
+ * @param ignoreWhitespace - Whether to normalize whitespace
+ * @returns The normalized line
+ *
+ * @internal
  */
 function normalizeLine(line, ignoreWhitespace) {
     if (ignoreWhitespace) {
@@ -46,7 +98,16 @@ function normalizeLine(line, ignoreWhitespace) {
     return line;
 }
 /**
- * Get file at commit, traversing nested paths
+ * Gets file content at a specific path within a commit.
+ *
+ * Handles nested paths by traversing the tree structure.
+ *
+ * @param storage - The storage interface
+ * @param commit - The commit object
+ * @param path - The file path to retrieve
+ * @returns The file content, or null if not found
+ *
+ * @internal
  */
 async function getFileAtPath(storage, commit, path) {
     // Try the direct storage method first
@@ -77,8 +138,17 @@ async function getFileAtPath(storage, commit, path) {
     return null;
 }
 /**
- * Simple LCS-based diff to find unchanged lines between two file versions
- * Returns a mapping of (oldLineIndex -> newLineIndex) for unchanged lines
+ * Computes line mapping between two file versions using LCS algorithm.
+ *
+ * Returns a mapping of (oldLineIndex -> newLineIndex) for unchanged lines,
+ * enabling tracking of line movements between versions.
+ *
+ * @param oldLines - Lines from the older version
+ * @param newLines - Lines from the newer version
+ * @param ignoreWhitespace - Whether to ignore whitespace differences
+ * @returns Map of old line indices to new line indices
+ *
+ * @internal
  */
 function computeLineMapping(oldLines, newLines, ignoreWhitespace = false) {
     // Build a map of unchanged line positions
@@ -122,7 +192,18 @@ function computeLineMapping(oldLines, newLines, ignoreWhitespace = false) {
     return mapping;
 }
 /**
- * Parse line range specification (git-style -L option)
+ * Parses a line range specification (git-style -L option).
+ *
+ * Supports multiple formats:
+ * - "start,end": Explicit line range
+ * - "start,+offset": Relative offset from start
+ * - "/pattern1/,/pattern2/": Regex-based range
+ *
+ * @param lineRange - The range specification string
+ * @param lines - The file content lines (for pattern matching)
+ * @returns Object with start and end line numbers (1-indexed)
+ *
+ * @internal
  */
 function parseLineRange(lineRange, lines) {
     const totalLines = lines.length;
@@ -164,7 +245,16 @@ function parseLineRange(lineRange, lines) {
     return { start, end };
 }
 /**
- * Calculate similarity between two strings (0-1)
+ * Calculates similarity between two strings (0-1).
+ *
+ * Uses line-based comparison with the LCS algorithm to determine
+ * what percentage of lines are shared between the two versions.
+ *
+ * @param a - First string
+ * @param b - Second string
+ * @returns Similarity score from 0 to 1
+ *
+ * @internal
  */
 function calculateSimilarity(a, b) {
     if (a === b)
@@ -187,7 +277,48 @@ function calculateSimilarity(a, b) {
 // Main Functions
 // ============================================================================
 /**
- * Compute blame for a file at a specific commit
+ * Computes blame for a file at a specific commit.
+ *
+ * Traverses commit history to attribute each line of the file to the
+ * commit that last modified it. Supports various options for filtering
+ * and tracking behavior.
+ *
+ * @description
+ * The blame algorithm works by:
+ * 1. Starting at the specified commit and getting the file content
+ * 2. Initially attributing all lines to the starting commit
+ * 3. Walking backwards through commit history
+ * 4. For each parent commit, computing line mappings using LCS
+ * 5. Re-attributing lines that exist unchanged in the parent
+ * 6. Continuing until all lines are attributed or history is exhausted
+ *
+ * @param storage - The storage interface for accessing Git objects
+ * @param path - The file path to blame
+ * @param commit - The commit SHA to start from
+ * @param options - Optional blame configuration
+ * @returns The blame result with line attributions
+ *
+ * @throws {Error} If the commit is not found
+ * @throws {Error} If the file is not found at the specified commit
+ * @throws {Error} If the file is binary
+ *
+ * @example
+ * ```typescript
+ * // Basic blame
+ * const result = await blame(storage, 'src/main.ts', 'abc123')
+ *
+ * // Blame with options
+ * const result = await blame(storage, 'README.md', 'HEAD', {
+ *   followRenames: true,
+ *   maxCommits: 500,
+ *   ignoreWhitespace: true
+ * })
+ *
+ * // Blame specific line range
+ * const result = await blame(storage, 'config.json', 'main', {
+ *   lineRange: '10,20'
+ * })
+ * ```
  */
 export async function blame(storage, path, commit, options) {
     const opts = options ?? {};
@@ -400,13 +531,42 @@ export async function blame(storage, path, commit, options) {
     };
 }
 /**
- * Alias for blame - get full file blame
+ * Alias for blame - get full file blame.
+ *
+ * This function is identical to `blame` and exists for API compatibility.
+ *
+ * @param storage - The storage interface
+ * @param path - The file path to blame
+ * @param commit - The commit SHA to start from
+ * @param options - Optional blame configuration
+ * @returns The blame result
+ *
+ * @see {@link blame} for full documentation
  */
 export async function blameFile(storage, path, commit, options) {
     return blame(storage, path, commit, options);
 }
 /**
- * Get blame information for a specific line
+ * Gets blame information for a specific line.
+ *
+ * Convenience function that performs a full blame and extracts
+ * the information for a single line.
+ *
+ * @param storage - The storage interface
+ * @param path - The file path
+ * @param lineNumber - The line number (1-indexed)
+ * @param commit - The commit SHA
+ * @param options - Optional blame configuration
+ * @returns Blame information for the specified line
+ *
+ * @throws {Error} If lineNumber is less than 1
+ * @throws {Error} If lineNumber exceeds file length
+ *
+ * @example
+ * ```typescript
+ * const lineInfo = await blameLine(storage, 'src/main.ts', 42, 'HEAD')
+ * console.log(`Line 42 was last modified by ${lineInfo.author}`)
+ * ```
  */
 export async function blameLine(storage, path, lineNumber, commit, options) {
     if (lineNumber < 1) {
@@ -419,7 +579,28 @@ export async function blameLine(storage, path, lineNumber, commit, options) {
     return result.lines[lineNumber - 1];
 }
 /**
- * Get blame for a specific line range
+ * Gets blame for a specific line range.
+ *
+ * More efficient than using the lineRange option when you know
+ * the exact numeric range you want.
+ *
+ * @param storage - The storage interface
+ * @param path - The file path
+ * @param startLine - Starting line number (1-indexed, inclusive)
+ * @param endLine - Ending line number (1-indexed, inclusive)
+ * @param commit - The commit SHA
+ * @param options - Optional blame configuration
+ * @returns Blame result for the specified range
+ *
+ * @throws {Error} If startLine is less than 1
+ * @throws {Error} If endLine is less than startLine
+ * @throws {Error} If endLine exceeds file length
+ *
+ * @example
+ * ```typescript
+ * // Get blame for lines 10-20
+ * const result = await blameRange(storage, 'file.ts', 10, 20, 'HEAD')
+ * ```
  */
 export async function blameRange(storage, path, startLine, endLine, commit, options) {
     if (startLine < 1) {
@@ -440,13 +621,43 @@ export async function blameRange(storage, path, startLine, endLine, commit, opti
     };
 }
 /**
- * Get blame at a specific historical commit
+ * Gets blame at a specific historical commit.
+ *
+ * Alias for `blame` - provided for semantic clarity when you want
+ * to emphasize you're looking at a specific point in history.
+ *
+ * @param storage - The storage interface
+ * @param path - The file path
+ * @param commit - The commit SHA
+ * @param options - Optional blame configuration
+ * @returns The blame result
+ *
+ * @see {@link blame} for full documentation
  */
 export async function getBlameForCommit(storage, path, commit, options) {
     return blame(storage, path, commit, options);
 }
 /**
- * Track content path across renames through history
+ * Tracks file path across renames through history.
+ *
+ * Walks through commit history and records each path the file
+ * had at different points in time.
+ *
+ * @param storage - The storage interface
+ * @param path - Current file path
+ * @param commit - Starting commit SHA
+ * @param _options - Unused options parameter (reserved for future use)
+ * @returns Array of path history entries, newest first
+ *
+ * @example
+ * ```typescript
+ * const history = await trackContentAcrossRenames(storage, 'src/new-name.ts', 'HEAD')
+ * // history might contain:
+ * // [
+ * //   { commit: 'abc123', path: 'src/new-name.ts' },
+ * //   { commit: 'def456', path: 'src/old-name.ts' }
+ * // ]
+ * ```
  */
 export async function trackContentAcrossRenames(storage, path, commit, _options) {
     const history = [];
@@ -471,7 +682,28 @@ export async function trackContentAcrossRenames(storage, path, commit, _options)
     return history;
 }
 /**
- * Detect file renames between two commits
+ * Detects file renames between two commits.
+ *
+ * Compares two commits to find files that were renamed based on
+ * SHA matching (exact renames) and content similarity (renames with modifications).
+ *
+ * @param storage - The storage interface
+ * @param fromCommit - The older commit SHA
+ * @param toCommit - The newer commit SHA
+ * @param options - Configuration options
+ * @param options.threshold - Similarity threshold (0-1) for content-based detection
+ * @returns Map of old paths to new paths for detected renames
+ *
+ * @example
+ * ```typescript
+ * const renames = await detectRenames(storage, 'abc123', 'def456', {
+ *   threshold: 0.5
+ * })
+ *
+ * for (const [oldPath, newPath] of renames) {
+ *   console.log(`${oldPath} -> ${newPath}`)
+ * }
+ * ```
  */
 export async function detectRenames(storage, fromCommit, toCommit, options) {
     const threshold = options?.threshold ?? 0.5;
@@ -557,7 +789,26 @@ export async function detectRenames(storage, fromCommit, toCommit, options) {
     return renames;
 }
 /**
- * Build complete blame history for a specific line
+ * Builds complete blame history for a specific line.
+ *
+ * Tracks a single line through history, recording its content
+ * at each commit where it existed.
+ *
+ * @param storage - The storage interface
+ * @param path - The file path
+ * @param lineNumber - The line number to track (1-indexed)
+ * @param commit - Starting commit SHA
+ * @param options - Optional blame configuration
+ * @returns Array of history entries, newest first
+ *
+ * @example
+ * ```typescript
+ * const history = await buildBlameHistory(storage, 'main.ts', 10, 'HEAD')
+ *
+ * for (const entry of history) {
+ *   console.log(`${entry.commitSha}: ${entry.content}`)
+ * }
+ * ```
  */
 export async function buildBlameHistory(storage, path, lineNumber, commit, options) {
     const history = [];
@@ -631,7 +882,27 @@ export async function buildBlameHistory(storage, path, lineNumber, commit, optio
     return history;
 }
 /**
- * Format blame result for display
+ * Formats blame result for display.
+ *
+ * Converts a BlameResult into a human-readable or machine-parseable string format.
+ *
+ * @param result - The blame result to format
+ * @param options - Formatting options
+ * @returns Formatted string output
+ *
+ * @example
+ * ```typescript
+ * const result = await blame(storage, 'main.ts', 'HEAD')
+ *
+ * // Human-readable format
+ * const output = formatBlame(result, {
+ *   showLineNumbers: true,
+ *   showDate: true
+ * })
+ *
+ * // Machine-readable format
+ * const porcelain = formatBlame(result, { format: 'porcelain' })
+ * ```
  */
 export function formatBlame(result, options) {
     const opts = options ?? {};
@@ -678,7 +949,19 @@ export function formatBlame(result, options) {
     return lines.join('\n');
 }
 /**
- * Parse porcelain blame output
+ * Parses porcelain blame output back into a BlameResult.
+ *
+ * Useful for consuming blame output from external sources or
+ * for round-trip serialization.
+ *
+ * @param output - Porcelain format blame output string
+ * @returns Parsed blame result
+ *
+ * @example
+ * ```typescript
+ * const porcelainOutput = formatBlame(result, { format: 'porcelain' })
+ * const parsed = parseBlameOutput(porcelainOutput)
+ * ```
  */
 export function parseBlameOutput(output) {
     const lines = [];
