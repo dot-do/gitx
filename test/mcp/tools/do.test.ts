@@ -66,7 +66,9 @@ describe('MCP do Tool', () => {
     })
 
     describe('store access', () => {
-      it('should provide store access to sandboxed code', async () => {
+      // Note: With workerd sandbox, store operations are not available inside the sandbox
+      // for security reasons. Store operations should be performed outside the sandbox.
+      it('should fail when trying to access store.getObject in sandbox', async () => {
         const input: DoToolInput = {
           code: `
             const obj = await store.getObject('abc123')
@@ -76,11 +78,11 @@ describe('MCP do Tool', () => {
 
         const output = await executeDo(input, mockObjectStore)
 
-        expect(output.success).toBe(true)
-        expect(output.result).toEqual({ type: 'blob', data: new Uint8Array([1, 2, 3]) })
+        expect(output.success).toBe(false)
+        expect(output.error).toContain('store.getObject is not available in sandbox')
       })
 
-      it('should allow putting objects via store', async () => {
+      it('should fail when trying to access store.putObject in sandbox', async () => {
         const input: DoToolInput = {
           code: `
             const sha = await store.putObject('blob', new Uint8Array([4, 5, 6]))
@@ -90,11 +92,11 @@ describe('MCP do Tool', () => {
 
         const output = await executeDo(input, mockObjectStore)
 
-        expect(output.success).toBe(true)
-        expect(output.result).toBe('abc123def456')
+        expect(output.success).toBe(false)
+        expect(output.error).toContain('store.putObject is not available in sandbox')
       })
 
-      it('should allow listing objects via store', async () => {
+      it('should fail when trying to access store.listObjects in sandbox', async () => {
         const input: DoToolInput = {
           code: `
             const objects = await store.listObjects({ type: 'blob' })
@@ -104,8 +106,8 @@ describe('MCP do Tool', () => {
 
         const output = await executeDo(input, mockObjectStore)
 
-        expect(output.success).toBe(true)
-        expect(output.result).toEqual(['sha1', 'sha2', 'sha3'])
+        expect(output.success).toBe(false)
+        expect(output.error).toContain('store.listObjects is not available in sandbox')
       })
     })
 
