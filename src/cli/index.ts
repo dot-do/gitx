@@ -81,16 +81,22 @@ export class CLI {
       return { exitCode: 0, command: parsed.command }
     }
 
-    // Check for version flag
-    if (parsed.options.version || parsed.options.v) {
+    // Check for version flag (only when no command is specified)
+    // When a command is present, -v should be interpreted as verbose for that command
+    if (!parsed.command && (parsed.options.version || parsed.options.v)) {
+      this.stdout(`${this.name} ${this.version}`)
+      return { exitCode: 0 }
+    }
+    // For --version flag without command
+    if (!parsed.command && parsed.options.version) {
       this.stdout(`${this.name} ${this.version}`)
       return { exitCode: 0 }
     }
 
     // Check for unknown flags (flags starting with -- that aren't recognized)
     const knownFlags = ['cwd', 'C', 'help', 'h', 'version', 'v', 'short', 'branch', 'staged',
-      'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'list',
-      'interactive', 'port', 'open']
+      'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'D', 'list',
+      'interactive', 'port', 'open', 'verbose', 'vv']
     for (const key of Object.keys(parsed.options)) {
       if (!knownFlags.includes(key) && key !== '--') {
         this.stderr(`Unknown option: --${key}\nRun 'gitx --help' for available commands.`)
@@ -278,7 +284,10 @@ export function parseArgs(args: string[]): ParsedArgs {
 
   // Branch command options
   cli.option('-d', 'Delete a branch')
+  cli.option('-D', 'Force delete a branch')
   cli.option('--list', 'List branches')
+  cli.option('-v, --verbose', 'Verbose output')
+  cli.option('-vv', 'Very verbose output')
 
   // Review command options
   cli.option('--interactive', 'Interactive review mode')
