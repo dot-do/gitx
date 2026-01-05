@@ -246,3 +246,392 @@ export function sha1Verify(data: Uint8Array, expected: Uint8Array): boolean {
 
   return true
 }
+
+// ============================================================================
+// Pre-computed constants for streaming SHA-1
+// ============================================================================
+
+/**
+ * Initial hash values for SHA-1 (first 32 bits of fractional parts of square roots of first 5 primes)
+ * @internal
+ */
+const SHA1_H0 = 0x67452301
+const SHA1_H1 = 0xefcdab89
+const SHA1_H2 = 0x98badcfe
+const SHA1_H3 = 0x10325476
+const SHA1_H4 = 0xc3d2e1f0
+
+/**
+ * SHA-1 round constants
+ * @internal
+ */
+const SHA1_K = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6]
+
+/**
+ * Rotate left (circular left shift) operation.
+ * @internal
+ */
+function rotl(n: number, s: number): number {
+  return ((n << s) | (n >>> (32 - s))) >>> 0
+}
+
+/**
+ * Process a single 64-byte chunk in SHA-1
+ * @internal
+ */
+function processChunk(
+  chunk: Uint8Array,
+  h: Uint32Array,
+  w: Uint32Array
+): void {
+  const chunkView = new DataView(chunk.buffer, chunk.byteOffset, 64)
+
+  // Break chunk into sixteen 32-bit big-endian words
+  for (let i = 0; i < 16; i++) {
+    w[i] = chunkView.getUint32(i * 4, false)
+  }
+
+  // Extend the sixteen 32-bit words into eighty 32-bit words
+  for (let i = 16; i < 80; i++) {
+    w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1)
+  }
+
+  // Initialize working variables
+  let a = h[0]
+  let b = h[1]
+  let c = h[2]
+  let d = h[3]
+  let e = h[4]
+
+  // Main loop - 80 rounds
+  for (let i = 0; i < 80; i++) {
+    let f: number, k: number
+
+    if (i < 20) {
+      f = (b & c) | (~b & d)
+      k = SHA1_K[0]
+    } else if (i < 40) {
+      f = b ^ c ^ d
+      k = SHA1_K[1]
+    } else if (i < 60) {
+      f = (b & c) | (b & d) | (c & d)
+      k = SHA1_K[2]
+    } else {
+      f = b ^ c ^ d
+      k = SHA1_K[3]
+    }
+
+    const temp = (rotl(a, 5) + f + e + k + w[i]) >>> 0
+    e = d
+    d = c
+    c = rotl(b, 30)
+    b = a
+    a = temp
+  }
+
+  // Add this chunk's hash to result so far
+  h[0] = (h[0] + a) >>> 0
+  h[1] = (h[1] + b) >>> 0
+  h[2] = (h[2] + c) >>> 0
+  h[3] = (h[3] + d) >>> 0
+  h[4] = (h[4] + e) >>> 0
+}
+
+/**
+ * Streaming SHA-1 hasher for processing large data incrementally.
+ *
+ * @description
+ * This class allows hashing data in chunks, which is essential for:
+ * - Processing large files without loading everything into memory
+ * - Computing hashes of data streams
+ * - Pack file generation and verification
+ *
+ * The hasher maintains internal state and can accept data through the
+ * `update()` method before finalizing with `digest()` or `digestHex()`.
+ *
+ * **Performance Note**: For small data (< 64 bytes), the non-streaming
+ * `sha1()` function may be slightly faster due to lower overhead.
+ *
+ * @class StreamingSHA1
+ *
+ * @example
+ * ```typescript
+ * // Hash a large file in chunks
+ * const hasher = new StreamingSHA1()
+ *
+ * for await (const chunk of fileStream) {
+ *   hasher.update(chunk)
+ * }
+ *
+ * const hash = hasher.digestHex()
+ * console.log(`File hash: ${hash}`)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Hash Git object with header
+ * const hasher = new StreamingSHA1()
+ * hasher.update(new TextEncoder().encode(`blob ${size}\0`))
+ * hasher.update(content)
+ * const objectId = hasher.digestHex()
+ * ```
+ */
+export class StreamingSHA1 {
+  /** Hash state */
+  private h: Uint32Array
+  /** Working array for chunk processing */
+  private w: Uint32Array
+  /** Buffer for incomplete chunks */
+  private buffer: Uint8Array
+  /** Current position in buffer */
+  private bufferLength: number
+  /** Total bytes processed */
+  private totalLength: bigint
+  /** Whether digest has been called */
+  private finalized: boolean
+
+  /**
+   * Creates a new StreamingSHA1 hasher instance.
+   */
+  constructor() {
+    this.h = new Uint32Array([SHA1_H0, SHA1_H1, SHA1_H2, SHA1_H3, SHA1_H4])
+    this.w = new Uint32Array(80)
+    this.buffer = new Uint8Array(64)
+    this.bufferLength = 0
+    this.totalLength = 0n
+    this.finalized = false
+  }
+
+  /**
+   * Resets the hasher to its initial state.
+   *
+   * @description Allows reusing the same hasher instance for a new hash
+   * computation without creating a new object.
+   *
+   * @example
+   * ```typescript
+   * const hasher = new StreamingSHA1()
+   * hasher.update(data1)
+   * const hash1 = hasher.digestHex()
+   *
+   * hasher.reset()
+   * hasher.update(data2)
+   * const hash2 = hasher.digestHex()
+   * ```
+   */
+  reset(): void {
+    this.h[0] = SHA1_H0
+    this.h[1] = SHA1_H1
+    this.h[2] = SHA1_H2
+    this.h[3] = SHA1_H3
+    this.h[4] = SHA1_H4
+    this.bufferLength = 0
+    this.totalLength = 0n
+    this.finalized = false
+  }
+
+  /**
+   * Updates the hash with additional data.
+   *
+   * @description Processes the input data, updating the internal hash state.
+   * Data is buffered internally until a complete 64-byte chunk is available,
+   * then processed immediately.
+   *
+   * This method can be called multiple times before finalizing with `digest()`.
+   *
+   * @param {Uint8Array} data - Data to add to the hash computation
+   * @returns {this} The hasher instance for method chaining
+   * @throws {Error} If called after digest() without reset()
+   *
+   * @example
+   * ```typescript
+   * const hasher = new StreamingSHA1()
+   *   .update(header)
+   *   .update(content)
+   *   .update(footer)
+   * const hash = hasher.digestHex()
+   * ```
+   */
+  update(data: Uint8Array): this {
+    if (this.finalized) {
+      throw new Error('Cannot update after digest() - call reset() first')
+    }
+
+    this.totalLength += BigInt(data.length)
+
+    let offset = 0
+
+    // If we have buffered data, try to complete a chunk
+    if (this.bufferLength > 0) {
+      const needed = 64 - this.bufferLength
+      const available = Math.min(needed, data.length)
+      this.buffer.set(data.subarray(0, available), this.bufferLength)
+      this.bufferLength += available
+      offset = available
+
+      if (this.bufferLength === 64) {
+        processChunk(this.buffer, this.h, this.w)
+        this.bufferLength = 0
+      }
+    }
+
+    // Process complete 64-byte chunks directly from input
+    while (offset + 64 <= data.length) {
+      processChunk(data.subarray(offset, offset + 64), this.h, this.w)
+      offset += 64
+    }
+
+    // Buffer remaining bytes
+    if (offset < data.length) {
+      this.buffer.set(data.subarray(offset), this.bufferLength)
+      this.bufferLength += data.length - offset
+    }
+
+    return this
+  }
+
+  /**
+   * Finalizes the hash computation and returns the 20-byte digest.
+   *
+   * @description Applies SHA-1 padding to the remaining data and computes
+   * the final hash. After calling this method, the hasher cannot be updated
+   * unless `reset()` is called.
+   *
+   * @returns {Uint8Array} 20-byte SHA-1 hash
+   *
+   * @example
+   * ```typescript
+   * const hasher = new StreamingSHA1()
+   * hasher.update(data)
+   * const hashBytes = hasher.digest()
+   * console.log(hashBytes.length) // 20
+   * ```
+   */
+  digest(): Uint8Array {
+    if (this.finalized) {
+      // Return cached result
+      const result = new Uint8Array(20)
+      const resultView = new DataView(result.buffer)
+      resultView.setUint32(0, this.h[0], false)
+      resultView.setUint32(4, this.h[1], false)
+      resultView.setUint32(8, this.h[2], false)
+      resultView.setUint32(12, this.h[3], false)
+      resultView.setUint32(16, this.h[4], false)
+      return result
+    }
+
+    this.finalized = true
+
+    const bitLen = this.totalLength * 8n
+
+    // Pad message: append 1 bit (0x80)
+    this.buffer[this.bufferLength] = 0x80
+    this.bufferLength++
+
+    // If we don't have room for the 64-bit length, fill and process this chunk
+    if (this.bufferLength > 56) {
+      // Fill rest with zeros and process
+      this.buffer.fill(0, this.bufferLength, 64)
+      processChunk(this.buffer, this.h, this.w)
+      this.bufferLength = 0
+    }
+
+    // Fill with zeros up to length field
+    this.buffer.fill(0, this.bufferLength, 56)
+
+    // Write length as 64-bit big-endian
+    const lengthView = new DataView(this.buffer.buffer, this.buffer.byteOffset, 64)
+    lengthView.setBigUint64(56, bitLen, false)
+
+    // Process final chunk
+    processChunk(this.buffer, this.h, this.w)
+
+    // Produce the final hash value (big-endian)
+    const result = new Uint8Array(20)
+    const resultView = new DataView(result.buffer)
+    resultView.setUint32(0, this.h[0], false)
+    resultView.setUint32(4, this.h[1], false)
+    resultView.setUint32(8, this.h[2], false)
+    resultView.setUint32(12, this.h[3], false)
+    resultView.setUint32(16, this.h[4], false)
+
+    return result
+  }
+
+  /**
+   * Finalizes the hash computation and returns the hex string digest.
+   *
+   * @description Convenience method that calls `digest()` and converts
+   * the result to a 40-character lowercase hexadecimal string.
+   *
+   * @returns {string} 40-character lowercase hexadecimal hash string
+   *
+   * @example
+   * ```typescript
+   * const hasher = new StreamingSHA1()
+   * hasher.update(data)
+   * const hash = hasher.digestHex()
+   * console.log(hash) // 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'
+   * ```
+   */
+  digestHex(): string {
+    const hash = this.digest()
+    let hex = ''
+    for (let i = 0; i < hash.length; i++) {
+      hex += hash[i].toString(16).padStart(2, '0')
+    }
+    return hex
+  }
+}
+
+/**
+ * Hash a Git object with streaming support for large objects.
+ *
+ * @description
+ * Uses the streaming hasher to compute the SHA-1 of a Git object with its header.
+ * This is more memory-efficient than `hashObject` in `hash.ts` for large objects
+ * as it doesn't require concatenating header and data.
+ *
+ * @param type - Object type ('blob', 'tree', 'commit', 'tag')
+ * @param data - Object content as binary data
+ * @returns 20-byte SHA-1 hash as Uint8Array
+ *
+ * @example
+ * ```typescript
+ * const content = new TextEncoder().encode('hello')
+ * const hashBytes = hashObjectStreaming('blob', content)
+ * ```
+ */
+export function hashObjectStreaming(type: string, data: Uint8Array): Uint8Array {
+  const hasher = new StreamingSHA1()
+  const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+  hasher.update(header)
+  hasher.update(data)
+  return hasher.digest()
+}
+
+/**
+ * Hash a Git object with streaming support, returning hex string.
+ *
+ * @description
+ * Convenience wrapper that returns the hash as a 40-character hex string
+ * instead of raw bytes.
+ *
+ * @param type - Object type ('blob', 'tree', 'commit', 'tag')
+ * @param data - Object content as binary data
+ * @returns 40-character lowercase hexadecimal SHA-1 hash
+ *
+ * @example
+ * ```typescript
+ * const content = new TextEncoder().encode('hello')
+ * const sha = hashObjectStreamingHex('blob', content)
+ * console.log(sha) // 'b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0'
+ * ```
+ */
+export function hashObjectStreamingHex(type: string, data: Uint8Array): string {
+  const hasher = new StreamingSHA1()
+  const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+  hasher.update(header)
+  hasher.update(data)
+  return hasher.digestHex()
+}

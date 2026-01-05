@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, bench } from 'vitest'
 import {
   applyDelta,
   createDelta,
@@ -7,6 +7,65 @@ import {
   COPY_INSTRUCTION,
   INSERT_INSTRUCTION
 } from '../../src/pack/delta'
+
+// Test data generators for benchmarks
+function generateRandomData(size: number, seed: number = 42): Uint8Array {
+  const data = new Uint8Array(size)
+  let state = seed
+  for (let i = 0; i < size; i++) {
+    // Simple LCG random number generator
+    state = (state * 1103515245 + 12345) & 0x7fffffff
+    data[i] = state & 0xff
+  }
+  return data
+}
+
+function generateSimilarData(base: Uint8Array, changePercent: number): Uint8Array {
+  const target = new Uint8Array(base)
+  const numChanges = Math.floor(base.length * changePercent / 100)
+  for (let i = 0; i < numChanges; i++) {
+    const pos = Math.floor(Math.random() * base.length)
+    target[pos] = (target[pos] + 1) & 0xff
+  }
+  return target
+}
+
+function generateSourceCodeLike(size: number): Uint8Array {
+  // Generate data that mimics source code with repeating patterns
+  const lines = [
+    'function processData(input) {\n',
+    '  const result = [];\n',
+    '  for (let i = 0; i < input.length; i++) {\n',
+    '    result.push(transform(input[i]));\n',
+    '  }\n',
+    '  return result;\n',
+    '}\n',
+    '\n',
+    'export const config = {\n',
+    '  debug: false,\n',
+    '  version: "1.0.0",\n',
+    '};\n',
+  ]
+  const encoder = new TextEncoder()
+  const chunks: Uint8Array[] = []
+  let totalSize = 0
+  let lineIndex = 0
+  while (totalSize < size) {
+    const line = encoder.encode(lines[lineIndex % lines.length])
+    chunks.push(line)
+    totalSize += line.length
+    lineIndex++
+  }
+  const result = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    const copyLen = Math.min(chunk.length, size - offset)
+    result.set(chunk.subarray(0, copyLen), offset)
+    offset += copyLen
+    if (offset >= size) break
+  }
+  return result
+}
 
 describe('Git Pack Delta Encoding', () => {
   describe('parseDeltaHeader', () => {
@@ -474,6 +533,145 @@ describe('Git Pack Delta Encoding', () => {
       const delta = createDelta(base, target)
       const result = applyDelta(base, delta)
       expect(result).toEqual(target)
+    })
+  })
+
+  describe('performance optimization tests', () => {
+    it('should efficiently handle highly similar large files', () => {
+      // 100KB file with 1% changes - typical source code scenario
+      const base = generateSourceCodeLike(100 * 1024)
+      const target = generateSimilarData(base, 1)
+
+      const startTime = performance.now()
+      const delta = createDelta(base, target)
+      const createTime = performance.now() - startTime
+
+      const applyStart = performance.now()
+      const result = applyDelta(base, delta)
+      const applyTime = performance.now() - applyStart
+
+      // Verify correctness
+      expect(result).toEqual(target)
+
+      // Delta should be significantly smaller than target
+      const compressionRatio = delta.length / target.length
+      expect(compressionRatio).toBeLessThan(0.2) // Should be at least 5x smaller
+
+      // Performance should be reasonable (< 100ms for 100KB)
+      expect(createTime).toBeLessThan(100)
+      expect(applyTime).toBeLessThan(50)
+    })
+
+    it('should handle files with repeating patterns efficiently', () => {
+      // Source code has lots of repeating patterns (indentation, keywords)
+      const base = generateSourceCodeLike(50 * 1024)
+      const target = new Uint8Array(base.length + 100)
+      // Insert some bytes at the beginning
+      target.set(new TextEncoder().encode('// New comment added\n'), 0)
+      target.set(base, 100)
+
+      const delta = createDelta(base, target)
+      const result = applyDelta(base, delta)
+
+      expect(result).toEqual(target)
+      // Most of the content should be copied, not inserted
+      expect(delta.length).toBeLessThan(target.length * 0.1)
+    })
+
+    it('should handle pathological case: completely different files', () => {
+      const base = generateRandomData(10000, 1)
+      const target = generateRandomData(10000, 2) // Different seed = different content
+
+      const delta = createDelta(base, target)
+      const result = applyDelta(base, delta)
+
+      expect(result).toEqual(target)
+      // Delta will be larger since there's nothing to copy
+      // But it should still work correctly
+    })
+
+    it('should handle large files (1MB) with reasonable memory usage', () => {
+      const base = generateSourceCodeLike(1024 * 1024)
+      const target = generateSimilarData(base, 0.5) // 0.5% changes
+
+      // Record memory before (approximation)
+      const memBefore = process.memoryUsage?.().heapUsed ?? 0
+
+      const delta = createDelta(base, target)
+      const result = applyDelta(base, delta)
+
+      const memAfter = process.memoryUsage?.().heapUsed ?? 0
+
+      expect(result).toEqual(target)
+
+      // Memory increase should be bounded (< 50MB for 1MB file)
+      // This is a loose bound to avoid flakiness
+      if (memBefore > 0 && memAfter > 0) {
+        const memIncrease = memAfter - memBefore
+        expect(memIncrease).toBeLessThan(50 * 1024 * 1024)
+      }
+    })
+
+    it('should produce efficient deltas for typical git scenarios', () => {
+      const encoder = new TextEncoder()
+
+      // Simulate typical git scenarios
+      const scenarios = [
+        {
+          name: 'added function',
+          base: 'function a() {}\nfunction b() {}\n',
+          target: 'function a() {}\nfunction new() {}\nfunction b() {}\n',
+        },
+        {
+          name: 'renamed variable',
+          base: 'const oldName = 1;\nconst other = oldName + 2;\n',
+          target: 'const newName = 1;\nconst other = newName + 2;\n',
+        },
+        {
+          name: 'added import',
+          base: 'import { a } from "./a";\n\nfunction main() {}\n',
+          target: 'import { a } from "./a";\nimport { b } from "./b";\n\nfunction main() {}\n',
+        },
+      ]
+
+      for (const scenario of scenarios) {
+        const base = encoder.encode(scenario.base)
+        const target = encoder.encode(scenario.target)
+
+        const delta = createDelta(base, target)
+        const result = applyDelta(base, delta)
+
+        expect(result).toEqual(target)
+        // Delta should be smaller than full target for typical changes
+        expect(delta.length).toBeLessThanOrEqual(target.length + 10) // +10 for header overhead
+      }
+    })
+  })
+
+  describe('delta compression quality metrics', () => {
+    it('should measure compression ratio for similar files', () => {
+      const sizes = [1024, 10 * 1024, 100 * 1024]
+      const changePercents = [0.1, 1, 5, 10]
+
+      for (const size of sizes) {
+        const base = generateSourceCodeLike(size)
+
+        for (const changePercent of changePercents) {
+          const target = generateSimilarData(base, changePercent)
+          const delta = createDelta(base, target)
+
+          const compressionRatio = (delta.length / target.length) * 100
+          const result = applyDelta(base, delta)
+
+          // Correctness check
+          expect(result).toEqual(target)
+
+          // For low change percentages, compression should be good
+          if (changePercent <= 1) {
+            expect(compressionRatio).toBeLessThan(20) // < 20% of original
+          }
+        }
+      }
     })
   })
 })

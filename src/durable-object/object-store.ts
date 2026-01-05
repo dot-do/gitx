@@ -9,7 +9,9 @@
  * - Content-addressable storage using SHA-1 hashes
  * - Write-ahead logging (WAL) for durability
  * - Object index for tiered storage support
- * - Batch operations for efficiency
+ * - Batch operations for efficiency with transaction support
+ * - LRU caching for hot tier objects
+ * - Metrics and logging infrastructure
  * - Typed accessors for each Git object type
  *
  * @module durable-object/object-store
@@ -18,22 +20,31 @@
  * ```typescript
  * import { ObjectStore } from './durable-object/object-store'
  *
- * const store = new ObjectStore(durableObjectStorage)
+ * const store = new ObjectStore(durableObjectStorage, {
+ *   cacheMaxCount: 1000,
+ *   cacheMaxBytes: 50 * 1024 * 1024, // 50MB
+ *   enableMetrics: true
+ * })
  *
  * // Store a blob
  * const content = new TextEncoder().encode('Hello, World!')
  * const sha = await store.putObject('blob', content)
  *
- * // Retrieve it
+ * // Retrieve it (cached on second access)
  * const obj = await store.getObject(sha)
  * console.log(obj?.type, obj?.size)
  *
  * // Get typed object
  * const blob = await store.getBlobObject(sha)
+ *
+ * // Get metrics
+ * const metrics = store.getMetrics()
+ * console.log(`Cache hit rate: ${metrics.cacheHitRate}%`)
  * ```
  */
 
 import { DurableObjectStorage } from './schema'
+import { LRUCache, CacheStats } from '../storage/lru-cache'
 import {
   ObjectType,
   BlobObject,
@@ -80,8 +91,99 @@ export interface StoredObject {
   createdAt: number
 }
 
+/**
+ * Configuration options for ObjectStore.
+ *
+ * @description
+ * Controls caching behavior, metrics collection, and logging.
+ *
+ * @example
+ * ```typescript
+ * const options: ObjectStoreOptions = {
+ *   cacheMaxCount: 1000,
+ *   cacheMaxBytes: 50 * 1024 * 1024,
+ *   cacheTTL: 3600000,
+ *   enableMetrics: true,
+ *   logger: console
+ * }
+ * ```
+ */
+export interface ObjectStoreOptions {
+  /**
+   * Maximum number of objects to cache in memory.
+   * @default 500
+   */
+  cacheMaxCount?: number
+
+  /**
+   * Maximum cache size in bytes.
+   * @default 25MB
+   */
+  cacheMaxBytes?: number
+
+  /**
+   * Time-to-live for cached objects in milliseconds.
+   * @default undefined (no expiration)
+   */
+  cacheTTL?: number
+
+  /**
+   * Enable metrics collection.
+   * @default false
+   */
+  enableMetrics?: boolean
+
+  /**
+   * Logger interface for operation logging.
+   * @default undefined (no logging)
+   */
+  logger?: ObjectStoreLogger
+}
+
+/**
+ * Logger interface for ObjectStore operations.
+ */
+export interface ObjectStoreLogger {
+  debug?(message: string, ...args: unknown[]): void
+  info?(message: string, ...args: unknown[]): void
+  warn?(message: string, ...args: unknown[]): void
+  error?(message: string, ...args: unknown[]): void
+}
+
+/**
+ * Metrics collected by ObjectStore operations.
+ */
+export interface ObjectStoreMetrics {
+  /** Total number of read operations */
+  reads: number
+  /** Total number of write operations */
+  writes: number
+  /** Total number of delete operations */
+  deletes: number
+  /** Cache statistics */
+  cache: CacheStats
+  /** Cache hit rate percentage */
+  cacheHitRate: number
+  /** Total bytes written */
+  bytesWritten: number
+  /** Total bytes read */
+  bytesRead: number
+  /** Average write latency in ms */
+  avgWriteLatencyMs: number
+  /** Average read latency in ms */
+  avgReadLatencyMs: number
+  /** Number of batch operations */
+  batchOperations: number
+  /** Total objects in batch operations */
+  batchObjectsTotal: number
+}
+
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
+
+// Default cache configuration
+const DEFAULT_CACHE_MAX_COUNT = 500
+const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024 // 25MB
 
 // ============================================================================
 // ObjectStore Class
@@ -114,12 +216,71 @@ const decoder = new TextDecoder()
  * ```
  */
 export class ObjectStore {
+  private cache: LRUCache<string, StoredObject>
+  private options: ObjectStoreOptions
+  private logger?: ObjectStoreLogger
+
+  // Metrics tracking
+  private _reads = 0
+  private _writes = 0
+  private _deletes = 0
+  private _bytesWritten = 0
+  private _bytesRead = 0
+  private _totalWriteLatency = 0
+  private _totalReadLatency = 0
+  private _batchOperations = 0
+  private _batchObjectsTotal = 0
+
   /**
    * Create a new ObjectStore.
    *
    * @param storage - Durable Object storage interface with SQL support
+   * @param options - Configuration options for caching, metrics, and logging
+   *
+   * @example
+   * ```typescript
+   * // Basic usage
+   * const store = new ObjectStore(storage)
+   *
+   * // With caching and metrics
+   * const store = new ObjectStore(storage, {
+   *   cacheMaxCount: 1000,
+   *   cacheMaxBytes: 50 * 1024 * 1024,
+   *   enableMetrics: true,
+   *   logger: console
+   * })
+   * ```
    */
-  constructor(private storage: DurableObjectStorage) {}
+  constructor(
+    private storage: DurableObjectStorage,
+    options?: ObjectStoreOptions
+  ) {
+    this.options = options ?? {}
+    this.logger = options?.logger
+
+    // Initialize LRU cache for hot tier objects
+    this.cache = new LRUCache<string, StoredObject>({
+      maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
+      maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
+      defaultTTL: options?.cacheTTL,
+      sizeCalculator: (obj: StoredObject) => obj.data.byteLength + 100, // 100 bytes overhead for metadata
+      onEvict: (key, _value, reason) => {
+        this.log('debug', `Cache eviction: ${key} (reason: ${reason})`)
+      }
+    })
+  }
+
+  /**
+   * Log a message if logger is configured.
+   * @internal
+   */
+  private log(level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: unknown[]): void {
+    if (!this.logger) return
+    const logFn = this.logger[level]
+    if (logFn) {
+      logFn.call(this.logger, `[ObjectStore] ${message}`, ...args)
+    }
+  }
 
   /**
    * Store a raw object and return its SHA.
@@ -128,6 +289,7 @@ export class ObjectStore {
    * Computes the SHA-1 hash of the object in Git format (type + size + content),
    * logs the operation to WAL, stores the object, and updates the object index.
    * If an object with the same SHA already exists, it is replaced (idempotent).
+   * The object is also added to the LRU cache for fast subsequent reads.
    *
    * @param type - Object type ('blob', 'tree', 'commit', 'tag')
    * @param data - Raw object content (without Git header)
@@ -141,11 +303,17 @@ export class ObjectStore {
    * ```
    */
   async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
+    const startTime = this.options.enableMetrics ? Date.now() : 0
+
     // Compute SHA-1 hash using git object format: "type size\0content"
     const sha = await hashObject(type, data)
 
+    this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)`)
+
     // Log to WAL first
     await this.logToWAL('PUT', sha, type, data)
+
+    const now = Date.now()
 
     // Store the object
     this.storage.sql.exec(
@@ -154,7 +322,7 @@ export class ObjectStore {
       type,
       data.length,
       data,
-      Date.now()
+      now
     )
 
     // Update object index
@@ -166,6 +334,23 @@ export class ObjectStore {
       data.length,
       type
     )
+
+    // Add to cache for fast subsequent reads
+    const storedObject: StoredObject = {
+      sha,
+      type,
+      size: data.length,
+      data,
+      createdAt: now
+    }
+    this.cache.set(sha, storedObject)
+
+    // Update metrics
+    if (this.options.enableMetrics) {
+      this._writes++
+      this._bytesWritten += data.length
+      this._totalWriteLatency += Date.now() - startTime
+    }
 
     return sha
   }
@@ -326,8 +511,8 @@ export class ObjectStore {
    * Retrieve an object by SHA.
    *
    * @description
-   * Fetches an object from the database by its SHA-1 hash.
-   * Returns null if the object doesn't exist or if the SHA is invalid.
+   * Fetches an object from the LRU cache first, falling back to the database
+   * if not cached. Returns null if the object doesn't exist or if the SHA is invalid.
    *
    * @param sha - 40-character SHA-1 hash
    * @returns The stored object or null if not found
@@ -341,10 +526,25 @@ export class ObjectStore {
    * ```
    */
   async getObject(sha: string): Promise<StoredObject | null> {
+    const startTime = this.options.enableMetrics ? Date.now() : 0
+
     if (!sha || sha.length < 4) {
       return null
     }
 
+    // Check cache first (fast path)
+    const cached = this.cache.get(sha)
+    if (cached) {
+      this.log('debug', `Cache hit for object: ${sha}`)
+      if (this.options.enableMetrics) {
+        this._reads++
+        this._bytesRead += cached.size
+        this._totalReadLatency += Date.now() - startTime
+      }
+      return cached
+    }
+
+    // Fall back to database
     const result = this.storage.sql.exec(
       'SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha = ?',
       sha
@@ -352,17 +552,33 @@ export class ObjectStore {
     const rows = result.toArray() as StoredObject[]
 
     if (rows.length === 0) {
+      this.log('debug', `Object not found: ${sha}`)
+      if (this.options.enableMetrics) {
+        this._reads++
+        this._totalReadLatency += Date.now() - startTime
+      }
       return null
     }
 
-    return rows[0]
+    const obj = rows[0]
+
+    // Add to cache for subsequent reads
+    this.cache.set(sha, obj)
+
+    if (this.options.enableMetrics) {
+      this._reads++
+      this._bytesRead += obj.size
+      this._totalReadLatency += Date.now() - startTime
+    }
+
+    return obj
   }
 
   /**
    * Delete an object by SHA.
    *
    * @description
-   * Removes an object from both the objects table and the object index.
+   * Removes an object from the cache, objects table, and the object index.
    * The operation is logged to WAL. Returns false if the object doesn't exist.
    *
    * **Warning**: Deleting objects that are still referenced by other objects
@@ -386,6 +602,8 @@ export class ObjectStore {
       return false
     }
 
+    this.log('debug', `Deleting object: ${sha}`)
+
     // Log to WAL
     await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0))
 
@@ -394,6 +612,14 @@ export class ObjectStore {
 
     // Delete from object index
     this.storage.sql.exec('DELETE FROM object_index WHERE sha = ?', sha)
+
+    // Remove from cache
+    this.cache.delete(sha)
+
+    // Update metrics
+    if (this.options.enableMetrics) {
+      this._deletes++
+    }
 
     return true
   }
@@ -445,12 +671,19 @@ export class ObjectStore {
    * ```
    */
   async verifyObject(sha: string): Promise<boolean> {
-    const obj = await this.getObject(sha)
-    if (!obj) {
+    // Read directly from storage (bypass cache) to verify actual stored data
+    const result = this.storage.sql.exec(
+      'SELECT type, data FROM objects WHERE sha = ?',
+      sha
+    )
+    const rows = result.toArray() as { type: ObjectType; data: ArrayBuffer }[]
+
+    if (rows.length === 0) {
       return false
     }
 
-    const computedSha = await hashObject(obj.type, obj.data)
+    const obj = rows[0]
+    const computedSha = await hashObject(obj.type, new Uint8Array(obj.data))
     return computedSha === sha
   }
 
@@ -497,12 +730,14 @@ export class ObjectStore {
   }
 
   /**
-   * Store multiple objects in a batch.
+   * Store multiple objects in a batch using a single transaction.
    *
    * @description
-   * Stores multiple objects sequentially. Each object is stored
-   * individually with its own WAL entry. For atomic batch operations,
-   * consider wrapping in a transaction.
+   * Stores multiple objects atomically within a single SQLite transaction.
+   * This is more efficient than individual puts for bulk operations as it:
+   * - Reduces the number of disk flushes
+   * - Ensures atomic writes (all-or-nothing)
+   * - Batches WAL entries for better performance
    *
    * @param objects - Array of objects to store
    * @returns Array of SHA-1 hashes in the same order as input
@@ -516,20 +751,113 @@ export class ObjectStore {
    * ```
    */
   async putObjects(objects: { type: ObjectType; data: Uint8Array }[]): Promise<string[]> {
-    const shas: string[] = []
-    for (const obj of objects) {
-      const sha = await this.putObject(obj.type, obj.data)
-      shas.push(sha)
+    if (objects.length === 0) {
+      return []
     }
-    return shas
+
+    // For single objects, delegate to putObject
+    if (objects.length === 1) {
+      const sha = await this.putObject(objects[0].type, objects[0].data)
+      return [sha]
+    }
+
+    const startTime = this.options.enableMetrics ? Date.now() : 0
+    const shas: string[] = []
+    const now = Date.now()
+    let totalBytes = 0
+
+    this.log('info', `Starting batch write of ${objects.length} objects`)
+
+    // Pre-compute all SHA hashes (CPU-bound, before transaction)
+    const objectsWithSha: Array<{ sha: string; type: ObjectType; data: Uint8Array }> = []
+    for (const obj of objects) {
+      const sha = await hashObject(obj.type, obj.data)
+      objectsWithSha.push({ sha, type: obj.type, data: obj.data })
+      shas.push(sha)
+      totalBytes += obj.data.length
+    }
+
+    // Begin transaction for atomic batch write
+    this.storage.sql.exec('BEGIN TRANSACTION')
+
+    try {
+      for (const { sha, type, data } of objectsWithSha) {
+        // Log batch operation to WAL (single entry for the batch)
+        const payload = encoder.encode(JSON.stringify({
+          sha,
+          type,
+          timestamp: now,
+          batchSize: objects.length
+        }))
+        this.storage.sql.exec(
+          'INSERT INTO wal (operation, payload, created_at, flushed) VALUES (?, ?, ?, 0)',
+          'BATCH_PUT',
+          payload,
+          now
+        )
+
+        // Store the object
+        this.storage.sql.exec(
+          'INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)',
+          sha,
+          type,
+          data.length,
+          data,
+          now
+        )
+
+        // Update object index
+        this.storage.sql.exec(
+          'INSERT OR REPLACE INTO object_index (sha, tier, location, size, type) VALUES (?, ?, ?, ?, ?)',
+          sha,
+          'hot',
+          'local',
+          data.length,
+          type
+        )
+
+        // Add to cache
+        const storedObject: StoredObject = {
+          sha,
+          type,
+          size: data.length,
+          data,
+          createdAt: now
+        }
+        this.cache.set(sha, storedObject)
+      }
+
+      // Commit transaction
+      this.storage.sql.exec('COMMIT')
+
+      this.log('info', `Batch write completed: ${objects.length} objects, ${totalBytes} bytes`)
+
+      // Update metrics
+      if (this.options.enableMetrics) {
+        this._writes += objects.length
+        this._bytesWritten += totalBytes
+        this._totalWriteLatency += Date.now() - startTime
+        this._batchOperations++
+        this._batchObjectsTotal += objects.length
+      }
+
+      return shas
+    } catch (error) {
+      // Rollback on error
+      this.storage.sql.exec('ROLLBACK')
+      this.log('error', `Batch write failed, rolled back`, error)
+      throw error
+    }
   }
 
   /**
-   * Retrieve multiple objects by SHA.
+   * Retrieve multiple objects by SHA using optimized batch queries.
    *
    * @description
-   * Fetches multiple objects by their SHAs. Missing objects
-   * are returned as null in the result array.
+   * Fetches multiple objects efficiently by:
+   * 1. First checking the LRU cache for each SHA
+   * 2. Batching uncached SHAs into a single SQL query with IN clause
+   * 3. Returning results in the original order with null for missing objects
    *
    * @param shas - Array of 40-character SHA-1 hashes
    * @returns Array of objects (or null for missing) in the same order
@@ -545,11 +873,70 @@ export class ObjectStore {
    * ```
    */
   async getObjects(shas: string[]): Promise<(StoredObject | null)[]> {
-    const results: (StoredObject | null)[] = []
-    for (const sha of shas) {
-      const obj = await this.getObject(sha)
-      results.push(obj)
+    if (shas.length === 0) {
+      return []
     }
+
+    const startTime = this.options.enableMetrics ? Date.now() : 0
+    const results: (StoredObject | null)[] = new Array(shas.length).fill(null)
+    const uncachedIndices: number[] = []
+    const uncachedShas: string[] = []
+    let totalBytesRead = 0
+
+    // First pass: check cache for each SHA
+    for (let i = 0; i < shas.length; i++) {
+      const sha = shas[i]
+      if (!sha || sha.length < 4) {
+        results[i] = null
+        continue
+      }
+
+      const cached = this.cache.get(sha)
+      if (cached) {
+        results[i] = cached
+        totalBytesRead += cached.size
+      } else {
+        uncachedIndices.push(i)
+        uncachedShas.push(sha)
+      }
+    }
+
+    // Second pass: batch query for uncached objects
+    if (uncachedShas.length > 0) {
+      this.log('debug', `Batch fetching ${uncachedShas.length} uncached objects`)
+
+      // Build optimized IN query
+      const placeholders = uncachedShas.map(() => '?').join(', ')
+      const result = this.storage.sql.exec(
+        `SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha IN (${placeholders})`,
+        ...uncachedShas
+      )
+      const rows = result.toArray() as StoredObject[]
+
+      // Build lookup map for O(1) access
+      const rowMap = new Map<string, StoredObject>()
+      for (const row of rows) {
+        rowMap.set(row.sha, row)
+        // Add to cache for future reads
+        this.cache.set(row.sha, row)
+        totalBytesRead += row.size
+      }
+
+      // Fill in results at original indices
+      for (let i = 0; i < uncachedIndices.length; i++) {
+        const originalIndex = uncachedIndices[i]
+        const sha = uncachedShas[i]
+        results[originalIndex] = rowMap.get(sha) ?? null
+      }
+    }
+
+    // Update metrics
+    if (this.options.enableMetrics) {
+      this._reads += shas.length
+      this._bytesRead += totalBytesRead
+      this._totalReadLatency += Date.now() - startTime
+    }
+
     return results
   }
 

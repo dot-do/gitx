@@ -268,6 +268,264 @@ export interface TagObject extends GitObject {
 }
 
 // ============================================================================
+// Validation Helpers
+// ============================================================================
+
+/**
+ * Valid SHA-1 hash pattern (40 lowercase hexadecimal characters).
+ *
+ * @description
+ * Regular expression for validating SHA-1 hashes used in Git.
+ * Matches exactly 40 lowercase hexadecimal characters.
+ *
+ * @example
+ * ```typescript
+ * if (SHA_PATTERN.test(input)) {
+ *   // Valid SHA-1 format
+ * }
+ * ```
+ */
+export const SHA_PATTERN = /^[0-9a-f]{40}$/
+
+/**
+ * Valid file modes in Git.
+ *
+ * @description
+ * The set of valid mode strings for tree entries:
+ * - '100644': Regular file (non-executable)
+ * - '100755': Executable file
+ * - '040000': Directory (tree)
+ * - '120000': Symbolic link
+ * - '160000': Git submodule (gitlink)
+ */
+export const VALID_MODES = new Set(['100644', '100755', '040000', '120000', '160000'])
+
+/**
+ * Validate a SHA-1 hash string.
+ *
+ * @description
+ * Checks if a string is a valid Git SHA-1 hash (40 lowercase hex characters).
+ * Use this to validate user input or data from external sources.
+ *
+ * @param sha - The string to validate
+ * @returns True if the string is a valid SHA-1 hash
+ *
+ * @example
+ * ```typescript
+ * if (isValidSha('abc123')) {
+ *   console.log('Invalid SHA') // Too short
+ * }
+ *
+ * if (isValidSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
+ *   console.log('Valid SHA')
+ * }
+ * ```
+ */
+export function isValidSha(sha: string): boolean {
+  return typeof sha === 'string' && SHA_PATTERN.test(sha)
+}
+
+/**
+ * Validate a Git object type string.
+ *
+ * @description
+ * Checks if a string is one of the four valid Git object types.
+ *
+ * @param type - The string to validate
+ * @returns True if the string is a valid object type
+ *
+ * @example
+ * ```typescript
+ * if (isValidObjectType(input)) {
+ *   // input is 'blob' | 'tree' | 'commit' | 'tag'
+ * }
+ * ```
+ */
+export function isValidObjectType(type: string): type is ObjectType {
+  return type === 'blob' || type === 'tree' || type === 'commit' || type === 'tag'
+}
+
+/**
+ * Validate a tree entry mode string.
+ *
+ * @description
+ * Checks if a string is a valid Git tree entry mode.
+ *
+ * @param mode - The mode string to validate
+ * @returns True if the mode is valid
+ *
+ * @example
+ * ```typescript
+ * if (isValidMode('100644')) {
+ *   console.log('Valid regular file mode')
+ * }
+ * ```
+ */
+export function isValidMode(mode: string): boolean {
+  return VALID_MODES.has(mode)
+}
+
+/**
+ * Validate a tree entry object.
+ *
+ * @description
+ * Validates all fields of a tree entry including mode, name, and SHA.
+ * Returns an object with validity status and optional error message.
+ *
+ * @param entry - The tree entry to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateTreeEntry({ mode: '100644', name: 'file.txt', sha: 'abc...' })
+ * if (!result.isValid) {
+ *   console.error(result.error)
+ * }
+ * ```
+ */
+export function validateTreeEntry(entry: TreeEntry): { isValid: boolean; error?: string } {
+  if (!isValidMode(entry.mode)) {
+    return { isValid: false, error: `Invalid mode: ${entry.mode}. Valid modes: ${Array.from(VALID_MODES).join(', ')}` }
+  }
+  if (!entry.name || typeof entry.name !== 'string') {
+    return { isValid: false, error: 'Entry name is required and must be a string' }
+  }
+  if (entry.name.includes('/') || entry.name.includes('\0')) {
+    return { isValid: false, error: 'Entry name cannot contain "/" or null characters' }
+  }
+  if (!isValidSha(entry.sha)) {
+    return { isValid: false, error: `Invalid SHA: ${entry.sha}. Must be 40 lowercase hex characters` }
+  }
+  return { isValid: true }
+}
+
+/**
+ * Validate an author object.
+ *
+ * @description
+ * Validates all fields of an Author object including name, email,
+ * timestamp, and timezone format.
+ *
+ * @param author - The author object to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateAuthor({
+ *   name: 'Alice',
+ *   email: 'alice@example.com',
+ *   timestamp: 1704067200,
+ *   timezone: '+0000'
+ * })
+ * if (!result.isValid) {
+ *   console.error(result.error)
+ * }
+ * ```
+ */
+export function validateAuthor(author: Author): { isValid: boolean; error?: string } {
+  if (!author.name || typeof author.name !== 'string') {
+    return { isValid: false, error: 'Author name is required and must be a string' }
+  }
+  if (!author.email || typeof author.email !== 'string') {
+    return { isValid: false, error: 'Author email is required and must be a string' }
+  }
+  if (typeof author.timestamp !== 'number' || !Number.isInteger(author.timestamp) || author.timestamp < 0) {
+    return { isValid: false, error: 'Timestamp must be a non-negative integer (Unix seconds)' }
+  }
+  if (!/^[+-]\d{4}$/.test(author.timezone)) {
+    return { isValid: false, error: `Invalid timezone format: ${author.timezone}. Expected +/-HHMM (e.g., +0530, -0800)` }
+  }
+  return { isValid: true }
+}
+
+/**
+ * Validate a commit object (excluding type and data fields).
+ *
+ * @description
+ * Validates the structure and content of commit fields.
+ * Checks tree SHA, parent SHAs, author, committer, and message.
+ *
+ * @param commit - The commit data to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateCommit({
+ *   tree: 'abc123...',
+ *   parents: ['parent1...'],
+ *   author: { ... },
+ *   committer: { ... },
+ *   message: 'Initial commit'
+ * })
+ * ```
+ */
+export function validateCommit(commit: Omit<CommitObject, 'type' | 'data'>): { isValid: boolean; error?: string } {
+  if (!isValidSha(commit.tree)) {
+    return { isValid: false, error: `Invalid tree SHA: ${commit.tree}` }
+  }
+  for (let i = 0; i < commit.parents.length; i++) {
+    if (!isValidSha(commit.parents[i])) {
+      return { isValid: false, error: `Invalid parent SHA at index ${i}: ${commit.parents[i]}` }
+    }
+  }
+  const authorResult = validateAuthor(commit.author)
+  if (!authorResult.isValid) {
+    return { isValid: false, error: `Invalid author: ${authorResult.error}` }
+  }
+  const committerResult = validateAuthor(commit.committer)
+  if (!committerResult.isValid) {
+    return { isValid: false, error: `Invalid committer: ${committerResult.error}` }
+  }
+  if (typeof commit.message !== 'string') {
+    return { isValid: false, error: 'Commit message must be a string' }
+  }
+  return { isValid: true }
+}
+
+/**
+ * Validate a tag object (excluding type and data fields).
+ *
+ * @description
+ * Validates the structure and content of tag fields.
+ * Checks object SHA, object type, name, tagger, and message.
+ *
+ * @param tag - The tag data to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateTag({
+ *   object: 'commitsha...',
+ *   objectType: 'commit',
+ *   name: 'v1.0.0',
+ *   tagger: { ... },
+ *   message: 'Release v1.0.0'
+ * })
+ * ```
+ */
+export function validateTag(tag: Omit<TagObject, 'type' | 'data'>): { isValid: boolean; error?: string } {
+  if (!isValidSha(tag.object)) {
+    return { isValid: false, error: `Invalid object SHA: ${tag.object}` }
+  }
+  if (!isValidObjectType(tag.objectType)) {
+    return { isValid: false, error: `Invalid object type: ${tag.objectType}` }
+  }
+  if (!tag.name || typeof tag.name !== 'string') {
+    return { isValid: false, error: 'Tag name is required and must be a string' }
+  }
+  if (tag.tagger) {
+    const taggerResult = validateAuthor(tag.tagger)
+    if (!taggerResult.isValid) {
+      return { isValid: false, error: `Invalid tagger: ${taggerResult.error}` }
+    }
+  }
+  if (typeof tag.message !== 'string') {
+    return { isValid: false, error: 'Tag message must be a string' }
+  }
+  return { isValid: true }
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 
