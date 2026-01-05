@@ -692,6 +692,18 @@ export class MCPSandbox extends EventEmitter {
     preCheckResourceLimits(fn, timeout) {
         const fnStr = fn.toString();
         const isolationLevel = this.config.isolationLevel ?? 'normal';
+        // ========== SECURITY CHECKS ==========
+        // Block eval() and new Function() - these can execute arbitrary code
+        // bypassing all sandbox restrictions
+        if (/\beval\s*\(/.test(fnStr)) {
+            this.recordPermissionViolation('eval');
+            return new SandboxError(SandboxErrorCode.PERMISSION_DENIED, 'eval() is blocked for security reasons');
+        }
+        // Block new Function() constructor - equivalent to eval
+        if (/new\s+Function\s*\(/.test(fnStr)) {
+            this.recordPermissionViolation('Function constructor');
+            return new SandboxError(SandboxErrorCode.PERMISSION_DENIED, 'Function constructor is blocked for security reasons');
+        }
         // ========== PERMISSION CHECKS ==========
         // Detect module imports using various patterns
         // Match: import('fs'), import("fs"), await import('fs')
@@ -983,10 +995,10 @@ export class MCPSandbox extends EventEmitter {
             Reflect,
             RegExp,
             Function,
-            eval: (code) => {
-                // Allow eval but it runs in the same restricted context
-                // The security comes from the controlled import/require
-                return eval(code);
+            // SECURITY: eval is explicitly blocked to prevent arbitrary code execution
+            // This prevents user code from bypassing sandbox restrictions via eval()
+            eval: () => {
+                throw new SandboxError(SandboxErrorCode.PERMISSION_DENIED, 'eval() is blocked for security reasons');
             },
             // Controlled process access
             process: isolatedProcess,

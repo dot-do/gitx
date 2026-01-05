@@ -131,6 +131,10 @@ export declare function hexToBytes(hex: string): Uint8Array;
  * Converts binary data to a lowercase hexadecimal string representation.
  * Each byte becomes two hex characters (zero-padded).
  *
+ * **Performance**: Uses a pre-computed lookup table for O(1) byte-to-hex
+ * conversion, making this significantly faster than string formatting
+ * approaches, especially for large data like SHA-1 hashes.
+ *
  * **Edge Cases**:
  * - Empty Uint8Array returns empty string
  *
@@ -149,4 +153,147 @@ export declare function hexToBytes(hex: string): Uint8Array;
  * ```
  */
 export declare function bytesToHex(bytes: Uint8Array): string;
+/**
+ * LRU cache for storing computed hashes.
+ *
+ * @description
+ * A Least Recently Used (LRU) cache implementation for caching SHA-1 hashes.
+ * This is useful when the same data is hashed multiple times, such as during
+ * pack file operations or object store lookups.
+ *
+ * **Key Strategy**: The cache key is derived from the first few bytes of the
+ * data combined with its length, which provides a fast key generation while
+ * avoiding collisions for different data.
+ *
+ * **Thread Safety**: This implementation is NOT thread-safe. In multi-threaded
+ * environments, external synchronization is required.
+ *
+ * @class HashCache
+ *
+ * @example
+ * ```typescript
+ * const cache = new HashCache(1000) // Cache up to 1000 hashes
+ *
+ * // Use with getOrCompute for automatic caching
+ * const hash1 = await cache.getOrCompute(data, async () => sha1(data))
+ * const hash2 = await cache.getOrCompute(data, async () => sha1(data)) // Returns cached
+ *
+ * // Check stats
+ * console.log(`Hit rate: ${cache.hitRate}%`)
+ * ```
+ */
+export declare class HashCache {
+    private cache;
+    private maxSize;
+    private hits;
+    private misses;
+    /**
+     * Creates a new HashCache with the specified maximum size.
+     *
+     * @param {number} maxSize - Maximum number of hashes to cache (default: 10000)
+     */
+    constructor(maxSize?: number);
+    /**
+     * Generates a cache key for the given data.
+     *
+     * @description Uses length + first 32 bytes (if available) to create a unique key.
+     * This is fast while providing good collision resistance.
+     *
+     * @param {Uint8Array} data - Data to generate key for
+     * @returns {string} Cache key
+     * @internal
+     */
+    private generateKey;
+    /**
+     * Gets a cached hash if available.
+     *
+     * @param {Uint8Array} data - Data to look up
+     * @returns {string | undefined} Cached hash or undefined if not cached
+     */
+    get(data: Uint8Array): string | undefined;
+    /**
+     * Stores a hash in the cache.
+     *
+     * @param {Uint8Array} data - Original data
+     * @param {string} hash - Computed hash to cache
+     */
+    set(data: Uint8Array, hash: string): void;
+    /**
+     * Gets a hash from cache or computes and caches it.
+     *
+     * @description This is the recommended way to use the cache. It automatically
+     * handles cache lookup, computation, and storage.
+     *
+     * @param {Uint8Array} data - Data to hash
+     * @param {() => Promise<string> | string} compute - Function to compute hash if not cached
+     * @returns {Promise<string>} The hash (from cache or newly computed)
+     *
+     * @example
+     * ```typescript
+     * const hash = await cache.getOrCompute(data, () => sha1(data))
+     * ```
+     */
+    getOrCompute(data: Uint8Array, compute: () => Promise<string> | string): Promise<string>;
+    /**
+     * Synchronous version of getOrCompute for use with synchronous hash functions.
+     *
+     * @param {Uint8Array} data - Data to hash
+     * @param {() => string} compute - Function to compute hash if not cached
+     * @returns {string} The hash (from cache or newly computed)
+     *
+     * @example
+     * ```typescript
+     * import { sha1Hex } from './sha1'
+     * const hash = cache.getOrComputeSync(data, () => sha1Hex(data))
+     * ```
+     */
+    getOrComputeSync(data: Uint8Array, compute: () => string): string;
+    /**
+     * Clears all entries from the cache.
+     */
+    clear(): void;
+    /**
+     * Gets the current number of cached entries.
+     */
+    get size(): number;
+    /**
+     * Gets the cache hit rate as a percentage.
+     */
+    get hitRate(): number;
+    /**
+     * Gets cache statistics.
+     *
+     * @returns {{ hits: number; misses: number; size: number; hitRate: number }}
+     */
+    getStats(): {
+        hits: number;
+        misses: number;
+        size: number;
+        hitRate: number;
+    };
+}
+/**
+ * Global hash cache instance for common use cases.
+ *
+ * @description
+ * A shared cache instance that can be used across the application for
+ * caching object hashes. This is particularly useful for pack file
+ * operations where the same objects are hashed multiple times.
+ *
+ * **Memory Management**: The cache has a default limit of 10,000 entries.
+ * For applications with different requirements, create a custom HashCache
+ * instance with appropriate size.
+ *
+ * @example
+ * ```typescript
+ * import { globalHashCache, sha1 } from './utils/hash'
+ *
+ * // Use the global cache
+ * const hash = await globalHashCache.getOrCompute(data, () => sha1(data))
+ *
+ * // Check cache stats
+ * console.log(globalHashCache.getStats())
+ * ```
+ */
+export declare const globalHashCache: HashCache;
 //# sourceMappingURL=hash.d.ts.map

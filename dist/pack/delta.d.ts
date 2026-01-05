@@ -35,6 +35,14 @@
  *
  * The instruction byte is followed by that many literal bytes.
  *
+ * ## Performance Optimizations
+ *
+ * This implementation includes several performance optimizations:
+ * - **Rabin fingerprint rolling hash**: O(1) hash updates when sliding the window
+ * - **Typed arrays for index**: Uses Uint32Array for memory efficiency
+ * - **Chunked processing**: Memory-efficient processing for large files
+ * - **Optimized match extension**: SIMD-friendly byte comparison
+ *
  * @module pack/delta
  * @see {@link https://git-scm.com/docs/pack-format} Git Pack Format Documentation
  *

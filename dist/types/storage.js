@@ -28,5 +28,164 @@
  * }
  * ```
  */
-export {};
+import { isValidSha, isValidObjectType } from './objects';
+/**
+ * Validate a ref name.
+ *
+ * @description
+ * Checks if a ref name follows Git ref naming conventions:
+ * - Cannot start with '.' or end with '/'
+ * - Cannot contain '..' or '//'
+ * - Cannot contain control characters, spaces, or special chars
+ * - Cannot end with '.lock'
+ *
+ * @param refName - The ref name to validate
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * validateRefName('refs/heads/main') // { isValid: true }
+ * validateRefName('refs/heads/../foo') // { isValid: false, error: '...' }
+ * ```
+ */
+export function validateRefName(refName) {
+    if (!refName || typeof refName !== 'string') {
+        return { isValid: false, error: 'Ref name is required and must be a string' };
+    }
+    if (refName.startsWith('.') || refName.startsWith('/')) {
+        return { isValid: false, error: 'Ref name cannot start with "." or "/"' };
+    }
+    if (refName.endsWith('/') || refName.endsWith('.')) {
+        return { isValid: false, error: 'Ref name cannot end with "/" or "."' };
+    }
+    if (refName.includes('..')) {
+        return { isValid: false, error: 'Ref name cannot contain ".."' };
+    }
+    if (refName.includes('//')) {
+        return { isValid: false, error: 'Ref name cannot contain "//"' };
+    }
+    if (refName.endsWith('.lock')) {
+        return { isValid: false, error: 'Ref name cannot end with ".lock"' };
+    }
+    // Check for control characters and special chars
+    if (/[\x00-\x1f\x7f ~^:?*\[\\]/.test(refName)) {
+        return { isValid: false, error: 'Ref name contains invalid characters (control chars, space, ~, ^, :, ?, *, [, or \\)' };
+    }
+    return { isValid: true };
+}
+/**
+ * Validate a ref update operation.
+ *
+ * @description
+ * Validates a reference update operation including:
+ * - Ref name format
+ * - Old and new SHA validity (or zero SHA for create/delete)
+ *
+ * @param refName - The ref name to update
+ * @param oldSha - The expected current SHA (or zero SHA if creating)
+ * @param newSha - The new SHA to set (or zero SHA if deleting)
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * // Creating a new ref
+ * validateRefUpdate('refs/heads/feature', ZERO_SHA, 'abc123...')
+ *
+ * // Updating a ref
+ * validateRefUpdate('refs/heads/main', 'old123...', 'new456...')
+ *
+ * // Deleting a ref
+ * validateRefUpdate('refs/heads/old', 'abc123...', ZERO_SHA)
+ * ```
+ */
+export function validateRefUpdate(refName, oldSha, newSha) {
+    const refResult = validateRefName(refName);
+    if (!refResult.isValid) {
+        return refResult;
+    }
+    const ZERO_SHA = '0000000000000000000000000000000000000000';
+    if (oldSha !== ZERO_SHA && !isValidSha(oldSha)) {
+        return { isValid: false, error: `Invalid old SHA: ${oldSha}. Must be 40 hex chars or zero SHA` };
+    }
+    if (newSha !== ZERO_SHA && !isValidSha(newSha)) {
+        return { isValid: false, error: `Invalid new SHA: ${newSha}. Must be 40 hex chars or zero SHA` };
+    }
+    if (oldSha === ZERO_SHA && newSha === ZERO_SHA) {
+        return { isValid: false, error: 'Cannot have both old and new SHA as zero (no-op)' };
+    }
+    return { isValid: true };
+}
+/**
+ * Validate object storage parameters.
+ *
+ * @description
+ * Validates parameters for storeObject operations:
+ * - Object type must be valid
+ * - Data must be a Uint8Array
+ *
+ * @param type - The object type
+ * @param data - The object data
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * const result = validateStoreParams('blob', new Uint8Array([1, 2, 3]))
+ * if (!result.isValid) {
+ *   throw new Error(result.error)
+ * }
+ * ```
+ */
+export function validateStoreParams(type, data) {
+    if (!isValidObjectType(type)) {
+        return { isValid: false, error: `Invalid object type: ${type}. Must be blob, tree, commit, or tag` };
+    }
+    if (!(data instanceof Uint8Array)) {
+        return { isValid: false, error: 'Data must be a Uint8Array' };
+    }
+    return { isValid: true };
+}
+/**
+ * Assert that a SHA is valid, throwing if not.
+ *
+ * @description
+ * Throws a descriptive error if the SHA is invalid.
+ * Use this for input validation in API boundaries.
+ *
+ * @param sha - The SHA to validate
+ * @param context - Optional context for the error message (e.g., 'tree', 'parent')
+ * @throws Error if SHA is invalid
+ *
+ * @example
+ * ```typescript
+ * assertValidSha(treeSha, 'tree') // Throws: "Invalid tree SHA: ..."
+ * ```
+ */
+export function assertValidSha(sha, context) {
+    if (!isValidSha(sha)) {
+        const prefix = context ? `Invalid ${context} SHA` : 'Invalid SHA';
+        throw new Error(`${prefix}: ${sha}. Must be 40 lowercase hexadecimal characters`);
+    }
+}
+/**
+ * Assert that a ref name is valid, throwing if not.
+ *
+ * @description
+ * Throws a descriptive error if the ref name is invalid.
+ * Use this for input validation in API boundaries.
+ *
+ * @param refName - The ref name to validate
+ * @throws Error if ref name is invalid
+ *
+ * @example
+ * ```typescript
+ * assertValidRefName('refs/heads/main') // OK
+ * assertValidRefName('refs/../bad') // Throws
+ * ```
+ */
+export function assertValidRefName(refName) {
+    const result = validateRefName(refName);
+    if (!result.isValid) {
+        throw new Error(result.error);
+    }
+}
 //# sourceMappingURL=storage.js.map

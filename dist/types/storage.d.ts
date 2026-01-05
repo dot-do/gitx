@@ -30,6 +30,120 @@
  */
 import type { CommitObject, TreeObject } from './objects';
 /**
+ * Validation result type.
+ *
+ * @description
+ * Standard result type for validation functions.
+ * Contains isValid boolean and optional error message.
+ */
+export interface ValidationResult {
+    /** Whether validation passed */
+    isValid: boolean;
+    /** Error message if validation failed */
+    error?: string;
+}
+/**
+ * Validate a ref name.
+ *
+ * @description
+ * Checks if a ref name follows Git ref naming conventions:
+ * - Cannot start with '.' or end with '/'
+ * - Cannot contain '..' or '//'
+ * - Cannot contain control characters, spaces, or special chars
+ * - Cannot end with '.lock'
+ *
+ * @param refName - The ref name to validate
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * validateRefName('refs/heads/main') // { isValid: true }
+ * validateRefName('refs/heads/../foo') // { isValid: false, error: '...' }
+ * ```
+ */
+export declare function validateRefName(refName: string): ValidationResult;
+/**
+ * Validate a ref update operation.
+ *
+ * @description
+ * Validates a reference update operation including:
+ * - Ref name format
+ * - Old and new SHA validity (or zero SHA for create/delete)
+ *
+ * @param refName - The ref name to update
+ * @param oldSha - The expected current SHA (or zero SHA if creating)
+ * @param newSha - The new SHA to set (or zero SHA if deleting)
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * // Creating a new ref
+ * validateRefUpdate('refs/heads/feature', ZERO_SHA, 'abc123...')
+ *
+ * // Updating a ref
+ * validateRefUpdate('refs/heads/main', 'old123...', 'new456...')
+ *
+ * // Deleting a ref
+ * validateRefUpdate('refs/heads/old', 'abc123...', ZERO_SHA)
+ * ```
+ */
+export declare function validateRefUpdate(refName: string, oldSha: string, newSha: string): ValidationResult;
+/**
+ * Validate object storage parameters.
+ *
+ * @description
+ * Validates parameters for storeObject operations:
+ * - Object type must be valid
+ * - Data must be a Uint8Array
+ *
+ * @param type - The object type
+ * @param data - The object data
+ * @returns Validation result
+ *
+ * @example
+ * ```typescript
+ * const result = validateStoreParams('blob', new Uint8Array([1, 2, 3]))
+ * if (!result.isValid) {
+ *   throw new Error(result.error)
+ * }
+ * ```
+ */
+export declare function validateStoreParams(type: string, data: Uint8Array): ValidationResult;
+/**
+ * Assert that a SHA is valid, throwing if not.
+ *
+ * @description
+ * Throws a descriptive error if the SHA is invalid.
+ * Use this for input validation in API boundaries.
+ *
+ * @param sha - The SHA to validate
+ * @param context - Optional context for the error message (e.g., 'tree', 'parent')
+ * @throws Error if SHA is invalid
+ *
+ * @example
+ * ```typescript
+ * assertValidSha(treeSha, 'tree') // Throws: "Invalid tree SHA: ..."
+ * ```
+ */
+export declare function assertValidSha(sha: string, context?: string): void;
+/**
+ * Assert that a ref name is valid, throwing if not.
+ *
+ * @description
+ * Throws a descriptive error if the ref name is invalid.
+ * Use this for input validation in API boundaries.
+ *
+ * @param refName - The ref name to validate
+ * @throws Error if ref name is invalid
+ *
+ * @example
+ * ```typescript
+ * assertValidRefName('refs/heads/main') // OK
+ * assertValidRefName('refs/../bad') // Throws
+ * ```
+ */
+export declare function assertValidRefName(refName: string): void;
+/**
  * Full-featured interface for Git object storage operations.
  *
  * @description

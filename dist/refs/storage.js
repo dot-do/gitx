@@ -519,6 +519,7 @@ export class RefStorage {
      *
      * @description
      * Removes a ref from storage. HEAD cannot be deleted.
+     * Uses locking for atomic compare-and-swap operations when oldValue is specified.
      *
      * @param name - Full ref name to delete
      * @param options - Delete options (oldValue for CAS)
@@ -544,17 +545,24 @@ export class RefStorage {
         if (!isValidRefName(name)) {
             throw new RefError(`Invalid ref name: ${name}`, 'INVALID_NAME', name);
         }
-        const existingRef = await this.getRef(name);
-        // Check oldValue if provided
-        if (options?.oldValue !== undefined && options.oldValue !== null) {
-            if (!existingRef || existingRef.target !== options.oldValue) {
-                throw new RefError(`Ref value mismatch: ${name}`, 'CONFLICT', name);
+        // Acquire lock for atomic operation
+        const lock = await this.backend.acquireLock(name);
+        try {
+            const existingRef = await this.getRef(name);
+            // Check oldValue if provided (compare-and-swap pattern)
+            if (options?.oldValue !== undefined && options.oldValue !== null) {
+                if (!existingRef || existingRef.target !== options.oldValue) {
+                    throw new RefError(`Ref value mismatch: ${name}`, 'CONFLICT', name);
+                }
             }
+            if (!existingRef) {
+                return false;
+            }
+            return this.backend.deleteRef(name);
         }
-        if (!existingRef) {
-            return false;
+        finally {
+            await lock.release();
         }
-        return this.backend.deleteRef(name);
     }
     /**
      * List refs matching a pattern.
@@ -670,6 +678,7 @@ export class RefStorage {
      *
      * @description
      * Sets HEAD to point to a branch (symbolic) or commit (detached).
+     * Uses locking to ensure atomic updates to HEAD.
      *
      * @param target - Branch ref name (symbolic) or SHA (detached)
      * @param symbolic - If true, create symbolic ref; if false, direct ref
@@ -685,13 +694,20 @@ export class RefStorage {
      * ```
      */
     async updateHead(target, symbolic) {
-        const ref = {
-            name: 'HEAD',
-            target,
-            type: symbolic ? 'symbolic' : 'direct'
-        };
-        await this.backend.writeRef(ref);
-        return ref;
+        // Acquire lock for atomic HEAD update
+        const lock = await this.backend.acquireLock('HEAD');
+        try {
+            const ref = {
+                name: 'HEAD',
+                target,
+                type: symbolic ? 'symbolic' : 'direct'
+            };
+            await this.backend.writeRef(ref);
+            return ref;
+        }
+        finally {
+            await lock.release();
+        }
     }
     /**
      * Check if HEAD is detached.
@@ -719,6 +735,7 @@ export class RefStorage {
      * @description
      * Creates a ref that points to another ref name (not a SHA).
      * Used primarily for HEAD pointing to a branch.
+     * Uses locking to ensure atomic creation.
      *
      * @param name - Name for the new symbolic ref
      * @param target - Target ref name (not SHA)
@@ -741,13 +758,20 @@ export class RefStorage {
         if (name === target) {
             throw new RefError(`Symbolic ref cannot point to itself: ${name}`, 'CIRCULAR_REF', name);
         }
-        const ref = {
-            name,
-            target,
-            type: 'symbolic'
-        };
-        await this.backend.writeRef(ref);
-        return ref;
+        // Acquire lock for atomic symbolic ref creation
+        const lock = await this.backend.acquireLock(name);
+        try {
+            const ref = {
+                name,
+                target,
+                type: 'symbolic'
+            };
+            await this.backend.writeRef(ref);
+            return ref;
+        }
+        finally {
+            await lock.release();
+        }
     }
     /**
      * Acquire a lock for updating a ref.
@@ -782,6 +806,9 @@ export class RefStorage {
      * This improves performance for repositories with many refs.
      * HEAD and symbolic refs are not packed.
      *
+     * Uses a transactional approach by acquiring locks on all refs being packed
+     * to ensure consistency during the packing operation.
+     *
      * @example
      * ```typescript
      * // After creating many branches/tags
@@ -791,18 +818,37 @@ export class RefStorage {
     async packRefs() {
         const allRefs = await this.backend.listRefs();
         const packed = new Map();
-        for (const ref of allRefs) {
-            // Don't pack HEAD
-            if (ref.name === 'HEAD') {
-                continue;
+        const locks = [];
+        // Filter refs that can be packed (not HEAD, not symbolic)
+        const packableRefs = allRefs.filter(ref => {
+            if (ref.name === 'HEAD')
+                return false;
+            if (ref.type === 'symbolic')
+                return false;
+            return true;
+        });
+        // Acquire locks on all refs being packed for transactional consistency
+        try {
+            for (const ref of packableRefs) {
+                const lock = await this.backend.acquireLock(ref.name);
+                locks.push(lock);
             }
-            // Don't pack symbolic refs
-            if (ref.type === 'symbolic') {
-                continue;
+            // Re-read refs while holding locks to ensure consistency
+            for (const ref of packableRefs) {
+                const currentRef = await this.getRef(ref.name);
+                if (currentRef && currentRef.type === 'direct') {
+                    packed.set(currentRef.name, currentRef.target);
+                }
             }
-            packed.set(ref.name, ref.target);
+            // Write packed refs atomically
+            await this.backend.writePackedRefs(packed);
         }
-        await this.backend.writePackedRefs(packed);
+        finally {
+            // Release all locks
+            for (const lock of locks) {
+                await lock.release();
+            }
+        }
     }
 }
 // ============================================================================

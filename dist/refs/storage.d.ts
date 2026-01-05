@@ -515,6 +515,7 @@ export declare class RefStorage {
      *
      * @description
      * Removes a ref from storage. HEAD cannot be deleted.
+     * Uses locking for atomic compare-and-swap operations when oldValue is specified.
      *
      * @param name - Full ref name to delete
      * @param options - Delete options (oldValue for CAS)
@@ -614,6 +615,7 @@ export declare class RefStorage {
      *
      * @description
      * Sets HEAD to point to a branch (symbolic) or commit (detached).
+     * Uses locking to ensure atomic updates to HEAD.
      *
      * @param target - Branch ref name (symbolic) or SHA (detached)
      * @param symbolic - If true, create symbolic ref; if false, direct ref
@@ -652,6 +654,7 @@ export declare class RefStorage {
      * @description
      * Creates a ref that points to another ref name (not a SHA).
      * Used primarily for HEAD pointing to a branch.
+     * Uses locking to ensure atomic creation.
      *
      * @param name - Name for the new symbolic ref
      * @param target - Target ref name (not SHA)
@@ -696,6 +699,9 @@ export declare class RefStorage {
      * Consolidates loose ref files into a single packed-refs file.
      * This improves performance for repositories with many refs.
      * HEAD and symbolic refs are not packed.
+     *
+     * Uses a transactional approach by acquiring locks on all refs being packed
+     * to ensure consistency during the packing operation.
      *
      * @example
      * ```typescript

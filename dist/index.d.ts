@@ -70,7 +70,35 @@
  * }
  * ```
  */
-export { type ObjectType, type GitObject, type BlobObject, type TreeObject, type TreeEntry, type CommitObject, type TagObject, type Author, isBlob, isTree, isCommit, isTag, serializeBlob, serializeTree, serializeCommit, serializeTag, parseBlob, parseTree, parseCommit, parseTag, } from './types/objects';
+export { type ObjectType, type GitObject, type BlobObject, type TreeObject, type TreeEntry, type CommitObject, type TagObject, type Author, isBlob, isTree, isCommit, isTag, SHA_PATTERN, VALID_MODES, isValidSha, isValidObjectType, isValidMode, validateTreeEntry, validateAuthor, validateCommit, validateTag, serializeBlob, serializeTree, serializeCommit, serializeTag, parseBlob, parseTree, parseCommit, parseTag, } from './types/objects';
+/**
+ * Storage interface types and validation.
+ *
+ * @description
+ * Core storage interfaces for Git object stores and commit providers:
+ * - {@link ObjectStore}: Full-featured object storage with refs
+ * - {@link BasicObjectStore}: Minimal object CRUD
+ * - {@link RefObjectStore}: Object store with ref management
+ * - {@link TreeDiffObjectStore}: Specialized for tree operations
+ * - {@link CommitProvider}: Commit retrieval interface
+ * - {@link BasicCommitProvider}: Minimal commit access
+ *
+ * Plus validation helpers for storage operations.
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   type ObjectStore,
+ *   validateRefName,
+ *   assertValidSha
+ * } from 'gitx.do'
+ *
+ * // Validate before storing
+ * assertValidSha(treeSha, 'tree')
+ * const refResult = validateRefName('refs/heads/main')
+ * ```
+ */
+export { type ValidationResult, validateRefName, validateRefUpdate, validateStoreParams, assertValidSha, assertValidRefName, type ObjectStore as StorageObjectStore, type BasicObjectStore, type RefObjectStore, type TreeDiffObjectStore, type CommitProvider, type BasicCommitProvider, } from './types/storage';
 /**
  * Packfile format handling.
  *

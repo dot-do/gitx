@@ -9,7 +9,9 @@
  * - Content-addressable storage using SHA-1 hashes
  * - Write-ahead logging (WAL) for durability
  * - Object index for tiered storage support
- * - Batch operations for efficiency
+ * - Batch operations for efficiency with transaction support
+ * - LRU caching for hot tier objects
+ * - Metrics and logging infrastructure
  * - Typed accessors for each Git object type
  *
  * @module durable-object/object-store
@@ -18,21 +20,30 @@
  * ```typescript
  * import { ObjectStore } from './durable-object/object-store'
  *
- * const store = new ObjectStore(durableObjectStorage)
+ * const store = new ObjectStore(durableObjectStorage, {
+ *   cacheMaxCount: 1000,
+ *   cacheMaxBytes: 50 * 1024 * 1024, // 50MB
+ *   enableMetrics: true
+ * })
  *
  * // Store a blob
  * const content = new TextEncoder().encode('Hello, World!')
  * const sha = await store.putObject('blob', content)
  *
- * // Retrieve it
+ * // Retrieve it (cached on second access)
  * const obj = await store.getObject(sha)
  * console.log(obj?.type, obj?.size)
  *
  * // Get typed object
  * const blob = await store.getBlobObject(sha)
+ *
+ * // Get metrics
+ * const metrics = store.getMetrics()
+ * console.log(`Cache hit rate: ${metrics.cacheHitRate}%`)
  * ```
  */
 import { DurableObjectStorage } from './schema';
+import { CacheStats } from '../storage/lru-cache';
 import { ObjectType, BlobObject, TreeObject, CommitObject, TagObject, TreeEntry, Author } from '../types/objects';
 /**
  * Stored object record as persisted in SQLite.
@@ -65,6 +76,86 @@ export interface StoredObject {
     createdAt: number;
 }
 /**
+ * Configuration options for ObjectStore.
+ *
+ * @description
+ * Controls caching behavior, metrics collection, and logging.
+ *
+ * @example
+ * ```typescript
+ * const options: ObjectStoreOptions = {
+ *   cacheMaxCount: 1000,
+ *   cacheMaxBytes: 50 * 1024 * 1024,
+ *   cacheTTL: 3600000,
+ *   enableMetrics: true,
+ *   logger: console
+ * }
+ * ```
+ */
+export interface ObjectStoreOptions {
+    /**
+     * Maximum number of objects to cache in memory.
+     * @default 500
+     */
+    cacheMaxCount?: number;
+    /**
+     * Maximum cache size in bytes.
+     * @default 25MB
+     */
+    cacheMaxBytes?: number;
+    /**
+     * Time-to-live for cached objects in milliseconds.
+     * @default undefined (no expiration)
+     */
+    cacheTTL?: number;
+    /**
+     * Enable metrics collection.
+     * @default false
+     */
+    enableMetrics?: boolean;
+    /**
+     * Logger interface for operation logging.
+     * @default undefined (no logging)
+     */
+    logger?: ObjectStoreLogger;
+}
+/**
+ * Logger interface for ObjectStore operations.
+ */
+export interface ObjectStoreLogger {
+    debug?(message: string, ...args: unknown[]): void;
+    info?(message: string, ...args: unknown[]): void;
+    warn?(message: string, ...args: unknown[]): void;
+    error?(message: string, ...args: unknown[]): void;
+}
+/**
+ * Metrics collected by ObjectStore operations.
+ */
+export interface ObjectStoreMetrics {
+    /** Total number of read operations */
+    reads: number;
+    /** Total number of write operations */
+    writes: number;
+    /** Total number of delete operations */
+    deletes: number;
+    /** Cache statistics */
+    cache: CacheStats;
+    /** Cache hit rate percentage */
+    cacheHitRate: number;
+    /** Total bytes written */
+    bytesWritten: number;
+    /** Total bytes read */
+    bytesRead: number;
+    /** Average write latency in ms */
+    avgWriteLatencyMs: number;
+    /** Average read latency in ms */
+    avgReadLatencyMs: number;
+    /** Number of batch operations */
+    batchOperations: number;
+    /** Total objects in batch operations */
+    batchObjectsTotal: number;
+}
+/**
  * ObjectStore class for managing Git objects in SQLite storage.
  *
  * @description
@@ -92,12 +183,44 @@ export interface StoredObject {
  */
 export declare class ObjectStore {
     private storage;
+    private cache;
+    private options;
+    private logger?;
+    private _reads;
+    private _writes;
+    private _deletes;
+    private _bytesWritten;
+    private _bytesRead;
+    private _totalWriteLatency;
+    private _totalReadLatency;
+    private _batchOperations;
+    private _batchObjectsTotal;
     /**
      * Create a new ObjectStore.
      *
      * @param storage - Durable Object storage interface with SQL support
+     * @param options - Configuration options for caching, metrics, and logging
+     *
+     * @example
+     * ```typescript
+     * // Basic usage
+     * const store = new ObjectStore(storage)
+     *
+     * // With caching and metrics
+     * const store = new ObjectStore(storage, {
+     *   cacheMaxCount: 1000,
+     *   cacheMaxBytes: 50 * 1024 * 1024,
+     *   enableMetrics: true,
+     *   logger: console
+     * })
+     * ```
      */
-    constructor(storage: DurableObjectStorage);
+    constructor(storage: DurableObjectStorage, options?: ObjectStoreOptions);
+    /**
+     * Log a message if logger is configured.
+     * @internal
+     */
+    private log;
     /**
      * Store a raw object and return its SHA.
      *
@@ -105,6 +228,7 @@ export declare class ObjectStore {
      * Computes the SHA-1 hash of the object in Git format (type + size + content),
      * logs the operation to WAL, stores the object, and updates the object index.
      * If an object with the same SHA already exists, it is replaced (idempotent).
+     * The object is also added to the LRU cache for fast subsequent reads.
      *
      * @param type - Object type ('blob', 'tree', 'commit', 'tag')
      * @param data - Raw object content (without Git header)
@@ -216,8 +340,8 @@ export declare class ObjectStore {
      * Retrieve an object by SHA.
      *
      * @description
-     * Fetches an object from the database by its SHA-1 hash.
-     * Returns null if the object doesn't exist or if the SHA is invalid.
+     * Fetches an object from the LRU cache first, falling back to the database
+     * if not cached. Returns null if the object doesn't exist or if the SHA is invalid.
      *
      * @param sha - 40-character SHA-1 hash
      * @returns The stored object or null if not found
@@ -235,7 +359,7 @@ export declare class ObjectStore {
      * Delete an object by SHA.
      *
      * @description
-     * Removes an object from both the objects table and the object index.
+     * Removes an object from the cache, objects table, and the object index.
      * The operation is logged to WAL. Returns false if the object doesn't exist.
      *
      * **Warning**: Deleting objects that are still referenced by other objects
@@ -326,12 +450,14 @@ export declare class ObjectStore {
      */
     getObjectSize(sha: string): Promise<number | null>;
     /**
-     * Store multiple objects in a batch.
+     * Store multiple objects in a batch using a single transaction.
      *
      * @description
-     * Stores multiple objects sequentially. Each object is stored
-     * individually with its own WAL entry. For atomic batch operations,
-     * consider wrapping in a transaction.
+     * Stores multiple objects atomically within a single SQLite transaction.
+     * This is more efficient than individual puts for bulk operations as it:
+     * - Reduces the number of disk flushes
+     * - Ensures atomic writes (all-or-nothing)
+     * - Batches WAL entries for better performance
      *
      * @param objects - Array of objects to store
      * @returns Array of SHA-1 hashes in the same order as input
@@ -349,11 +475,13 @@ export declare class ObjectStore {
         data: Uint8Array;
     }[]): Promise<string[]>;
     /**
-     * Retrieve multiple objects by SHA.
+     * Retrieve multiple objects by SHA using optimized batch queries.
      *
      * @description
-     * Fetches multiple objects by their SHAs. Missing objects
-     * are returned as null in the result array.
+     * Fetches multiple objects efficiently by:
+     * 1. First checking the LRU cache for each SHA
+     * 2. Batching uncached SHAs into a single SQL query with IN clause
+     * 3. Returning results in the original order with null for missing objects
      *
      * @param shas - Array of 40-character SHA-1 hashes
      * @returns Array of objects (or null for missing) in the same order

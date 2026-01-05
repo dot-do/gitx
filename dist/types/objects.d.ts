@@ -259,6 +259,188 @@ export interface TagObject extends GitObject {
     tag?: string;
 }
 /**
+ * Valid SHA-1 hash pattern (40 lowercase hexadecimal characters).
+ *
+ * @description
+ * Regular expression for validating SHA-1 hashes used in Git.
+ * Matches exactly 40 lowercase hexadecimal characters.
+ *
+ * @example
+ * ```typescript
+ * if (SHA_PATTERN.test(input)) {
+ *   // Valid SHA-1 format
+ * }
+ * ```
+ */
+export declare const SHA_PATTERN: RegExp;
+/**
+ * Valid file modes in Git.
+ *
+ * @description
+ * The set of valid mode strings for tree entries:
+ * - '100644': Regular file (non-executable)
+ * - '100755': Executable file
+ * - '040000': Directory (tree)
+ * - '120000': Symbolic link
+ * - '160000': Git submodule (gitlink)
+ */
+export declare const VALID_MODES: Set<string>;
+/**
+ * Validate a SHA-1 hash string.
+ *
+ * @description
+ * Checks if a string is a valid Git SHA-1 hash (40 lowercase hex characters).
+ * Use this to validate user input or data from external sources.
+ *
+ * @param sha - The string to validate
+ * @returns True if the string is a valid SHA-1 hash
+ *
+ * @example
+ * ```typescript
+ * if (isValidSha('abc123')) {
+ *   console.log('Invalid SHA') // Too short
+ * }
+ *
+ * if (isValidSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
+ *   console.log('Valid SHA')
+ * }
+ * ```
+ */
+export declare function isValidSha(sha: string): boolean;
+/**
+ * Validate a Git object type string.
+ *
+ * @description
+ * Checks if a string is one of the four valid Git object types.
+ *
+ * @param type - The string to validate
+ * @returns True if the string is a valid object type
+ *
+ * @example
+ * ```typescript
+ * if (isValidObjectType(input)) {
+ *   // input is 'blob' | 'tree' | 'commit' | 'tag'
+ * }
+ * ```
+ */
+export declare function isValidObjectType(type: string): type is ObjectType;
+/**
+ * Validate a tree entry mode string.
+ *
+ * @description
+ * Checks if a string is a valid Git tree entry mode.
+ *
+ * @param mode - The mode string to validate
+ * @returns True if the mode is valid
+ *
+ * @example
+ * ```typescript
+ * if (isValidMode('100644')) {
+ *   console.log('Valid regular file mode')
+ * }
+ * ```
+ */
+export declare function isValidMode(mode: string): boolean;
+/**
+ * Validate a tree entry object.
+ *
+ * @description
+ * Validates all fields of a tree entry including mode, name, and SHA.
+ * Returns an object with validity status and optional error message.
+ *
+ * @param entry - The tree entry to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateTreeEntry({ mode: '100644', name: 'file.txt', sha: 'abc...' })
+ * if (!result.isValid) {
+ *   console.error(result.error)
+ * }
+ * ```
+ */
+export declare function validateTreeEntry(entry: TreeEntry): {
+    isValid: boolean;
+    error?: string;
+};
+/**
+ * Validate an author object.
+ *
+ * @description
+ * Validates all fields of an Author object including name, email,
+ * timestamp, and timezone format.
+ *
+ * @param author - The author object to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateAuthor({
+ *   name: 'Alice',
+ *   email: 'alice@example.com',
+ *   timestamp: 1704067200,
+ *   timezone: '+0000'
+ * })
+ * if (!result.isValid) {
+ *   console.error(result.error)
+ * }
+ * ```
+ */
+export declare function validateAuthor(author: Author): {
+    isValid: boolean;
+    error?: string;
+};
+/**
+ * Validate a commit object (excluding type and data fields).
+ *
+ * @description
+ * Validates the structure and content of commit fields.
+ * Checks tree SHA, parent SHAs, author, committer, and message.
+ *
+ * @param commit - The commit data to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateCommit({
+ *   tree: 'abc123...',
+ *   parents: ['parent1...'],
+ *   author: { ... },
+ *   committer: { ... },
+ *   message: 'Initial commit'
+ * })
+ * ```
+ */
+export declare function validateCommit(commit: Omit<CommitObject, 'type' | 'data'>): {
+    isValid: boolean;
+    error?: string;
+};
+/**
+ * Validate a tag object (excluding type and data fields).
+ *
+ * @description
+ * Validates the structure and content of tag fields.
+ * Checks object SHA, object type, name, tagger, and message.
+ *
+ * @param tag - The tag data to validate
+ * @returns Validation result with isValid boolean and optional error message
+ *
+ * @example
+ * ```typescript
+ * const result = validateTag({
+ *   object: 'commitsha...',
+ *   objectType: 'commit',
+ *   name: 'v1.0.0',
+ *   tagger: { ... },
+ *   message: 'Release v1.0.0'
+ * })
+ * ```
+ */
+export declare function validateTag(tag: Omit<TagObject, 'type' | 'data'>): {
+    isValid: boolean;
+    error?: string;
+};
+/**
  * Type guard to check if a GitObject is a BlobObject.
  *
  * @description

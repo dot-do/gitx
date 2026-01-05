@@ -696,6 +696,12 @@ export declare function unpackObjects(packfile: Uint8Array, _store: ObjectStore,
  * - Must not end with `.lock`
  * - Components must not start with `.`
  *
+ * Security considerations:
+ * - Prevents path traversal attacks via `../` sequences
+ * - Rejects absolute paths
+ * - Validates ref is within refs/ namespace or is HEAD
+ * - Blocks URL-encoded traversal attempts
+ *
  * @param refName - Ref name to validate
  * @returns true if the ref name is valid
  *
@@ -706,6 +712,7 @@ export declare function unpackObjects(packfile: Uint8Array, _store: ObjectStore,
  * validateRefName('refs/heads/.hidden')   // false (starts with .)
  * validateRefName('refs/heads/a..b')      // false (contains ..)
  * validateRefName('refs/heads/a b')       // false (contains space)
+ * validateRefName('refs/../../../etc/passwd')  // false (path traversal)
  * ```
  */
 export declare function validateRefName(refName: string): boolean;
