@@ -5,6 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "gitx": "./dist/cli/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -51,11 +54,16 @@
     "@cloudflare/workers-types": "^4.20241218.0",
     "@types/node": "^22.10.2",
     "@types/pako": "^2.0.4",
+    "cac": "^6.7.14",
+    "shiki": "^1.24.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",
     "wrangler": "^3.99.0"
   },
   "dependencies": {
-    "pako": "^2.1.0"
+    "@opentui/core": "^0.1.0",
+    "@opentui/react": "^0.1.0",
+    "pako": "^2.1.0",
+    "react": "^18.2.0"
   }
 }
