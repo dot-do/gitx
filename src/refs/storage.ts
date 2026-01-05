@@ -791,6 +791,7 @@ export class RefStorage {
    *
    * @description
    * Removes a ref from storage. HEAD cannot be deleted.
+   * Uses locking for atomic compare-and-swap operations when oldValue is specified.
    *
    * @param name - Full ref name to delete
    * @param options - Delete options (oldValue for CAS)
@@ -818,20 +819,27 @@ export class RefStorage {
       throw new RefError(`Invalid ref name: ${name}`, 'INVALID_NAME', name)
     }
 
-    const existingRef = await this.getRef(name)
+    // Acquire lock for atomic operation
+    const lock = await this.backend.acquireLock(name)
 
-    // Check oldValue if provided
-    if (options?.oldValue !== undefined && options.oldValue !== null) {
-      if (!existingRef || existingRef.target !== options.oldValue) {
-        throw new RefError(`Ref value mismatch: ${name}`, 'CONFLICT', name)
+    try {
+      const existingRef = await this.getRef(name)
+
+      // Check oldValue if provided (compare-and-swap pattern)
+      if (options?.oldValue !== undefined && options.oldValue !== null) {
+        if (!existingRef || existingRef.target !== options.oldValue) {
+          throw new RefError(`Ref value mismatch: ${name}`, 'CONFLICT', name)
+        }
       }
-    }
 
-    if (!existingRef) {
-      return false
-    }
+      if (!existingRef) {
+        return false
+      }
 
-    return this.backend.deleteRef(name)
+      return this.backend.deleteRef(name)
+    } finally {
+      await lock.release()
+    }
   }
 
   /**
@@ -954,6 +962,7 @@ export class RefStorage {
    *
    * @description
    * Sets HEAD to point to a branch (symbolic) or commit (detached).
+   * Uses locking to ensure atomic updates to HEAD.
    *
    * @param target - Branch ref name (symbolic) or SHA (detached)
    * @param symbolic - If true, create symbolic ref; if false, direct ref
@@ -969,14 +978,21 @@ export class RefStorage {
    * ```
    */
   async updateHead(target: string, symbolic?: boolean): Promise<Ref> {
-    const ref: Ref = {
-      name: 'HEAD',
-      target,
-      type: symbolic ? 'symbolic' : 'direct'
-    }
+    // Acquire lock for atomic HEAD update
+    const lock = await this.backend.acquireLock('HEAD')
 
-    await this.backend.writeRef(ref)
-    return ref
+    try {
+      const ref: Ref = {
+        name: 'HEAD',
+        target,
+        type: symbolic ? 'symbolic' : 'direct'
+      }
+
+      await this.backend.writeRef(ref)
+      return ref
+    } finally {
+      await lock.release()
+    }
   }
 
   /**
@@ -1006,6 +1022,7 @@ export class RefStorage {
    * @description
    * Creates a ref that points to another ref name (not a SHA).
    * Used primarily for HEAD pointing to a branch.
+   * Uses locking to ensure atomic creation.
    *
    * @param name - Name for the new symbolic ref
    * @param target - Target ref name (not SHA)
@@ -1030,14 +1047,21 @@ export class RefStorage {
       throw new RefError(`Symbolic ref cannot point to itself: ${name}`, 'CIRCULAR_REF', name)
     }
 
-    const ref: Ref = {
-      name,
-      target,
-      type: 'symbolic'
-    }
+    // Acquire lock for atomic symbolic ref creation
+    const lock = await this.backend.acquireLock(name)
 
-    await this.backend.writeRef(ref)
-    return ref
+    try {
+      const ref: Ref = {
+        name,
+        target,
+        type: 'symbolic'
+      }
+
+      await this.backend.writeRef(ref)
+      return ref
+    } finally {
+      await lock.release()
+    }
   }
 
   /**
@@ -1074,6 +1098,9 @@ export class RefStorage {
    * This improves performance for repositories with many refs.
    * HEAD and symbolic refs are not packed.
    *
+   * Uses a transactional approach by acquiring locks on all refs being packed
+   * to ensure consistency during the packing operation.
+   *
    * @example
    * ```typescript
    * // After creating many branches/tags
@@ -1083,22 +1110,38 @@ export class RefStorage {
   async packRefs(): Promise<void> {
     const allRefs = await this.backend.listRefs()
     const packed = new Map<string, string>()
+    const locks: RefLock[] = []
 
-    for (const ref of allRefs) {
-      // Don't pack HEAD
-      if (ref.name === 'HEAD') {
-        continue
+    // Filter refs that can be packed (not HEAD, not symbolic)
+    const packableRefs = allRefs.filter(ref => {
+      if (ref.name === 'HEAD') return false
+      if (ref.type === 'symbolic') return false
+      return true
+    })
+
+    // Acquire locks on all refs being packed for transactional consistency
+    try {
+      for (const ref of packableRefs) {
+        const lock = await this.backend.acquireLock(ref.name)
+        locks.push(lock)
       }
 
-      // Don't pack symbolic refs
-      if (ref.type === 'symbolic') {
-        continue
+      // Re-read refs while holding locks to ensure consistency
+      for (const ref of packableRefs) {
+        const currentRef = await this.getRef(ref.name)
+        if (currentRef && currentRef.type === 'direct') {
+          packed.set(currentRef.name, currentRef.target)
+        }
       }
 
-      packed.set(ref.name, ref.target)
+      // Write packed refs atomically
+      await this.backend.writePackedRefs(packed)
+    } finally {
+      // Release all locks
+      for (const lock of locks) {
+        await lock.release()
+      }
     }
-
-    await this.backend.writePackedRefs(packed)
   }
 }
 

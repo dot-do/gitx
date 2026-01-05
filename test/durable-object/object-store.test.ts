@@ -37,7 +37,7 @@ const sampleSha = 'a'.repeat(40) // Valid SHA-1 hex string
  */
 class MockObjectStorage implements DurableObjectStorage {
   private objects: Map<string, StoredObject> = new Map()
-  private objectIndex: Map<string, { tier: string; location: string; size: number; type: string }> = new Map()
+  private objectIndex: Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number }> = new Map()
   private walEntries: { id: number; operation: string; payload: Uint8Array; flushed: boolean }[] = []
   private nextWalId = 1
   private executedQueries: string[] = []
@@ -74,11 +74,13 @@ class MockObjectStorage implements DurableObjectStorage {
       if (query.includes('INSERT INTO object_index') || query.includes('INSERT OR REPLACE INTO object_index')) {
         const sha = params[0] as string
         const tier = params[1] as string
-        const location = params[2] as string
-        const size = params[3] as number
-        const type = params[4] as string
+        const packId = params[2] as string | null
+        const offset = params[3] as number | null
+        const size = params[4] as number
+        const type = params[5] as string
+        const updatedAt = params[6] as number
 
-        this.objectIndex.set(sha, { tier, location, size, type })
+        this.objectIndex.set(sha, { tier, packId, offset, size, type, updatedAt })
         return { toArray: () => [] }
       }
 
@@ -93,7 +95,7 @@ class MockObjectStorage implements DurableObjectStorage {
       if (query.includes('SELECT') && query.includes('FROM object_index') && query.includes('WHERE sha = ?')) {
         const sha = params[0] as string
         const idx = this.objectIndex.get(sha)
-        return { toArray: () => idx ? [{ sha, ...idx }] : [] }
+        return { toArray: () => idx ? [{ sha, tier: idx.tier, pack_id: idx.packId, offset: idx.offset, size: idx.size, type: idx.type, updated_at: idx.updatedAt }] : [] }
       }
 
       // Handle object DELETE
@@ -140,7 +142,7 @@ class MockObjectStorage implements DurableObjectStorage {
     return this.objects
   }
 
-  getObjectIndex(): Map<string, { tier: string; location: string; size: number; type: string }> {
+  getObjectIndex(): Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number }> {
     return this.objectIndex
   }
 
@@ -162,18 +164,21 @@ class MockObjectStorage implements DurableObjectStorage {
 
   // Inject objects for testing
   injectObject(sha: string, type: ObjectType, data: Uint8Array): void {
+    const now = Date.now()
     this.objects.set(sha, {
       sha,
       type,
       size: data.length,
       data,
-      createdAt: Date.now()
+      createdAt: now
     })
     this.objectIndex.set(sha, {
       tier: 'hot',
-      location: 'local',
+      packId: null,
+      offset: null,
       size: data.length,
-      type
+      type,
+      updatedAt: now
     })
   }
 }

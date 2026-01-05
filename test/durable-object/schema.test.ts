@@ -167,9 +167,11 @@ describe('SchemaManager', () => {
       expect(columns).toBeDefined()
       expect(columns).toContain('sha')
       expect(columns).toContain('tier')
-      expect(columns).toContain('location')
+      expect(columns).toContain('pack_id')
+      expect(columns).toContain('offset')
       expect(columns).toContain('size')
       expect(columns).toContain('type')
+      expect(columns).toContain('updated_at')
     })
 
     it('should create hot_objects table with correct columns', async () => {

@@ -125,7 +125,9 @@ export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS objects (sha TEXT PRIMARY KEY, type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at INTEGER);
 
 -- Object location index for tiered storage
-CREATE TABLE IF NOT EXISTS object_index (sha TEXT PRIMARY KEY, tier TEXT NOT NULL DEFAULT 'hot', location TEXT NOT NULL DEFAULT 'local', size INTEGER, type TEXT);
+-- Tracks object locations across storage tiers (hot/r2/parquet)
+-- pack_id and offset are used for R2 and Parquet tiers where objects are stored in packfiles
+CREATE TABLE IF NOT EXISTS object_index (sha TEXT PRIMARY KEY, tier TEXT NOT NULL DEFAULT 'hot', pack_id TEXT, offset INTEGER, size INTEGER, type TEXT, updated_at INTEGER);
 
 -- Hot objects cache
 CREATE TABLE IF NOT EXISTS hot_objects (sha TEXT PRIMARY KEY, type TEXT NOT NULL, data BLOB NOT NULL, accessed_at INTEGER, created_at INTEGER);
@@ -140,6 +142,8 @@ CREATE TABLE IF NOT EXISTS refs (name TEXT PRIMARY KEY, target TEXT NOT NULL, ty
 CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type);
 CREATE INDEX IF NOT EXISTS idx_wal_flushed ON wal(flushed);
 CREATE INDEX IF NOT EXISTS idx_hot_objects_accessed ON hot_objects(accessed_at);
+CREATE INDEX IF NOT EXISTS idx_object_index_tier ON object_index(tier);
+CREATE INDEX IF NOT EXISTS idx_object_index_pack_id ON object_index(pack_id);
 `
 
 /**

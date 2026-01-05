@@ -327,12 +327,14 @@ export class ObjectStore {
 
     // Update object index
     this.storage.sql.exec(
-      'INSERT OR REPLACE INTO object_index (sha, tier, location, size, type) VALUES (?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       sha,
       'hot',
-      'local',
+      null,  // pack_id is null for hot tier
+      null,  // offset is null for hot tier
       data.length,
-      type
+      type,
+      now
     )
 
     // Add to cache for fast subsequent reads
@@ -808,12 +810,14 @@ export class ObjectStore {
 
         // Update object index
         this.storage.sql.exec(
-          'INSERT OR REPLACE INTO object_index (sha, tier, location, size, type) VALUES (?, ?, ?, ?, ?)',
+          'INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
           sha,
           'hot',
-          'local',
+          null,  // pack_id is null for hot tier
+          null,  // offset is null for hot tier
           data.length,
-          type
+          type,
+          now
         )
 
         // Add to cache

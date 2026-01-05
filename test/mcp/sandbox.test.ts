@@ -848,16 +848,32 @@ describe('MCP Sandbox Execution', () => {
       await sandbox.stop()
     })
 
-    it('should contain syntax errors in eval', async () => {
+    it('should block eval for security reasons', async () => {
       const sandbox = createSandbox()
       await sandbox.start()
 
       const result = await sandbox.execute(() => {
-        eval('function { invalid syntax')
+        eval('console.log("blocked")')
       })
 
       expect(result.error).toBeDefined()
-      expect(result.error?.code).toBe(SandboxErrorCode.EXECUTION_ERROR)
+      expect(result.error?.code).toBe(SandboxErrorCode.PERMISSION_DENIED)
+      expect(result.error?.message).toMatch(/eval.*blocked|security/i)
+      await sandbox.stop()
+    })
+
+    it('should block Function constructor for security reasons', async () => {
+      const sandbox = createSandbox()
+      await sandbox.start()
+
+      const result = await sandbox.execute(() => {
+        const fn = new Function('return 42')
+        return fn()
+      })
+
+      expect(result.error).toBeDefined()
+      expect(result.error?.code).toBe(SandboxErrorCode.PERMISSION_DENIED)
+      expect(result.error?.message).toMatch(/Function.*blocked|security/i)
       await sandbox.stop()
     })
 

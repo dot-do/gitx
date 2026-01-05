@@ -45,6 +45,7 @@
 
 import type { ObjectType } from '../types/objects'
 import { encodePktLine, FLUSH_PKT } from './pkt-line'
+import { containsPathTraversal, isAbsolutePath, containsDangerousCharacters } from './path-security'
 
 // ============================================================================
 // Constants
@@ -1150,6 +1151,12 @@ export async function unpackObjects(
  * - Must not end with `.lock`
  * - Components must not start with `.`
  *
+ * Security considerations:
+ * - Prevents path traversal attacks via `../` sequences
+ * - Rejects absolute paths
+ * - Validates ref is within refs/ namespace or is HEAD
+ * - Blocks URL-encoded traversal attempts
+ *
  * @param refName - Ref name to validate
  * @returns true if the ref name is valid
  *
@@ -1160,11 +1167,38 @@ export async function unpackObjects(
  * validateRefName('refs/heads/.hidden')   // false (starts with .)
  * validateRefName('refs/heads/a..b')      // false (contains ..)
  * validateRefName('refs/heads/a b')       // false (contains space)
+ * validateRefName('refs/../../../etc/passwd')  // false (path traversal)
  * ```
  */
 export function validateRefName(refName: string): boolean {
   // Must not be empty
   if (!refName || refName.length === 0) {
+    return false
+  }
+
+  // SECURITY: Check for path traversal attacks
+  if (containsPathTraversal(refName)) {
+    return false
+  }
+
+  // SECURITY: Check for absolute paths
+  if (isAbsolutePath(refName)) {
+    return false
+  }
+
+  // SECURITY: Check for dangerous characters (null bytes, control chars)
+  const dangerCheck = containsDangerousCharacters(refName)
+  if (dangerCheck.dangerous) {
+    return false
+  }
+
+  // SECURITY: Validate ref prefix (must start with refs/ or be HEAD)
+  // This ensures refs can't escape to arbitrary filesystem paths
+  const validPrefixes = ['refs/', 'HEAD']
+  const hasValidPrefix = validPrefixes.some(prefix =>
+    refName === prefix.replace(/\/$/, '') || refName.startsWith(prefix)
+  )
+  if (!hasValidPrefix) {
     return false
   }
 
@@ -1178,7 +1212,7 @@ export function validateRefName(refName: string): boolean {
     return false
   }
 
-  // Must not contain double dots
+  // Must not contain double dots (already caught by containsPathTraversal, but explicit)
   if (refName.includes('..')) {
     return false
   }
