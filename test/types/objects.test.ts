@@ -439,8 +439,67 @@ describe('Git Object Types', () => {
       expect(tag.object).toBe(sampleSha)
       expect(tag.objectType).toBe('commit')
       expect(tag.name).toBe('v1.0.0')
-      expect(tag.tagger.name).toBe('Test User')
+      expect(tag.tagger?.name).toBe('Test User')
       expect(tag.message).toBe('Release v1.0.0')
+    })
+
+    it('should parse tag without tagger field', () => {
+      const tagContent = [
+        `object ${sampleSha}`,
+        'type commit',
+        'tag v1.0.0',
+        '',
+        'Release v1.0.0'
+      ].join('\n')
+      const data = encoder.encode(`tag ${tagContent.length}\0${tagContent}`)
+
+      const tag = parseTag(data)
+      expect(tag.type).toBe('tag')
+      expect(tag.object).toBe(sampleSha)
+      expect(tag.objectType).toBe('commit')
+      expect(tag.name).toBe('v1.0.0')
+      expect(tag.tagger).toBeUndefined()
+      expect(tag.message).toBe('Release v1.0.0')
+    })
+
+    it('should parse old-style tag without tagger field', () => {
+      // Older Git versions could create tags without tagger
+      const tagContent = [
+        `object ${sampleSha}`,
+        'type commit',
+        'tag v0.1.0',
+        '',
+        'Early release tag from old Git version'
+      ].join('\n')
+      const data = encoder.encode(`tag ${tagContent.length}\0${tagContent}`)
+
+      const tag = parseTag(data)
+      expect(tag.type).toBe('tag')
+      expect(tag.object).toBe(sampleSha)
+      expect(tag.objectType).toBe('commit')
+      expect(tag.name).toBe('v0.1.0')
+      expect(tag.tagger).toBeUndefined()
+      expect(tag.message).toBe('Early release tag from old Git version')
+    })
+
+    it('should parse tag without tagger pointing to tree object', () => {
+      // Edge case: tag pointing to a tree without tagger
+      const tagContent = [
+        `object ${sampleSha}`,
+        'type tree',
+        'tag tree-snapshot',
+        '',
+        'Snapshot of tree state'
+      ].join('\n')
+      const data = encoder.encode(`tag ${tagContent.length}\0${tagContent}`)
+
+      const tag = parseTag(data)
+      expect(tag.type).toBe('tag')
+      expect(tag.object).toBe(sampleSha)
+      expect(tag.objectType).toBe('tree')
+      expect(tag.name).toBe('tree-snapshot')
+      expect(tag.tagger).toBeUndefined()
+      expect(tag.message).toBe('Snapshot of tree state')
     })
   })
 
@@ -561,6 +620,22 @@ describe('Git Object Types', () => {
       const serialized = serializeCommit(commit)
       const parsed = parseCommit(serialized)
       expect(parsed.author.timezone).toBe('+0900')
+    })
+
+    it('should round-trip tag without tagger', () => {
+      const originalTag = {
+        object: sampleSha,
+        objectType: 'commit' as ObjectType,
+        message: 'Version 1.0',
+        name: 'v1.0'
+      }
+      const serialized = serializeTag(originalTag)
+      const parsed = parseTag(serialized)
+      expect(parsed.object).toBe(originalTag.object)
+      expect(parsed.objectType).toBe(originalTag.objectType)
+      expect(parsed.name).toBe(originalTag.name)
+      expect(parsed.message).toBe(originalTag.message)
+      expect(parsed.tagger).toBeUndefined()
     })
   })
 })
