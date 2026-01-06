@@ -798,9 +798,22 @@ export class BranchManager {
    * }
    * ```
    */
-  async branchExists(_name: string): Promise<boolean> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async branchExists(name: string): Promise<boolean> {
+    // Handle remote branch names like 'origin/main'
+    if (name.includes('/') && !name.startsWith('refs/')) {
+      const parts = name.split('/')
+      if (parts.length >= 2) {
+        // Check if it's a remote reference
+        const remoteRef = `refs/remotes/${name}`
+        const remoteExists = await this.storage.getRef(remoteRef)
+        if (remoteExists) return true
+      }
+    }
+
+    const normalizedName = normalizeBranchName(name)
+    const branchRef = getBranchRefName(normalizedName)
+    const ref = await this.storage.getRef(branchRef)
+    return ref !== null
   }
 
   /**
