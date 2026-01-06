@@ -34,7 +34,23 @@
  */
 
 import { Author, TagObject, ObjectType } from '../types/objects'
-import { RefStorage, RefErrorCode } from './storage'
+import { RefErrorCode } from './storage'
+
+/**
+ * Simplified ref storage interface for TagManager.
+ *
+ * This interface is a subset of RefStorage that TagManager needs.
+ * It allows for simpler mocking in tests.
+ */
+export interface TagRefStorage {
+  getRef(name: string): Promise<string | null>
+  setRef(name: string, sha: string): Promise<void>
+  deleteRef(name: string): Promise<boolean>
+  listRefs(prefix: string): Promise<Array<{ name: string; sha: string }>>
+}
+
+// Re-export RefStorage for backward compatibility
+export { RefStorage } from './storage'
 
 // ============================================================================
 // Types and Interfaces
@@ -391,6 +407,12 @@ export interface GPGSigner {
  * ```
  */
 export class TagManager {
+  private refStorage: TagRefStorage
+  private objectStorage: TagObjectStorage
+  private gpgSigner?: GPGSigner
+  // Simple in-memory lock to handle concurrent tag creation
+  private pendingCreations = new Set<string>()
+
   /**
    * Create a new TagManager.
    *
@@ -399,14 +421,13 @@ export class TagManager {
    * @param gpgSigner - Optional GPG signer for signed tags
    */
   constructor(
-    refStorage: RefStorage,
+    refStorage: TagRefStorage,
     objectStorage: TagObjectStorage,
     gpgSigner?: GPGSigner
   ) {
-    void refStorage // Suppress unused variable warning until implementation
-    void objectStorage
-    void gpgSigner
-    // TODO: Implement in GREEN phase
+    this.refStorage = refStorage
+    this.objectStorage = objectStorage
+    this.gpgSigner = gpgSigner
   }
 
   /**
@@ -446,9 +467,111 @@ export class TagManager {
    * })
    * ```
    */
-  async createTag(_name: string, _target: string, _options?: CreateTagOptions): Promise<Tag> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async createTag(name: string, target: string, options?: CreateTagOptions): Promise<Tag> {
+    // Validate tag name
+    if (!isValidTagName(name)) {
+      throw new TagError(`Invalid tag name: ${name}`, 'INVALID_TAG_NAME', name)
+    }
+
+    const refName = `refs/tags/${name}`
+
+    // Synchronous check-and-lock to handle concurrent creation attempts
+    if (this.pendingCreations.has(name)) {
+      throw new TagError(`Tag already exists: ${name}`, 'TAG_EXISTS', name)
+    }
+
+    // Check if tag already exists
+    const existingSha = await this.refStorage.getRef(refName)
+    if (existingSha !== null && !options?.force) {
+      throw new TagError(`Tag already exists: ${name}`, 'TAG_EXISTS', name)
+    }
+
+    // Mark as pending (synchronous operation for atomicity)
+    if (!options?.force) {
+      if (this.pendingCreations.has(name)) {
+        throw new TagError(`Tag already exists: ${name}`, 'TAG_EXISTS', name)
+      }
+      this.pendingCreations.add(name)
+    }
+
+    // Determine if this should be an annotated tag
+    const isAnnotated = options?.annotated === true || (options?.message !== undefined && options?.message !== '')
+
+    try {
+      if (isAnnotated) {
+        // Validate message for annotated tags
+        const rawMessage = options?.message
+        if (!rawMessage || rawMessage.trim().length === 0) {
+          throw new TagError('Annotated tag requires a message', 'MESSAGE_REQUIRED', name)
+        }
+
+        const formattedMessage = formatTagMessage(rawMessage)
+
+        // Validate tagger (can have timestamp set to 0 or undefined, we'll use current time)
+        let tagger = options?.tagger
+        if (tagger && tagger.timestamp === undefined) {
+          tagger = {
+            ...tagger,
+            timestamp: Math.floor(Date.now() / 1000)
+          }
+        }
+
+        // Handle signing
+        let signature: string | undefined
+        let finalMessage = formattedMessage
+        if (options?.sign) {
+          if (!this.gpgSigner) {
+            throw new TagError('GPG signer not available', 'GPG_ERROR', name)
+          }
+          // Sign the tag content
+          const encoder = new TextEncoder()
+          signature = await this.gpgSigner.sign(encoder.encode(formattedMessage), options?.keyId)
+          // Append signature to message (Git stores signature in the tag object)
+          finalMessage = formattedMessage + '\n' + signature
+        }
+
+        // Get the target object type
+        const targetType = await this.objectStorage.readObjectType(target)
+
+        // Create tag object
+        const tagObj: Omit<TagObject, 'type' | 'data'> = {
+          object: target,
+          objectType: targetType || 'commit',
+          name,
+          tagger,
+          message: finalMessage
+        }
+
+        // Write tag object and get its SHA
+        const tagObjSha = await this.objectStorage.writeTagObject(tagObj)
+
+        // Write ref pointing to tag object
+        await this.refStorage.setRef(refName, tagObjSha)
+
+        return {
+          name,
+          type: 'annotated',
+          sha: tagObjSha,
+          targetSha: target,
+          targetType: targetType || 'commit',
+          tagger,
+          message: formattedMessage,
+          signature
+        }
+      } else {
+        // Lightweight tag - just write ref pointing to target
+        await this.refStorage.setRef(refName, target)
+
+        return {
+          name,
+          type: 'lightweight',
+          sha: target
+        }
+      }
+    } finally {
+      // Clear the pending lock
+      this.pendingCreations.delete(name)
+    }
   }
 
   /**
@@ -471,9 +594,21 @@ export class TagManager {
    * await manager.deleteTag('maybe-exists', { force: true })
    * ```
    */
-  async deleteTag(_name: string, _options?: DeleteTagOptions): Promise<boolean> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async deleteTag(name: string, options?: DeleteTagOptions): Promise<boolean> {
+    const refName = `refs/tags/${name}`
+
+    // Check if tag exists
+    const existingSha = await this.refStorage.getRef(refName)
+    if (existingSha === null) {
+      if (options?.force) {
+        return false
+      }
+      throw new TagError(`Tag not found: ${name}`, 'TAG_NOT_FOUND', name)
+    }
+
+    // Delete the ref (but not the tag object)
+    await this.refStorage.deleteRef(refName)
+    return true
   }
 
   /**
@@ -507,9 +642,88 @@ export class TagManager {
    * })
    * ```
    */
-  async listTags(_options?: ListTagsOptions): Promise<Tag[]> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async listTags(options?: ListTagsOptions): Promise<Tag[]> {
+    // List all refs under refs/tags/
+    const tagRefs = await this.refStorage.listRefs('refs/tags/')
+
+    // Determine if we need metadata (either explicitly requested or for date sorting)
+    const needMetadata = options?.includeMetadata || options?.sort === 'date'
+
+    // Build tag list
+    let tags: Tag[] = []
+
+    for (const refEntry of tagRefs) {
+      const tagName = refEntry.name.replace('refs/tags/', '')
+      const sha = refEntry.sha
+
+      // Check if it's an annotated tag by trying to read the tag object
+      const tagObj = await this.objectStorage.readTagObject(sha)
+
+      if (tagObj) {
+        // Annotated tag
+        const tag: Tag = {
+          name: tagName,
+          type: 'annotated',
+          sha
+        }
+
+        if (needMetadata) {
+          tag.targetSha = tagObj.object
+          tag.targetType = tagObj.objectType
+          tag.tagger = tagObj.tagger
+          tag.message = tagObj.message
+        }
+
+        tags.push(tag)
+      } else {
+        // Lightweight tag
+        tags.push({
+          name: tagName,
+          type: 'lightweight',
+          sha
+        })
+      }
+    }
+
+    // Filter by pattern if provided
+    if (options?.pattern) {
+      tags = filterTagsByPattern(tags, options.pattern)
+    }
+
+    // Sort tags
+    const sortType = options?.sort || 'name'
+    const sortDirection = options?.sortDirection || 'asc'
+
+    if (sortType === 'version') {
+      tags = sortTagsByVersion(tags, sortDirection)
+    } else if (sortType === 'date') {
+      // Filter out tags without timestamps when sorting by date
+      tags = tags.filter(t => t.tagger?.timestamp !== undefined)
+      // Sort by tagger timestamp
+      tags.sort((a, b) => {
+        const aTime = a.tagger!.timestamp
+        const bTime = b.tagger!.timestamp
+        const timeDiff = sortDirection === 'asc' ? aTime - bTime : bTime - aTime
+        // Secondary sort by name when timestamps are equal
+        if (timeDiff === 0) {
+          return a.name.localeCompare(b.name)
+        }
+        return timeDiff
+      })
+    } else {
+      // Sort by name (default)
+      tags.sort((a, b) => {
+        const cmp = a.name.localeCompare(b.name)
+        return sortDirection === 'asc' ? cmp : -cmp
+      })
+    }
+
+    // Limit results
+    if (options?.limit !== undefined) {
+      tags = tags.slice(0, options.limit)
+    }
+
+    return tags
   }
 
   /**
@@ -536,9 +750,47 @@ export class TagManager {
    * }
    * ```
    */
-  async getTag(_name: string, _options?: GetTagOptions): Promise<Tag | null> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async getTag(name: string, options?: GetTagOptions): Promise<Tag | null> {
+    const refName = `refs/tags/${name}`
+    const sha = await this.refStorage.getRef(refName)
+
+    if (sha === null) {
+      return null
+    }
+
+    // Try to read as tag object (annotated tag)
+    const tagObj = await this.objectStorage.readTagObject(sha)
+
+    if (tagObj) {
+      // Annotated tag
+      const tag: Tag = {
+        name,
+        type: 'annotated',
+        sha
+      }
+
+      if (options?.resolve) {
+        tag.targetSha = tagObj.object
+        tag.targetType = tagObj.objectType
+        tag.tagger = tagObj.tagger
+        tag.message = tagObj.message
+        // Check for signature in message
+        const parsed = parseTagMessage(tagObj.message)
+        if (parsed.signature) {
+          tag.signature = parsed.signature
+          tag.message = parsed.message
+        }
+      }
+
+      return tag
+    } else {
+      // Lightweight tag
+      return {
+        name,
+        type: 'lightweight',
+        sha
+      }
+    }
   }
 
   /**
@@ -557,9 +809,10 @@ export class TagManager {
    * }
    * ```
    */
-  async tagExists(_name: string): Promise<boolean> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async tagExists(name: string): Promise<boolean> {
+    const refName = `refs/tags/${name}`
+    const sha = await this.refStorage.getRef(refName)
+    return sha !== null
   }
 
   /**
@@ -579,9 +832,32 @@ export class TagManager {
    * const commitSha = await manager.getTagTarget('v1.0.0')
    * ```
    */
-  async getTagTarget(_name: string): Promise<string> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async getTagTarget(name: string): Promise<string> {
+    const refName = `refs/tags/${name}`
+    let sha = await this.refStorage.getRef(refName)
+
+    if (sha === null) {
+      throw new TagError(`Tag not found: ${name}`, 'TAG_NOT_FOUND', name)
+    }
+
+    // Resolve through tag objects to get final commit
+    let depth = 0
+    const maxDepth = 10
+
+    while (depth < maxDepth) {
+      const tagObj = await this.objectStorage.readTagObject(sha)
+
+      if (!tagObj) {
+        // Not a tag object, this is the final target
+        return sha
+      }
+
+      // Follow the tag to its target
+      sha = tagObj.object
+      depth++
+    }
+
+    return sha
   }
 
   /**
@@ -606,9 +882,37 @@ export class TagManager {
    * }
    * ```
    */
-  async verifyTag(_name: string): Promise<TagSignatureVerification> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async verifyTag(name: string): Promise<TagSignatureVerification> {
+    const refName = `refs/tags/${name}`
+    const sha = await this.refStorage.getRef(refName)
+
+    if (sha === null) {
+      throw new TagError(`Tag not found: ${name}`, 'TAG_NOT_FOUND', name)
+    }
+
+    // Get tag object
+    const tagObj = await this.objectStorage.readTagObject(sha)
+
+    if (!tagObj) {
+      // Lightweight tag - cannot be signed
+      return { valid: false }
+    }
+
+    // Parse message to check for signature
+    const parsed = parseTagMessage(tagObj.message)
+
+    if (!parsed.signature) {
+      // No signature
+      return { valid: false }
+    }
+
+    // Verify signature using GPG signer
+    if (!this.gpgSigner) {
+      return { valid: false, error: 'GPG signer not available' }
+    }
+
+    const encoder = new TextEncoder()
+    return this.gpgSigner.verify(encoder.encode(parsed.message), parsed.signature)
   }
 
   /**
@@ -628,9 +932,17 @@ export class TagManager {
    * }
    * ```
    */
-  async isAnnotatedTag(_name: string): Promise<boolean> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async isAnnotatedTag(name: string): Promise<boolean> {
+    const refName = `refs/tags/${name}`
+    const sha = await this.refStorage.getRef(refName)
+
+    if (sha === null) {
+      throw new TagError(`Tag not found: ${name}`, 'TAG_NOT_FOUND', name)
+    }
+
+    // Try to read as tag object
+    const tagObj = await this.objectStorage.readTagObject(sha)
+    return tagObj !== null
   }
 }
 
@@ -667,9 +979,56 @@ export class TagManager {
  * isValidTagName('')              // false (empty)
  * ```
  */
-export function isValidTagName(_name: string): boolean {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function isValidTagName(name: string): boolean {
+  // Empty name is invalid
+  if (!name || name.length === 0 || name.trim().length === 0) {
+    return false
+  }
+
+  // Cannot end with .lock
+  if (name.endsWith('.lock')) {
+    return false
+  }
+
+  // Cannot contain ..
+  if (name.includes('..')) {
+    return false
+  }
+
+  // Cannot contain @{
+  if (name.includes('@{')) {
+    return false
+  }
+
+  // Cannot contain control characters (ASCII 0-31, 127), space, ~, ^, :, ?, *, [, \
+  const invalidChars = /[\x00-\x1f\x7f ~^:?*[\]\\]/
+  if (invalidChars.test(name)) {
+    return false
+  }
+
+  // Cannot end with /
+  if (name.endsWith('/')) {
+    return false
+  }
+
+  // Split into components and check each
+  const components = name.split('/')
+  for (const component of components) {
+    // Cannot have empty components (// in path)
+    if (component.length === 0) {
+      return false
+    }
+    // Cannot start with .
+    if (component.startsWith('.')) {
+      return false
+    }
+    // Cannot end with .
+    if (component.endsWith('.')) {
+      return false
+    }
+  }
+
+  return true
 }
 
 /**
@@ -690,9 +1049,10 @@ export function isValidTagName(_name: string): boolean {
  * }
  * ```
  */
-export function isAnnotatedTag(_tag: Tag): _tag is Tag & { type: 'annotated'; tagger: Author; message: string } {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function isAnnotatedTag(tag: Tag): tag is Tag & { type: 'annotated'; tagger: Author; message: string } {
+  return tag.type === 'annotated' &&
+         tag.tagger !== undefined &&
+         tag.message !== undefined
 }
 
 /**
@@ -710,9 +1070,22 @@ export function isAnnotatedTag(_tag: Tag): _tag is Tag & { type: 'annotated'; ta
  * formatTagMessage('  Hello World  \r\n')  // 'Hello World\n'
  * ```
  */
-export function formatTagMessage(_message: string): string {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function formatTagMessage(message: string): string {
+  // Normalize line endings (CRLF -> LF)
+  let formatted = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
+  // Trim leading and trailing whitespace, but preserve internal structure
+  // The test expects 'Hello\r\nWorld\r\n' to become 'Hello\nWorld\n'
+  // So we trim leading whitespace, convert line endings, but preserve trailing newline if present
+  const hadTrailingNewline = formatted.endsWith('\n')
+
+  formatted = formatted.trim()
+
+  if (hadTrailingNewline && formatted.length > 0) {
+    formatted += '\n'
+  }
+
+  return formatted
 }
 
 /**
@@ -733,9 +1106,20 @@ export function formatTagMessage(_message: string): string {
  * }
  * ```
  */
-export function parseTagMessage(_content: string): { message: string; signature?: string } {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function parseTagMessage(content: string): { message: string; signature?: string } {
+  const sigMarker = '-----BEGIN PGP SIGNATURE-----'
+  const sigIndex = content.indexOf(sigMarker)
+
+  if (sigIndex === -1) {
+    // No signature
+    return { message: content.trim() }
+  }
+
+  // Split message and signature
+  const message = content.slice(0, sigIndex).trim()
+  const signature = content.slice(sigIndex)
+
+  return { message, signature }
 }
 
 // ============================================================================
@@ -763,13 +1147,12 @@ export function parseTagMessage(_content: string): { message: string; signature?
  * ```
  */
 export async function createTag(
-  _manager: TagManager,
-  _name: string,
-  _target: string,
-  _options?: CreateTagOptions
+  manager: TagManager,
+  name: string,
+  target: string,
+  options?: CreateTagOptions
 ): Promise<Tag> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.createTag(name, target, options)
 }
 
 /**
@@ -799,15 +1182,19 @@ export async function createTag(
  * ```
  */
 export async function createAnnotatedTag(
-  _manager: TagManager,
-  _name: string,
-  _target: string,
-  _message: string,
-  _tagger: Author,
-  _options?: Omit<CreateTagOptions, 'annotated' | 'message' | 'tagger'>
+  manager: TagManager,
+  name: string,
+  target: string,
+  message: string,
+  tagger: Author,
+  options?: Omit<CreateTagOptions, 'annotated' | 'message' | 'tagger'>
 ): Promise<Tag> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.createTag(name, target, {
+    ...options,
+    annotated: true,
+    message,
+    tagger
+  })
 }
 
 /**
@@ -827,12 +1214,11 @@ export async function createAnnotatedTag(
  * ```
  */
 export async function deleteTag(
-  _manager: TagManager,
-  _name: string,
-  _options?: DeleteTagOptions
+  manager: TagManager,
+  name: string,
+  options?: DeleteTagOptions
 ): Promise<boolean> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.deleteTag(name, options)
 }
 
 /**
@@ -851,11 +1237,10 @@ export async function deleteTag(
  * ```
  */
 export async function listTags(
-  _manager: TagManager,
-  _options?: ListTagsOptions
+  manager: TagManager,
+  options?: ListTagsOptions
 ): Promise<Tag[]> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.listTags(options)
 }
 
 /**
@@ -875,12 +1260,11 @@ export async function listTags(
  * ```
  */
 export async function getTag(
-  _manager: TagManager,
-  _name: string,
-  _options?: GetTagOptions
+  manager: TagManager,
+  name: string,
+  options?: GetTagOptions
 ): Promise<Tag | null> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.getTag(name, options)
 }
 
 /**
@@ -901,11 +1285,10 @@ export async function getTag(
  * ```
  */
 export async function checkIsAnnotatedTag(
-  _manager: TagManager,
-  _name: string
+  manager: TagManager,
+  name: string
 ): Promise<boolean> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.isAnnotatedTag(name)
 }
 
 /**
@@ -924,11 +1307,10 @@ export async function checkIsAnnotatedTag(
  * ```
  */
 export async function verifyTagSignature(
-  _manager: TagManager,
-  _name: string
+  manager: TagManager,
+  name: string
 ): Promise<TagSignatureVerification> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.verifyTag(name)
 }
 
 /**
@@ -947,11 +1329,10 @@ export async function verifyTagSignature(
  * ```
  */
 export async function getTagTarget(
-  _manager: TagManager,
-  _name: string
+  manager: TagManager,
+  name: string
 ): Promise<string> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  return manager.getTagTarget(name)
 }
 
 /**
@@ -971,9 +1352,36 @@ export async function getTagTarget(
  * // ['v2.0.0', 'v1.10.0', 'v1.9.0', 'v1.0.0', ...]
  * ```
  */
-export function sortTagsByVersion(_tags: Tag[], _direction: 'asc' | 'desc' = 'asc'): Tag[] {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function sortTagsByVersion(tags: Tag[], direction: 'asc' | 'desc' = 'asc'): Tag[] {
+  // Parse version from tag name (handles v1.2.3, 1.2.3, v1.2.3-beta, etc.)
+  const parseVersion = (name: string): number[] => {
+    // Remove 'v' prefix if present
+    const normalized = name.startsWith('v') ? name.slice(1) : name
+    // Extract numeric version parts (split on non-digit, non-dot)
+    const parts = normalized.split(/[^0-9.]/)[0].split('.')
+    return parts.map(p => parseInt(p, 10) || 0)
+  }
+
+  const compareVersions = (a: number[], b: number[]): number => {
+    const maxLen = Math.max(a.length, b.length)
+    for (let i = 0; i < maxLen; i++) {
+      const aVal = a[i] || 0
+      const bVal = b[i] || 0
+      if (aVal !== bVal) {
+        return aVal - bVal
+      }
+    }
+    return 0
+  }
+
+  const sorted = [...tags].sort((a, b) => {
+    const aVer = parseVersion(a.name)
+    const bVer = parseVersion(b.name)
+    const cmp = compareVersions(aVer, bVer)
+    return direction === 'asc' ? cmp : -cmp
+  })
+
+  return sorted
 }
 
 /**
@@ -992,7 +1400,17 @@ export function sortTagsByVersion(_tags: Tag[], _direction: 'asc' | 'desc' = 'as
  * const v1Tags = filterTagsByPattern(tags, 'v1.*')
  * ```
  */
-export function filterTagsByPattern(_tags: Tag[], _pattern: string): Tag[] {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export function filterTagsByPattern(tags: Tag[], pattern: string): Tag[] {
+  // Convert glob pattern to regex
+  // * matches any number of characters
+  // ? matches a single character
+  // Escape special regex characters except * and ?
+  const regexPattern = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape special regex chars
+    .replace(/\*/g, '.*')                   // * -> .*
+    .replace(/\?/g, '.')                    // ? -> .
+
+  const regex = new RegExp(`^${regexPattern}$`)
+
+  return tags.filter(tag => regex.test(tag.name))
 }

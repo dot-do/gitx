@@ -1122,10 +1122,6 @@ export function parseTag(data: Uint8Array): TagObject {
     }
   }
 
-  if (!tagger) {
-    throw new Error('Invalid tag: missing tagger')
-  }
-
   const message = lines.slice(messageStartIndex).join('\n')
 
   return {
@@ -1134,7 +1130,7 @@ export function parseTag(data: Uint8Array): TagObject {
     object,
     objectType,
     name,
-    tagger,
+    tagger: tagger ?? undefined,
     message
   }
 }
