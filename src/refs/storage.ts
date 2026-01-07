@@ -11,14 +11,21 @@
  * - **Loose refs**: Individual ref files in .git/refs/
  * - **Packed refs**: Consolidated refs in .git/packed-refs for efficiency
  *
+ * **Backend Support**:
+ * - `RefStorageBackend`: Full-featured backend with locking and packed refs
+ * - `StorageBackend`: Simpler backend interface (optional, from storage/backend.ts)
+ *
  * @module refs/storage
  *
  * @example
  * ```typescript
  * import { RefStorage, isValidRefName, isValidSha } from './refs/storage'
  *
- * // Create storage with backend
+ * // Create storage with RefStorageBackend (full features)
  * const storage = new RefStorage(backend)
+ *
+ * // Or create with StorageBackend (simpler, optional)
+ * const storage = new RefStorage({ storageBackend: myStorageBackend })
  *
  * // Resolve HEAD to get current commit
  * const resolved = await storage.resolveRef('HEAD')
@@ -31,6 +38,8 @@
  * const branches = await storage.listBranches()
  * ```
  */
+
+import type { StorageBackend } from '../storage/backend'
 
 // ============================================================================
 // Types and Interfaces
@@ -297,6 +306,27 @@ export interface RefStorageBackend {
    * @param refs - Map of ref names to SHA values
    */
   writePackedRefs(refs: Map<string, string>): Promise<void>
+}
+
+/**
+ * Options for creating a RefStorage instance.
+ *
+ * @description
+ * Supports two modes of operation:
+ * 1. Pass a RefStorageBackend directly for full features (locking, packed refs)
+ * 2. Pass options object with storageBackend for simpler StorageBackend integration
+ *
+ * When using StorageBackend:
+ * - Locking operations become no-ops (always succeed)
+ * - Packed refs operations are not available
+ * - Basic ref operations delegate to StorageBackend methods
+ */
+export interface RefStorageOptions {
+  /**
+   * Optional StorageBackend for simpler ref operations.
+   * When provided, ref operations delegate to this backend.
+   */
+  storageBackend?: StorageBackend
 }
 
 // ============================================================================
@@ -588,9 +618,17 @@ export function serializePackedRefs(refs: Map<string, string>): string {
  * Provides a high-level API for managing Git references. Handles ref
  * resolution, updates with locking, symbolic refs, and packed refs.
  *
+ * Supports two backend modes:
+ * 1. RefStorageBackend - Full features including locking and packed refs
+ * 2. StorageBackend - Simpler interface with basic ref operations
+ *
  * @example
  * ```typescript
+ * // With RefStorageBackend (full features)
  * const storage = new RefStorage(myBackend)
+ *
+ * // With StorageBackend (simpler)
+ * const storage = new RefStorage({ storageBackend: myStorageBackend })
  *
  * // Get current branch
  * const head = await storage.getHead()
@@ -607,12 +645,104 @@ export function serializePackedRefs(refs: Map<string, string>): string {
  * ```
  */
 export class RefStorage {
+  private backend?: RefStorageBackend
+  private storageBackend?: StorageBackend
+
   /**
    * Create a new RefStorage instance.
    *
-   * @param backend - Storage backend for persistence
+   * @param backendOrOptions - Either a RefStorageBackend directly, or options with storageBackend
+   *
+   * @example
+   * ```typescript
+   * // Direct backend
+   * const storage = new RefStorage(myRefStorageBackend)
+   *
+   * // Options with StorageBackend
+   * const storage = new RefStorage({ storageBackend: myStorageBackend })
+   * ```
    */
-  constructor(private backend: RefStorageBackend) {}
+  constructor(backendOrOptions: RefStorageBackend | RefStorageOptions) {
+    // Type guard: RefStorageOptions has storageBackend, RefStorageBackend has readRef
+    if ('storageBackend' in backendOrOptions && !('readRef' in backendOrOptions)) {
+      // Options object with StorageBackend
+      this.storageBackend = (backendOrOptions as RefStorageOptions).storageBackend
+    } else {
+      // Direct RefStorageBackend
+      this.backend = backendOrOptions as RefStorageBackend
+    }
+  }
+
+  /**
+   * Internal helper to get a lock (or no-op lock for StorageBackend).
+   *
+   * @description
+   * When using StorageBackend, returns a no-op lock since StorageBackend
+   * doesn't support locking. Callers should still use try/finally to release.
+   */
+  private async getLock(name: string, _timeout?: number): Promise<RefLock> {
+    if (this.storageBackend) {
+      // No-op lock for StorageBackend
+      return {
+        refName: name,
+        release: async () => {},
+        isHeld: () => true
+      }
+    }
+
+    if (!this.backend) {
+      throw new Error('No backend configured')
+    }
+
+    return this.backend.acquireLock(name, _timeout)
+  }
+
+  /**
+   * Internal helper to write a ref.
+   */
+  private async writeRef(ref: Ref): Promise<void> {
+    if (this.storageBackend) {
+      await this.storageBackend.setRef(ref.name, ref)
+      return
+    }
+
+    if (!this.backend) {
+      throw new Error('No backend configured')
+    }
+
+    await this.backend.writeRef(ref)
+  }
+
+  /**
+   * Internal helper to delete a ref.
+   */
+  private async removeRef(name: string): Promise<boolean> {
+    if (this.storageBackend) {
+      await this.storageBackend.deleteRef(name)
+      return true
+    }
+
+    if (!this.backend) {
+      throw new Error('No backend configured')
+    }
+
+    return this.backend.deleteRef(name)
+  }
+
+  /**
+   * Internal helper to list refs.
+   */
+  private async getAllRefs(pattern?: string): Promise<Ref[]> {
+    if (this.storageBackend) {
+      return this.storageBackend.listRefs(pattern)
+    }
+
+    if (!this.backend) {
+      throw new Error('No backend configured')
+    }
+
+    return this.backend.listRefs(pattern)
+  }
 
   /**
    * Get a ref by name.
@@ -623,7 +753,7 @@ export class RefStorage {
    *
    * @param name - Full ref name
    * @returns The ref or null if not found
-   * @throws Error if backend doesn't support readRef
+   * @throws Error if no backend is configured
    *
    * @example
    * ```typescript
@@ -634,8 +764,14 @@ export class RefStorage {
    * ```
    */
   async getRef(name: string): Promise<Ref | null> {
-    if (!this.backend.readRef) {
-      throw new Error('Backend does not support readRef')
+    // Use StorageBackend if available
+    if (this.storageBackend) {
+      return this.storageBackend.getRef(name)
+    }
+
+    // Fall back to RefStorageBackend
+    if (!this.backend?.readRef) {
+      throw new Error('No backend configured or backend does not support readRef')
     }
     return this.backend.readRef(name)
   }
@@ -747,7 +883,7 @@ export class RefStorage {
 
     // Use provided lock or acquire a new one
     const externalLock = options?.lock
-    const lock = externalLock ?? await this.backend.acquireLock(name)
+    const lock = externalLock ?? await this.getLock(name)
 
     try {
       const existingRef = await this.getRef(name)
@@ -776,7 +912,7 @@ export class RefStorage {
         type: 'direct'
       }
 
-      await this.backend.writeRef(ref)
+      await this.writeRef(ref)
       return ref
     } finally {
       // Only release lock if we acquired it ourselves
@@ -820,7 +956,7 @@ export class RefStorage {
     }
 
     // Acquire lock for atomic operation
-    const lock = await this.backend.acquireLock(name)
+    const lock = await this.getLock(name)
 
     try {
       const existingRef = await this.getRef(name)
@@ -836,7 +972,7 @@ export class RefStorage {
         return false
       }
 
-      return this.backend.deleteRef(name)
+      return this.removeRef(name)
     } finally {
       await lock.release()
     }
@@ -865,7 +1001,7 @@ export class RefStorage {
    * ```
    */
   async listRefs(options?: ListRefsOptions): Promise<Ref[]> {
-    let refs = await this.backend.listRefs(options?.pattern)
+    let refs = await this.getAllRefs(options?.pattern)
 
     // Filter out HEAD unless explicitly requested
     if (!options?.includeHead) {
@@ -979,7 +1115,7 @@ export class RefStorage {
    */
   async updateHead(target: string, symbolic?: boolean): Promise<Ref> {
     // Acquire lock for atomic HEAD update
-    const lock = await this.backend.acquireLock('HEAD')
+    const lock = await this.getLock('HEAD')
 
     try {
       const ref: Ref = {
@@ -988,7 +1124,7 @@ export class RefStorage {
         type: symbolic ? 'symbolic' : 'direct'
       }
 
-      await this.backend.writeRef(ref)
+      await this.writeRef(ref)
       return ref
     } finally {
       await lock.release()
@@ -1048,7 +1184,7 @@ export class RefStorage {
     }
 
     // Acquire lock for atomic symbolic ref creation
-    const lock = await this.backend.acquireLock(name)
+    const lock = await this.getLock(name)
 
     try {
       const ref: Ref = {
@@ -1057,7 +1193,7 @@ export class RefStorage {
         type: 'symbolic'
       }
 
-      await this.backend.writeRef(ref)
+      await this.writeRef(ref)
       return ref
     } finally {
       await lock.release()
@@ -1087,7 +1223,7 @@ export class RefStorage {
    * ```
    */
   async acquireLock(name: string, timeout?: number): Promise<RefLock> {
-    return this.backend.acquireLock(name, timeout)
+    return this.getLock(name, timeout)
   }
 
   /**
@@ -1108,7 +1244,16 @@ export class RefStorage {
    * ```
    */
   async packRefs(): Promise<void> {
-    const allRefs = await this.backend.listRefs()
+    // StorageBackend doesn't support packed refs - no-op
+    if (this.storageBackend) {
+      return
+    }
+
+    if (!this.backend) {
+      throw new Error('No backend configured')
+    }
+
+    const allRefs = await this.getAllRefs()
     const packed = new Map<string, string>()
     const locks: RefLock[] = []
 
@@ -1122,7 +1267,7 @@ export class RefStorage {
     // Acquire locks on all refs being packed for transactional consistency
     try {
       for (const ref of packableRefs) {
-        const lock = await this.backend.acquireLock(ref.name)
+        const lock = await this.getLock(ref.name)
         locks.push(lock)
       }
 

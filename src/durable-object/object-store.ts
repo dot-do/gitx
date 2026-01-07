@@ -55,6 +55,7 @@ import {
   Author
 } from '../types/objects'
 import { hashObject } from '../utils/hash'
+import type { StorageBackend } from '../storage/backend'
 
 // ============================================================================
 // Types and Interfaces
@@ -138,6 +139,14 @@ export interface ObjectStoreOptions {
    * @default undefined (no logging)
    */
   logger?: ObjectStoreLogger
+
+  /**
+   * Optional storage backend abstraction.
+   * If provided, delegates CAS operations to this backend instead of SQLite.
+   * This enables gradual migration to different storage implementations.
+   * @default undefined (uses SQLite directly)
+   */
+  backend?: StorageBackend
 }
 
 /**
@@ -219,6 +228,7 @@ export class ObjectStore {
   private cache: LRUCache<string, StoredObject>
   private options: ObjectStoreOptions
   private logger?: ObjectStoreLogger
+  private backend: StorageBackend | null
 
   // Metrics tracking
   private _reads = 0
@@ -235,11 +245,11 @@ export class ObjectStore {
    * Create a new ObjectStore.
    *
    * @param storage - Durable Object storage interface with SQL support
-   * @param options - Configuration options for caching, metrics, and logging
+   * @param options - Configuration options for caching, metrics, logging, and backend
    *
    * @example
    * ```typescript
-   * // Basic usage
+   * // Basic usage (SQLite backend)
    * const store = new ObjectStore(storage)
    *
    * // With caching and metrics
@@ -249,6 +259,11 @@ export class ObjectStore {
    *   enableMetrics: true,
    *   logger: console
    * })
+   *
+   * // With StorageBackend abstraction
+   * const store = new ObjectStore(storage, {
+   *   backend: fsBackend
+   * })
    * ```
    */
   constructor(
@@ -257,6 +272,7 @@ export class ObjectStore {
   ) {
     this.options = options ?? {}
     this.logger = options?.logger
+    this.backend = options?.backend ?? null
 
     // Initialize LRU cache for hot tier objects
     this.cache = new LRUCache<string, StoredObject>({
@@ -305,6 +321,31 @@ export class ObjectStore {
   async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
     const startTime = this.options.enableMetrics ? Date.now() : 0
 
+    // Delegate to backend if available
+    if (this.backend) {
+      const sha = await this.backend.putObject(type, data)
+
+      // Add to cache for fast subsequent reads
+      const storedObject: StoredObject = {
+        sha,
+        type,
+        size: data.length,
+        data,
+        createdAt: Date.now()
+      }
+      this.cache.set(sha, storedObject)
+
+      // Update metrics
+      if (this.options.enableMetrics) {
+        this._writes++
+        this._bytesWritten += data.length
+        this._totalWriteLatency += Date.now() - startTime
+      }
+
+      return sha
+    }
+
+    // Existing SQLite implementation as fallback
     // Compute SHA-1 hash using git object format: "type size\0content"
     const sha = await hashObject(type, data)
 
@@ -546,6 +587,39 @@ export class ObjectStore {
       return cached
     }
 
+    // Delegate to backend if available
+    if (this.backend) {
+      const result = await this.backend.getObject(sha)
+      if (!result) {
+        this.log('debug', `Object not found: ${sha}`)
+        if (this.options.enableMetrics) {
+          this._reads++
+          this._totalReadLatency += Date.now() - startTime
+        }
+        return null
+      }
+
+      const obj: StoredObject = {
+        sha,
+        type: result.type,
+        size: result.content.length,
+        data: result.content,
+        createdAt: Date.now()
+      }
+
+      // Add to cache for subsequent reads
+      this.cache.set(sha, obj)
+
+      if (this.options.enableMetrics) {
+        this._reads++
+        this._bytesRead += obj.size
+        this._totalReadLatency += Date.now() - startTime
+      }
+
+      return obj
+    }
+
+    // Existing SQLite implementation as fallback
     // Fall back to database
     const result = this.storage.sql.exec(
       'SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha = ?',
@@ -598,6 +672,30 @@ export class ObjectStore {
    * ```
    */
   async deleteObject(sha: string): Promise<boolean> {
+    // Delegate to backend if available
+    if (this.backend) {
+      // Check if object exists first via backend
+      const exists = await this.backend.hasObject(sha)
+      if (!exists) {
+        return false
+      }
+
+      this.log('debug', `Deleting object via backend: ${sha}`)
+
+      await this.backend.deleteObject(sha)
+
+      // Remove from cache
+      this.cache.delete(sha)
+
+      // Update metrics
+      if (this.options.enableMetrics) {
+        this._deletes++
+      }
+
+      return true
+    }
+
+    // Existing SQLite implementation as fallback
     // Check if object exists first
     const exists = await this.hasObject(sha)
     if (!exists) {
@@ -647,6 +745,17 @@ export class ObjectStore {
       return false
     }
 
+    // Check cache first (fast path)
+    if (this.cache.has(sha)) {
+      return true
+    }
+
+    // Delegate to backend if available
+    if (this.backend) {
+      return this.backend.hasObject(sha)
+    }
+
+    // Existing SQLite implementation as fallback
     // Use getObject and check for null - this works better with the mock
     const obj = await this.getObject(sha)
     return obj !== null

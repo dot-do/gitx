@@ -5,8 +5,8 @@
  * identification and verification. Git uses SHA-1 as its primary hash algorithm,
  * with SHA-256 available as an optional newer algorithm (Git v2.29+).
  *
- * The hash functions work with the Web Crypto API for broad compatibility
- * with browsers and edge runtimes like Cloudflare Workers.
+ * Core hash primitives are re-exported from fsx.do, with gitx-specific
+ * utilities like HashCache and hashObject defined here.
  *
  * @module utils/hash
  *
@@ -24,64 +24,11 @@
  * ```
  */
 
-/**
- * Compute the SHA-1 hash of data.
- *
- * @description
- * Computes a SHA-1 digest of the input data using the Web Crypto API.
- * This is the standard hash algorithm used by Git for object identification.
- *
- * **Note**: SHA-1 is considered cryptographically weak. Git uses it for
- * content addressing, not security. For new security-sensitive applications,
- * use SHA-256.
- *
- * @param data - Input data as Uint8Array or string (UTF-8 encoded)
- * @returns 40-character lowercase hexadecimal hash string
- *
- * @example
- * ```typescript
- * // Hash a string
- * const hash1 = await sha1('Hello, World!')
- * console.log(hash1) // '0a0a9f2a6772942557ab5355d76af442f8f65e01'
- *
- * // Hash binary data
- * const data = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f])
- * const hash2 = await sha1(data)
- * ```
- */
-export async function sha1(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  const hashBuffer = await crypto.subtle.digest('SHA-1', bytes)
-  return bytesToHex(new Uint8Array(hashBuffer))
-}
+// Re-export core hash primitives from fsx.do
+export { sha1, sha256, hexToBytes, bytesToHex } from '../../../fsx/src/cas/hash'
 
-/**
- * Compute the SHA-256 hash of data.
- *
- * @description
- * Computes a SHA-256 digest of the input data using the Web Crypto API.
- * SHA-256 is the newer, more secure hash algorithm supported by Git v2.29+
- * as an alternative to SHA-1.
- *
- * @param data - Input data as Uint8Array or string (UTF-8 encoded)
- * @returns 64-character lowercase hexadecimal hash string
- *
- * @example
- * ```typescript
- * // Hash a string
- * const hash = await sha256('Hello, World!')
- * console.log(hash) // 'dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f'
- *
- * // Hash binary data
- * const data = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f])
- * const hash2 = await sha256(data)
- * ```
- */
-export async function sha256(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
-  return bytesToHex(new Uint8Array(hashBuffer))
-}
+// Import for internal use
+import { sha1, bytesToHex } from '../../../fsx/src/cas/hash'
 
 /**
  * Hash a Git object with its type header.
@@ -116,90 +63,6 @@ export async function hashObject(type: string, data: Uint8Array): Promise<string
   combined.set(headerBytes, 0)
   combined.set(data, headerBytes.length)
   return sha1(combined)
-}
-
-/**
- * Convert a hexadecimal string to a Uint8Array.
- *
- * @description
- * Parses a hexadecimal string and returns the corresponding bytes.
- * Each pair of hex characters becomes one byte.
- *
- * **Edge Cases**:
- * - Empty string returns empty Uint8Array
- * - Hex string should have even length (odd length may produce unexpected results)
- *
- * @param hex - Hexadecimal string (case-insensitive)
- * @returns Binary data as Uint8Array
- *
- * @example
- * ```typescript
- * const bytes = hexToBytes('48656c6c6f')
- * console.log(new TextDecoder().decode(bytes)) // 'Hello'
- *
- * // Convert SHA back to bytes (useful for tree entries)
- * const sha = 'abc123def456...'
- * const sha20 = hexToBytes(sha) // 20 bytes for SHA-1
- * ```
- */
-export function hexToBytes(hex: string): Uint8Array {
-  if (hex.length === 0) return new Uint8Array(0)
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
-  }
-  return bytes
-}
-
-/**
- * Pre-computed lookup table for byte-to-hex conversion.
- * Contains hex strings '00' through 'ff' for O(1) lookup.
- * @internal
- */
-const HEX_LOOKUP: string[] = (() => {
-  const table: string[] = new Array(256)
-  for (let i = 0; i < 256; i++) {
-    table[i] = i.toString(16).padStart(2, '0')
-  }
-  return table
-})()
-
-/**
- * Convert a Uint8Array to a hexadecimal string.
- *
- * @description
- * Converts binary data to a lowercase hexadecimal string representation.
- * Each byte becomes two hex characters (zero-padded).
- *
- * **Performance**: Uses a pre-computed lookup table for O(1) byte-to-hex
- * conversion, making this significantly faster than string formatting
- * approaches, especially for large data like SHA-1 hashes.
- *
- * **Edge Cases**:
- * - Empty Uint8Array returns empty string
- *
- * @param bytes - Binary data to convert
- * @returns Lowercase hexadecimal string
- *
- * @example
- * ```typescript
- * const hello = new TextEncoder().encode('Hello')
- * const hex = bytesToHex(hello)
- * console.log(hex) // '48656c6c6f'
- *
- * // Convert SHA-1 bytes to string
- * const hashBytes = new Uint8Array(20) // ... from crypto
- * const sha = bytesToHex(hashBytes) // 40-char hex string
- * ```
- */
-export function bytesToHex(bytes: Uint8Array): string {
-  if (bytes.length === 0) return ''
-  // Use lookup table for fast conversion
-  let result = ''
-  for (let i = 0; i < bytes.length; i++) {
-    result += HEX_LOOKUP[bytes[i]]
-  }
-  return result
 }
 
 // ============================================================================
