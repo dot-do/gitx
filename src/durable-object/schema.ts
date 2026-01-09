@@ -180,10 +180,12 @@ CREATE TABLE IF NOT EXISTS git_branches (
 );
 
 -- Git content table for staged files awaiting commit
--- Stores file path, content blob, and staging status
+-- Stores file references using integer rowid foreign key for efficient lookups
+-- file_id references the shared files table for unified filesystem integration
 CREATE TABLE IF NOT EXISTS git_content (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_id INTEGER NOT NULL REFERENCES git(id) ON DELETE CASCADE,
+  file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
   path TEXT NOT NULL,
   content BLOB,
   mode TEXT DEFAULT '100644',
@@ -220,6 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_object_index_pack_id ON object_index(pack_id);
 CREATE INDEX IF NOT EXISTS idx_git_branches_repo ON git_branches(repo_id);
 CREATE INDEX IF NOT EXISTS idx_git_content_repo_path ON git_content(repo_id, path);
 CREATE INDEX IF NOT EXISTS idx_git_content_status ON git_content(status);
+CREATE INDEX IF NOT EXISTS idx_git_content_file_id ON git_content(file_id);
 CREATE INDEX IF NOT EXISTS idx_exec_name ON exec(name);
 CREATE INDEX IF NOT EXISTS idx_exec_enabled ON exec(enabled);
 `

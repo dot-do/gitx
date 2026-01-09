@@ -1329,6 +1329,28 @@ export class FsModule {
   }
 
   /**
+   * Get the integer rowid (file_id) for a file path.
+   * This is useful for foreign key references from other tables.
+   *
+   * @param path - File path to look up
+   * @returns The file's integer rowid, or null if file doesn't exist
+   *
+   * @example
+   * ```typescript
+   * const fileId = await fs.getFileId('/config.json')
+   * if (fileId !== null) {
+   *   // Use fileId as foreign key reference
+   * }
+   * ```
+   */
+  async getFileId(path: string): Promise<number | null> {
+    await this.initialize()
+    const normalized = this.normalizePath(path)
+    const result = this.sql.exec<{ id: number }>('SELECT id FROM files WHERE path = ?', normalized).one()
+    return result?.id ?? null
+  }
+
+  /**
    * Check access to a file.
    *
    * @param path - Path to check

@@ -286,15 +286,17 @@ class MockGitStorage implements GitStorage {
         return { toArray: () => [] }
       }
 
-      // Handle INSERT INTO git_content
+      // Handle INSERT INTO git_content (with file_id for shared files table integration)
       if (query.includes('INSERT INTO git_content')) {
         const repoId = params[0] as number
-        const path = params[1] as string
+        const fileId = params[1] as number | null
+        const path = params[2] as string
 
         for (const [id, row] of this.gitContentTable) {
           if (row.repo_id === repoId && row.path === path) {
             row.status = 'staged'
-            row.updated_at = params[4] as number | null
+            row.file_id = params[5] as number | null
+            row.updated_at = params[6] as number | null
             return { toArray: () => [] }
           }
         }
@@ -303,13 +305,14 @@ class MockGitStorage implements GitStorage {
         const row: GitContentRow = {
           id,
           repo_id: repoId,
+          file_id: fileId,
           path,
           content: null,
           mode: '100644',
           status: 'staged',
           sha: null,
-          created_at: params[2] as number | null,
-          updated_at: params[3] as number | null,
+          created_at: params[3] as number | null,
+          updated_at: params[4] as number | null,
         }
         this.gitContentTable.set(id, row)
         return { toArray: () => [] }

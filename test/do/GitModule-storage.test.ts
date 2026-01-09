@@ -98,32 +98,36 @@ class MockGitStorage implements GitStorage {
       }
 
       // Handle INSERT INTO git_content (with ON CONFLICT)
+      // Updated to handle file_id column for shared files table integration
       if (query.includes('INSERT INTO git_content')) {
         const repoId = params[0] as number
-        const path = params[1] as string
+        const fileId = params[1] as number | null
+        const path = params[2] as string
 
         // Check for existing entry
         for (const [id, row] of this.gitContentTable) {
           if (row.repo_id === repoId && row.path === path) {
-            // Update existing
+            // Update existing - file_id is params[5], updated_at is params[6]
             row.status = 'staged'
-            row.updated_at = params[4] as number | null
+            row.file_id = params[5] as number | null
+            row.updated_at = params[6] as number | null
             return { toArray: () => [] }
           }
         }
 
-        // Create new entry
+        // Create new entry with file_id
         const id = this.autoIncrement.git_content++
         const row: GitContentRow = {
           id,
           repo_id: repoId,
+          file_id: fileId,
           path,
           content: null,
           mode: '100644',
           status: 'staged',
           sha: null,
-          created_at: params[2] as number | null,
-          updated_at: params[3] as number | null,
+          created_at: params[3] as number | null,
+          updated_at: params[4] as number | null,
         }
         this.gitContentTable.set(id, row)
         return { toArray: () => [] }
@@ -249,11 +253,15 @@ class MockGitStorage implements GitStorage {
 }
 
 /**
- * Mock FsCapability for testing file operations
+ * Mock FsCapability for testing file operations.
+ * Includes getFileId for shared files table integration testing.
  */
-function createMockFs(): FsCapability {
+function createMockFs(): FsCapability & { _setFile: (path: string, content: string) => void; _getFileId: (path: string) => number | null } {
   const files = new Map<string, Buffer>()
   const dirs = new Set<string>()
+  // Simulate file IDs for testing - auto-increment starting at 1
+  const fileIds = new Map<string, number>()
+  let nextFileId = 1
 
   return {
     async readFile(path: string): Promise<string | Buffer> {
@@ -263,6 +271,10 @@ function createMockFs(): FsCapability {
     },
     async writeFile(path: string, content: string | Buffer): Promise<void> {
       files.set(path, Buffer.from(content))
+      // Assign file ID on first write
+      if (!fileIds.has(path)) {
+        fileIds.set(path, nextFileId++)
+      }
     },
     async readDir(path: string): Promise<string[]> {
       const entries: string[] = []
@@ -300,6 +312,23 @@ function createMockFs(): FsCapability {
       } else {
         files.delete(path)
       }
+    },
+    /**
+     * Get file ID for a path - used for shared files table integration.
+     * Returns null if file doesn't exist.
+     */
+    async getFileId(path: string): Promise<number | null> {
+      return fileIds.get(path) ?? null
+    },
+    // Test helpers
+    _setFile(path: string, content: string): void {
+      files.set(path, Buffer.from(content))
+      if (!fileIds.has(path)) {
+        fileIds.set(path, nextFileId++)
+      }
+    },
+    _getFileId(path: string): number | null {
+      return fileIds.get(path) ?? null
     }
   }
 }
@@ -852,14 +881,15 @@ describe('Schema Integration', () => {
     }
   })
 
-  it('should use correct column names for git_content table', () => {
+  it('should use correct column names for git_content table including file_id', () => {
     const expectedColumns = [
-      'id', 'repo_id', 'path', 'content', 'mode',
+      'id', 'repo_id', 'file_id', 'path', 'content', 'mode',
       'status', 'sha', 'created_at', 'updated_at'
     ]
     const contentRow: GitContentRow = {
       id: 1,
       repo_id: 1,
+      file_id: null,
       path: 'file.ts',
       content: null,
       mode: '100644',
@@ -871,5 +901,186 @@ describe('Schema Integration', () => {
     for (const col of expectedColumns) {
       expect(col in contentRow).toBe(true)
     }
+  })
+})
+
+describe('Shared Files Table Integration', () => {
+  let storage: MockGitStorage
+  let mockFs: ReturnType<typeof createMockFs>
+  let mockR2: ReturnType<typeof createMockR2Bucket>
+
+  beforeEach(() => {
+    storage = new MockGitStorage()
+    mockFs = createMockFs()
+    mockR2 = createMockR2Bucket()
+  })
+
+  it('should store file_id when staging a file that exists in filesystem', async () => {
+    // Create a file in the filesystem first
+    mockFs._setFile('/src/index.ts', 'export const hello = "world"')
+    const expectedFileId = mockFs._getFileId('/src/index.ts')
+    expect(expectedFileId).toBe(1) // First file gets ID 1
+
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: mockFs,
+      storage,
+    })
+    await git.initialize()
+
+    // Stage the file
+    await git.add('/src/index.ts')
+
+    // Verify file_id was stored in git_content
+    const gitRow = storage.getGitRow('org/repo')
+    const contentRows = storage.getGitContentRows(gitRow!.id)
+    expect(contentRows).toHaveLength(1)
+    expect(contentRows[0].file_id).toBe(expectedFileId)
+  })
+
+  it('should store null file_id when staging a file that does not exist in filesystem', async () => {
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: mockFs,
+      storage,
+    })
+    await git.initialize()
+
+    // Stage a file that doesn't exist
+    await git.add('/nonexistent/file.ts')
+
+    // Verify file_id is null in git_content
+    const gitRow = storage.getGitRow('org/repo')
+    const contentRows = storage.getGitContentRows(gitRow!.id)
+    expect(contentRows).toHaveLength(1)
+    expect(contentRows[0].file_id).toBeNull()
+  })
+
+  it('should update file_id when re-staging an existing file', async () => {
+    // Create files in filesystem
+    mockFs._setFile('/file1.ts', 'content 1')
+
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: mockFs,
+      storage,
+    })
+    await git.initialize()
+
+    // Stage file without it existing first (file_id should be null)
+    await git.add('/file2.ts')
+
+    let gitRow = storage.getGitRow('org/repo')
+    let contentRows = storage.getGitContentRows(gitRow!.id)
+    const file2Row = contentRows.find(r => r.path === '/file2.ts')
+    expect(file2Row?.file_id).toBeNull()
+
+    // Now create the file and re-stage
+    mockFs._setFile('/file2.ts', 'content 2')
+    const file2Id = mockFs._getFileId('/file2.ts')
+
+    await git.add('/file2.ts')
+
+    // Verify file_id was updated
+    gitRow = storage.getGitRow('org/repo')
+    contentRows = storage.getGitContentRows(gitRow!.id)
+    const updatedRow = contentRows.find(r => r.path === '/file2.ts')
+    expect(updatedRow?.file_id).toBe(file2Id)
+  })
+
+  it('should work without getFileId method on fs (backwards compatible)', async () => {
+    // Create a mock fs without getFileId
+    const oldStyleFs: FsCapability = {
+      async readFile(path: string) { return Buffer.from('content') },
+      async writeFile() {},
+      async readDir() { return [] },
+      async exists() { return true },
+      async mkdir() {},
+      async rm() {},
+      // No getFileId method
+    }
+
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: oldStyleFs,
+      storage,
+    })
+    await git.initialize()
+
+    // Should not throw when staging
+    await git.add('/file.ts')
+
+    // file_id should be null
+    const gitRow = storage.getGitRow('org/repo')
+    const contentRows = storage.getGitContentRows(gitRow!.id)
+    expect(contentRows[0].file_id).toBeNull()
+  })
+
+  it('should maintain file_id through commit and new staging cycle', async () => {
+    mockFs._setFile('/src/index.ts', 'initial content')
+    const fileId = mockFs._getFileId('/src/index.ts')
+
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: mockFs,
+      storage,
+    })
+    await git.initialize()
+
+    // Stage and commit
+    await git.add('/src/index.ts')
+    await git.commit('Initial commit')
+
+    // Staged files should be cleared
+    let gitRow = storage.getGitRow('org/repo')
+    expect(storage.getStagedFiles(gitRow!.id)).toHaveLength(0)
+
+    // Stage the same file again
+    await git.add('/src/index.ts')
+
+    // file_id should still be correctly set
+    const contentRows = storage.getGitContentRows(gitRow!.id)
+    expect(contentRows[0].file_id).toBe(fileId)
+  })
+
+  it('should support multiple files with different file_ids', async () => {
+    mockFs._setFile('/src/a.ts', 'content a')
+    mockFs._setFile('/src/b.ts', 'content b')
+    mockFs._setFile('/src/c.ts', 'content c')
+
+    const fileIdA = mockFs._getFileId('/src/a.ts')
+    const fileIdB = mockFs._getFileId('/src/b.ts')
+    const fileIdC = mockFs._getFileId('/src/c.ts')
+
+    expect(fileIdA).not.toBe(fileIdB)
+    expect(fileIdB).not.toBe(fileIdC)
+
+    const git = new GitModule({
+      repo: 'org/repo',
+      branch: 'main',
+      fs: mockFs,
+      storage,
+    })
+    await git.initialize()
+
+    await git.add('/src/a.ts')
+    await git.add('/src/b.ts')
+    await git.add('/src/c.ts')
+
+    const gitRow = storage.getGitRow('org/repo')
+    const contentRows = storage.getGitContentRows(gitRow!.id)
+
+    const rowA = contentRows.find(r => r.path === '/src/a.ts')
+    const rowB = contentRows.find(r => r.path === '/src/b.ts')
+    const rowC = contentRows.find(r => r.path === '/src/c.ts')
+
+    expect(rowA?.file_id).toBe(fileIdA)
+    expect(rowB?.file_id).toBe(fileIdB)
+    expect(rowC?.file_id).toBe(fileIdC)
   })
 })

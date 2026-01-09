@@ -44,6 +44,13 @@ export interface FsCapability {
   exists(path: string): Promise<boolean>
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>
+  /**
+   * Get the integer rowid (file_id) for a file path.
+   * Used to establish foreign key references in git_content table.
+   * @param path - File path to look up
+   * @returns The file's integer rowid, or null if file doesn't exist
+   */
+  getFileId?(path: string): Promise<number | null>
 }
 
 /**
@@ -128,10 +135,12 @@ export interface GitBranchRow {
 
 /**
  * Row structure for the git_content table.
+ * Uses file_id to reference the shared files table for efficient lookups.
  */
 export interface GitContentRow {
   id: number
   repo_id: number
+  file_id: number | null
   path: string
   content: Uint8Array | null
   mode: string
@@ -1094,20 +1103,36 @@ export class GitModule {
   /**
    * Persist a staged file to the database.
    * Inserts or updates a record in the git_content table.
+   * Uses file_id foreign key to reference the shared files table when available.
    */
   private async persistStagedFile(file: string): Promise<void> {
     if (!this.storage || !this.repoId) return
 
     const now = Date.now()
+
+    // Get file_id from filesystem if getFileId is available
+    let fileId: number | null = null
+    if (this.fs?.getFileId) {
+      try {
+        fileId = await this.fs.getFileId(file)
+      } catch {
+        // File may not exist in filesystem yet, that's okay
+        fileId = null
+      }
+    }
+
     // Use INSERT OR REPLACE to handle both new and existing files
+    // Include file_id for efficient foreign key relationships
     this.storage.sql.exec(
-      `INSERT INTO git_content (repo_id, path, status, created_at, updated_at)
-       VALUES (?, ?, 'staged', ?, ?)
-       ON CONFLICT(repo_id, path) DO UPDATE SET status = 'staged', updated_at = ?`,
+      `INSERT INTO git_content (repo_id, file_id, path, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'staged', ?, ?)
+       ON CONFLICT(repo_id, path) DO UPDATE SET status = 'staged', file_id = ?, updated_at = ?`,
       this.repoId,
+      fileId,
       file,
       now,
       now,
+      fileId,
       now
     )
   }
