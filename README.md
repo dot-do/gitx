@@ -1,423 +1,382 @@
 # gitx.do
 
-> Git. Edge-Native. AI-First.
+**Git for Cloudflare Workers.** Full protocol. Edge-native. 5,600+ tests.
 
-GitHub charges $21/user/month for features Git gives you free. GitLab requires self-hosting a 10GB Docker image. Bitbucket exists for some reason. All of them treat your repository as their asset, your history as their leverage, your workflows as their lock-in.
+[![npm version](https://img.shields.io/npm/v/gitx.do.svg)](https://www.npmjs.com/package/gitx.do)
+[![Tests](https://img.shields.io/badge/tests-5%2C684%20passing-brightgreen.svg)](https://github.com/dot-do/gitx)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**gitx.do** is Git reimplemented on Cloudflare Durable Objects. Your repositories run on infrastructure you control. Pack files, wire protocol, delta compression - all at the edge.
+## Why gitx?
 
-## AI-Native API
+**AI agents need version control.** They generate code, iterate on files, need to track changes and roll back mistakes.
+
+**gitx is Git reimplemented for Cloudflare Workers.** Full protocol support - pack files, delta compression, smart HTTP. Not a wrapper around git CLI. A complete implementation.
+
+**Scales to millions of agents.** Each agent gets its own git repository on Cloudflare's edge network. No shared servers. No rate limits. Just fast, isolated version control at global scale.
 
 ```typescript
-import { gitx } from 'gitx.do'           // Full SDK
-import { gitx } from 'gitx.do/tiny'      // Minimal client
-import { gitx } from 'gitx.do/pack'      // Pack operations only
+import git from 'gitx.do'
+
+// Initialize a repo
+await git.init('/my-project')
+
+// Stage and commit
+await git.add('/my-project', '.')
+await git.commit('/my-project', 'Initial commit')
+
+// Branch and merge
+await git.branch('/my-project', 'feature')
+await git.checkout('/my-project', 'feature')
+// ... make changes ...
+await git.merge('/my-project', 'feature')
 ```
 
-Natural language for git operations:
-
-```typescript
-import { gitx } from 'gitx.do'
-
-// Talk to it like a colleague
-const changes = await gitx`what changed today?`
-const commits = await gitx`commits this week by sarah`
-const diff = await gitx`show me the auth changes since monday`
-
-// Chain like sentences
-await gitx`analyze packfile`
-  .verify()
-  .optimize()
-
-// Packs that manage themselves
-await gitx`repack the repo`
-  .deltify()       // delta compression
-  .dedupe()        // remove duplicates
-  .gc()            // garbage collect
-```
-
-## The Problem
-
-Git hosting has become a tax on developers:
-
-| What They Charge | The Reality |
-|------------------|-------------|
-| **Per-seat pricing** | $21/user/month (GitHub Enterprise) |
-| **Actions minutes** | $0.008/minute, adds up fast |
-| **Storage** | $0.25/GB after 1GB |
-| **LFS bandwidth** | $0.0875/GB after 1GB |
-| **Advanced security** | Extra $49/user/month |
-| **Lock-in** | Years of workflows trapped |
-
-### The Hosting Tax
-
-Every major git host:
-- Charges per seat for collaboration features
-- Meters CI/CD by the minute
-- Limits LFS bandwidth and storage
-- Requires premium tiers for security features
-- Makes migration painful by design
-
-Your code is hostage to their pricing page.
-
-### The Self-Hosting Trap
-
-Self-host GitLab? Prepare for:
-- 10GB+ Docker images
-- PostgreSQL, Redis, Sidekiq, Gitaly
-- Complex Kubernetes deployments
-- Constant maintenance burden
-- Still pay for enterprise features
-
-The "free" alternative costs more in ops time.
-
-## The Solution
-
-**gitx.do** reimagines git hosting:
-
-```
-GitHub/GitLab                   gitx.do
------------------------------------------------------------------
-$21/user/month                  $0 - run your own
-10GB Docker images              Deploy in minutes
-Centralized servers             Edge-native, global
-Actions lock-in                 Any CI system
-LFS bandwidth charges           R2 storage (no egress fees)
-Vendor lock-in                  Git protocol, open source
-```
-
-## One-Click Deploy
+## Installation
 
 ```bash
-npx create-dotdo gitx
+npm install gitx.do
 ```
 
-Git hosting. Running on infrastructure you control. Full protocol support from day one.
+## Quick Start
 
 ```typescript
-import { GitX } from 'gitx.do'
+import git from 'gitx.do'
 
+// Create a repository
+await git.init('/repo')
+
+// Write files and commit
+await git.add('/repo', 'README.md')
+await git.commit('/repo', 'Add readme')
+
+// View history
+const log = await git.log('/repo')
+console.log(log.commits)
+
+// Create branches
+await git.branch('/repo', 'feature/auth')
+await git.checkout('/repo', 'feature/auth')
+
+// View changes
+const diff = await git.diff('/repo', 'main', 'feature/auth')
+const status = await git.status('/repo')
+```
+
+## Features
+
+### Full Git Protocol
+
+Complete implementation of Git internals:
+
+```typescript
+// Object model
+await git.hashObject('/repo', content, 'blob')
+await git.catFile('/repo', sha, 'blob')
+
+// Trees and commits
+const tree = await git.writeTree('/repo')
+const commit = await git.commitTree('/repo', tree, 'message', [parent])
+
+// Pack files
+await git.pack('/repo', objects)
+await git.unpack('/repo', packData)
+
+// References
+await git.updateRef('/repo', 'refs/heads/main', sha)
+const ref = await git.resolveRef('/repo', 'HEAD')
+```
+
+### Tiered Storage
+
+Hot objects in SQLite. Pack files in R2. You don't think about it.
+
+```
+┌────────────────────────────────────────────────────────┐
+│   Hot Tier (SQLite)           │   Warm Tier (R2)       │
+├───────────────────────────────┼────────────────────────┤
+│   • Recent commits            │   • Pack files         │
+│   • Active branches           │   • Full history       │
+│   • Loose objects             │   • Large blobs        │
+│   • <10ms access              │   • <100ms access      │
+└───────────────────────────────┴────────────────────────┘
+```
+
+### Pack File Engine
+
+Full packfile v2/v3 support:
+
+```typescript
+// Delta compression
+await git.repack('/repo', { deltify: true })
+
+// Verify integrity
+await git.fsck('/repo')
+
+// Garbage collection
+await git.gc('/repo')
+```
+
+- OFS_DELTA and REF_DELTA compression
+- Multi-pack indexes (MIDX)
+- CRC32 verification
+- Thin pack support for network transfer
+
+### Wire Protocol
+
+Smart HTTP protocol for git clients:
+
+```typescript
+// Serve git fetch/push
+app.all('/repo.git/*', (req) => git.serve(req))
+
+// Clone works
+// git clone https://your-worker.dev/repo.git
+```
+
+- Capability negotiation
+- Side-band progress reporting
+- Multi-ack for efficiency
+- Shallow clone support
+
+### Merge & Diff
+
+Full three-way merge with conflict detection:
+
+```typescript
+// Merge branches
+const result = await git.merge('/repo', 'feature')
+if (result.conflicts) {
+  console.log('Conflicts:', result.conflicts)
+}
+
+// View diff
+const diff = await git.diff('/repo', 'main', 'feature')
+for (const file of diff.files) {
+  console.log(file.path, file.additions, file.deletions)
+}
+```
+
+### CLI Commands
+
+Full command-line interface:
+
+```typescript
+import { cli } from 'gitx.do/cli'
+
+await cli('init /repo')
+await cli('add /repo .')
+await cli('commit /repo -m "message"')
+await cli('log /repo --oneline')
+await cli('branch /repo feature')
+await cli('checkout /repo feature')
+await cli('merge /repo main')
+await cli('status /repo')
+await cli('diff /repo')
+```
+
+### MCP Tools
+
+Model Context Protocol for AI agents:
+
+```typescript
+import { gitTools, invokeTool } from 'gitx.do/mcp'
+
+// Available tools
+// git_init, git_add, git_commit, git_log, git_diff, git_status,
+// git_branch, git_checkout, git_merge, git_show, git_blame
+
+await invokeTool('git_commit', {
+  repo: '/my-project',
+  message: 'Fix authentication bug'
+})
+
+await invokeTool('git_log', {
+  repo: '/my-project',
+  limit: 10
+})
+```
+
+## Durable Object Integration
+
+### As a Standalone DO
+
+```typescript
+import { GitDO } from 'gitx.do/do'
+
+export { GitDO }
+
+export default {
+  async fetch(request, env) {
+    const id = env.GIT.idFromName('repo-123')
+    const stub = env.GIT.get(id)
+    return stub.fetch(request)
+  }
+}
+```
+
+### With dotdo Framework
+
+```typescript
+import { DO } from 'dotdo'
+import { withGit } from 'gitx.do/do'
+
+class MyAgent extends withGit(DO) {
+  async work() {
+    await this.$.git.add('.', 'src/')
+    await this.$.git.commit('.', 'Update source files')
+
+    const log = await this.$.git.log('.')
+    return log.commits[0]
+  }
+}
+```
+
+### As RPC Service
+
+```toml
+# wrangler.toml
+[[services]]
+binding = "GITX"
+service = "gitx-worker"
+```
+
+```typescript
+await env.GITX.commit('/repo', 'message')
+```
+
+## API Reference
+
+### Repository Operations
+
+| Method | Description |
+|--------|-------------|
+| `init(path)` | Initialize new repository |
+| `clone(url, path)` | Clone remote repository |
+| `status(path)` | Get working tree status |
+| `log(path, options?)` | View commit history |
+
+### Staging & Commits
+
+| Method | Description |
+|--------|-------------|
+| `add(path, files)` | Stage files |
+| `commit(path, message)` | Create commit |
+| `reset(path, ref)` | Reset to commit |
+
+### Branches & Merging
+
+| Method | Description |
+|--------|-------------|
+| `branch(path, name)` | Create branch |
+| `checkout(path, ref)` | Switch branches |
+| `merge(path, branch)` | Merge branch |
+| `rebase(path, onto)` | Rebase branch |
+
+### Diff & Blame
+
+| Method | Description |
+|--------|-------------|
+| `diff(path, a, b)` | Compare commits |
+| `blame(path, file)` | Line-by-line history |
+| `show(path, ref)` | Show commit details |
+
+### Low-Level
+
+| Method | Description |
+|--------|-------------|
+| `hashObject(path, data, type)` | Create object |
+| `catFile(path, sha, type)` | Read object |
+| `updateRef(path, ref, sha)` | Update reference |
+| `pack(path, objects)` | Create packfile |
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      gitx.do                            │
+├─────────────────────────────────────────────────────────┤
+│  Git Commands (add, commit, branch, merge, etc.)        │
+├─────────────────────────────────────────────────────────┤
+│  Object Model (blob, tree, commit, tag)                 │
+├─────────────────────────────────────────────────────────┤
+│  Pack Engine (delta, compression, indexes)              │
+├────────────────────┬────────────────────────────────────┤
+│   Hot Tier         │         Warm Tier                  │
+│   (SQLite)         │         (R2)                       │
+│                    │                                    │
+│   • Loose objects  │   • Pack files                     │
+│   • References     │   • Large blobs                    │
+│   • Index          │   • Archive                        │
+└────────────────────┴────────────────────────────────────┘
+```
+
+## Comparison
+
+| Feature | GitHub | GitLab | gitx.do |
+|---------|--------|--------|---------|
+| **Pricing** | $21/user/month | $29/user/month | Self-hosted |
+| **Storage** | 1GB free | 5GB free | R2 (cheap) |
+| **LFS bandwidth** | $0.0875/GB | Metered | R2 (no egress) |
+| **Full protocol** | Yes | Yes | Yes |
+| **Edge-native** | No | No | Yes |
+| **AI-native API** | No | No | Yes |
+| **Self-hosted** | Enterprise only | Complex | One-click |
+
+## Use Cases
+
+### AI Agent Version Control
+
+Each AI agent gets its own repository:
+
+```typescript
+class CodeAgent extends withGit(DO) {
+  async generateCode(spec) {
+    const code = await this.ai.generate(spec)
+
+    await this.$.fs.writeFile('src/index.ts', code)
+    await this.$.git.add('.', 'src/')
+    await this.$.git.commit('.', `Implement: ${spec}`)
+
+    return this.$.git.log('.', { limit: 1 })
+  }
+}
+```
+
+### Private Git Hosting
+
+Your repositories on your infrastructure:
+
+```typescript
 export default GitX({
   name: 'my-repos',
   domain: 'git.mycompany.com',
 })
 ```
 
-## Features
-
-### Repository Operations
-
-```typescript
-// Find anything
-const log = await gitx`log for main this month`
-const authors = await gitx`who contributed to src/auth`
-const blame = await gitx`blame utils.ts lines 50-100`
-
-// AI infers what you need
-await gitx`my-repo`                    // returns repo info
-await gitx`branches in my-repo`        // returns branch list
-await gitx`my-repo commit activity`    // returns statistics
-```
-
-### Commits
-
-```typescript
-// History is one question
-await gitx`commits today`
-await gitx`what did sarah commit this week`
-await gitx`breaking changes since v1.0`
-
-// Commit search just works
-await gitx`commits mentioning auth bug`
-await gitx`commits touching package.json`
-```
-
-### Branches
-
-```typescript
-// Natural as talking
-await gitx`create feature/auth from main`
-await gitx`merge feature/auth into main`
-await gitx`branches ahead of main`
-
-// Bulk operations read naturally
-await gitx`stale branches older than 90 days`
-  .each(branch => branch.delete())
-```
-
-### Diffs
-
-```typescript
-// View changes naturally
-await gitx`diff between main and feature`
-await gitx`what changed in src since monday`
-await gitx`show me the auth refactor`
-
-// AI summarizes when you want
-await gitx`summarize changes in this PR`
-```
-
-### Pack Files
-
-```typescript
-// Pack operations in plain language
-await gitx`repack my-repo aggressively`
-await gitx`verify pack integrity`
-await gitx`optimize delta chains`
-
-// AI handles the complexity
-await gitx`gc and optimize storage`
-```
-
-### Wire Protocol
-
-```typescript
-// Full smart HTTP protocol
-await gitx`serve fetch for client`
-await gitx`accept push from remote`
-
-// Protocol negotiation automatic
-// Side-band, delta, multi-ack - all handled
-```
-
-## Tiered Storage
-
-```typescript
-// Storage tiers just work
-await gitx`object abc123`              // automatic tier resolution
-await gitx`promote cold objects`       // tier management
-await gitx`archive objects older than 1 year`
-
-// Query storage state
-await gitx`storage stats for my-repo`
-```
-
-### Storage Architecture
-
-| Tier | Storage | Use Case | Query Speed |
-|------|---------|----------|-------------|
-| **Hot** | SQLite | Recent commits, active branches | <10ms |
-| **Warm** | R2 Packed | Full history, pack files | <100ms |
-| **Cold** | R2 Archive | Ancient history, old packs | <1s |
-
-## Pack File Engine
-
-Full Git packfile v2/v3 support with delta compression:
-
-```typescript
-// Pack operations naturally
-await gitx`create pack for branch main`
-await gitx`unpack received packfile`
-await gitx`verify all packs`
-
-// Delta compression automatic
-await gitx`optimize pack deltas`
-  .rebase()         // recompute delta bases
-  .prune()          // remove unused
-```
-
-### Pack Features
-
-- Delta compression (OFS_DELTA, REF_DELTA)
-- Multi-pack indexes (MIDX)
-- Pack verification with CRC32
-- Streaming pack generation
-- Thin pack support for network transfer
-
-## Wire Protocol
-
-Full smart HTTP/SSH protocol implementation:
-
-```typescript
-// Serve git clients natively
-await gitx`handle git fetch`
-await gitx`accept git push`
-
-// Protocol features automatic
-// - Capability negotiation
-// - Side-band progress
-// - Multi-ack for efficiency
-// - Shallow clone support
-```
-
-## AI-Native Git
-
-### Semantic Search
-
-```typescript
-// Find commits by meaning, not just text
-await gitx`commits that fixed security issues`
-await gitx`when did we add rate limiting`
-await gitx`changes related to the login bug`
-```
-
-### Code Review
-
-```typescript
-// AI-assisted review
-await gitx`review changes in this PR`
-await gitx`find potential bugs in diff`
-await gitx`suggest improvements for commit`
-```
-
-### History Analysis
-
-```typescript
-// Understand your codebase
-await gitx`who knows auth code best`
-await gitx`files that change together`
-await gitx`hotspots in the last quarter`
-```
-
-## Architecture
-
-### Durable Object per Repository
-
-```
-RepositoryDO (metadata, refs, config)
-  |
-  +-- ObjectsDO (loose objects, pack index)
-  |     |-- SQLite: Hot objects (recent)
-  |     +-- R2: Packed objects (warm)
-  |
-  +-- RefsDO (branches, tags, HEAD)
-  |     |-- SQLite: Current refs
-  |
-  +-- PacksDO (pack management, MIDX)
-  |     |-- SQLite: Pack metadata
-  |     +-- R2: Pack files
-  |
-  +-- LFSDO (large file storage)
-        +-- R2: LFS objects (no egress fees)
-```
-
-### Why Durable Objects for Git
-
-Git is already content-addressed. Durable Objects + SQLite + R2 is the perfect fit:
-
-- **Objects** are immutable blobs - cache forever
-- **Refs** are mutable pointers - strong consistency needed
-- **Packs** are large files - R2 handles it
-- **Global** - edge locations worldwide
-
-## vs GitHub/GitLab
-
-| Feature | GitHub/GitLab | gitx.do |
-|---------|---------------|---------|
-| **Pricing** | Per-seat, metered | ~$5/month base |
-| **Hosting** | Their servers | Your Cloudflare account |
-| **Protocol** | Full git | Full git |
-| **LFS** | Bandwidth charges | R2 (no egress fees) |
-| **CI/CD** | Actions lock-in | Any CI system |
-| **Self-host** | Complex | One-click deploy |
-| **AI** | Copilot ($19/mo extra) | Built-in |
-| **Lock-in** | Workflows, Actions | Open source |
-
-## Use Cases
-
-### Private Git Hosting
-
-Your repositories on infrastructure you control. Full git protocol. No per-seat fees.
-
 ### LFS Without Bandwidth Fees
 
-R2 has no egress charges. Store large files without surprise bills.
+R2 has no egress charges:
 
 ```typescript
-// LFS just works
-await gitx`track *.psd with lfs`
-await gitx`lfs storage usage`
+await git.lfsTrack('/repo', '*.psd')
+await git.lfsPush('/repo')
 ```
 
-### Git Analytics
+## Performance
 
-```typescript
-// Understand your repository
-await gitx`contributor stats this quarter`
-await gitx`code churn analysis`
-await gitx`commit velocity trends`
-```
-
-### Multi-Repo Management
-
-```typescript
-// Manage all repos at once
-await gitx`all repos`
-  .each(repo => repo.gc())
-
-await gitx`repos with stale branches`
-  .each(repo => repo.prune())
-```
-
-## Deployment
-
-### Cloudflare Workers
-
-```bash
-npx create-dotdo gitx
-# Your private git hosting in minutes
-```
-
-### Mirror Existing Repos
-
-```typescript
-// Mirror from GitHub/GitLab
-await gitx`mirror github.com/org/repo`
-await gitx`sync mirror hourly`
-```
-
-## Roadmap
-
-### Core Git
-- [x] Object storage (blob, tree, commit, tag)
-- [x] Pack files v2/v3
-- [x] Delta compression
-- [x] Smart HTTP protocol
-- [x] Ref management
-- [x] Multi-pack index
-- [ ] Shallow clone
-- [ ] Partial clone
-- [ ] Commit graph
-
-### Storage
-- [x] Hot tier (SQLite)
-- [x] Warm tier (R2)
-- [x] Cold tier (archive)
-- [x] Automatic promotion
-- [ ] Pack gc
-- [ ] Bitmap indexes
-
-### AI
-- [x] Natural language queries
-- [x] Semantic commit search
-- [ ] Code review assistant
-- [ ] History analysis
-- [ ] Merge conflict resolution
-
-## Contributing
-
-gitx.do is open source under the MIT license.
-
-```bash
-git clone https://github.com/dotdo/gitx.do
-cd gitx.do
-pnpm install
-pnpm test
-```
+- **5,684 tests** covering all operations
+- **Full Git protocol** - clone, fetch, push all work
+- **<10ms** for hot tier operations
+- **Global edge** - 300+ Cloudflare locations
+- **Zero cold starts** - Durable Objects
 
 ## License
 
-MIT License - Git, liberated.
+MIT
 
----
+## Links
 
-<p align="center">
-  <strong>Git hosting without the tax.</strong>
-  <br />
-  Edge-native. AI-first. Yours.
-  <br /><br />
-  <a href="https://gitx.do">Website</a> |
-  <a href="https://docs.gitx.do">Docs</a> |
-  <a href="https://discord.gg/dotdo">Discord</a> |
-  <a href="https://github.com/dotdo/gitx.do">GitHub</a>
-</p>
+- [GitHub](https://github.com/dot-do/gitx)
+- [Documentation](https://gitx.do)
+- [dotdo Framework](https://dotdo.dev)
