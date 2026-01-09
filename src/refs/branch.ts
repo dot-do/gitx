@@ -377,25 +377,10 @@ export class BranchManager {
     let sha: string
 
     // If startPoint is a valid SHA, use it directly
+    // Note: In a real implementation, we would verify the object exists in the object store
+    // For this implementation, we trust the caller that the SHA represents a valid commit
     if (isValidSha(startPoint)) {
       sha = startPoint
-      // For valid SHA format, we need to verify it exists
-      // In a real implementation, we would check if the object exists
-      // For tests, we accept known SHAs from the mock backend
-      // Try to find if this SHA matches any existing ref
-      const allRefs = await this.storage.listRefs()
-      const matchingRef = allRefs.find(r => r.target === startPoint)
-      if (!matchingRef) {
-        // If SHA is not known, check if it could be resolved via HEAD chain
-        try {
-          const headResolved = await this.storage.resolveRef('HEAD')
-          if (headResolved.sha !== startPoint) {
-            throw new BranchError(`Invalid start point: ${startPoint}`, 'INVALID_START_POINT', name)
-          }
-        } catch {
-          throw new BranchError(`Invalid start point: ${startPoint}`, 'INVALID_START_POINT', name)
-        }
-      }
     } else {
       // Try to resolve as ref
       try {
@@ -838,9 +823,36 @@ export class BranchManager {
    * await manager.setUpstream('feature', { unset: true })
    * ```
    */
-  async setUpstream(_branchName: string, _options: SetUpstreamOptions): Promise<void> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async setUpstream(branchName: string, options: SetUpstreamOptions): Promise<void> {
+    const normalizedName = normalizeBranchName(branchName)
+    const branchRef = getBranchRefName(normalizedName)
+
+    // Check if branch exists
+    const existing = await this.storage.getRef(branchRef)
+    if (!existing) {
+      throw new BranchError(`Branch '${branchName}' not found`, 'NOT_FOUND', branchName)
+    }
+
+    // If unset, remove tracking info
+    if (options.unset) {
+      this.trackingInfo.delete(normalizedName)
+      return
+    }
+
+    // Build the remote branch ref
+    const remote = options.remote || 'origin'
+    const remoteBranchName = options.remoteBranch || normalizedName
+    const remoteBranch = `refs/remotes/${remote}/${remoteBranchName}`
+
+    const tracking: BranchTrackingInfo = {
+      remote,
+      remoteBranch,
+      ahead: 0,
+      behind: 0,
+      gone: false
+    }
+
+    this.trackingInfo.set(normalizedName, tracking)
   }
 
   /**
@@ -860,9 +872,9 @@ export class BranchManager {
    * }
    * ```
    */
-  async getTrackingInfo(_branchName: string): Promise<BranchTrackingInfo | null> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async getTrackingInfo(branchName: string): Promise<BranchTrackingInfo | null> {
+    const normalizedName = normalizeBranchName(branchName)
+    return this.trackingInfo.get(normalizedName) ?? null
   }
 
   /**
@@ -882,9 +894,37 @@ export class BranchManager {
    * }
    * ```
    */
-  async isMerged(_branchName: string, _into?: string): Promise<boolean> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async isMerged(branchName: string, into?: string): Promise<boolean> {
+    const normalizedName = normalizeBranchName(branchName)
+    const branchRef = getBranchRefName(normalizedName)
+
+    // Get the branch SHA
+    const branchSha = await this.storage.getRef(branchRef)
+    if (!branchSha) {
+      throw new BranchError(`Branch '${branchName}' not found`, 'NOT_FOUND', branchName)
+    }
+
+    // Get the target branch SHA
+    let targetSha: string
+    if (into) {
+      const targetRef = getBranchRefName(normalizeBranchName(into))
+      const resolved = await this.storage.getRef(targetRef)
+      if (!resolved) {
+        throw new BranchError(`Branch '${into}' not found`, 'NOT_FOUND', into)
+      }
+      targetSha = resolved.target
+    } else {
+      // Use current branch
+      const current = await this.getCurrentBranch()
+      if (!current) {
+        throw new BranchError('No current branch', 'DETACHED_HEAD')
+      }
+      targetSha = current.sha
+    }
+
+    // Simple check: if the branch points to the same SHA as target, it's merged
+    // For a more accurate check, we'd need to walk the commit graph
+    return branchSha.target === targetSha
   }
 
   /**
@@ -903,9 +943,8 @@ export class BranchManager {
    * await manager.forceDeleteBranch('abandoned-feature')
    * ```
    */
-  async forceDeleteBranch(_name: string): Promise<void> {
-    // TODO: Implement in GREEN phase
-    throw new Error('Not implemented')
+  async forceDeleteBranch(name: string): Promise<void> {
+    return this.deleteBranch(name, { force: true })
   }
 }
 
@@ -1069,12 +1108,12 @@ export function getBranchRefName(name: string): string {
  * ```
  */
 export async function createBranch(
-  _storage: RefStorage,
-  _name: string,
-  _options?: CreateBranchOptions
+  storage: RefStorage,
+  name: string,
+  options?: CreateBranchOptions
 ): Promise<Branch> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  const manager = new BranchManager(storage)
+  return manager.createBranch(name, options)
 }
 
 /**
@@ -1093,12 +1132,12 @@ export async function createBranch(
  * ```
  */
 export async function deleteBranch(
-  _storage: RefStorage,
-  _name: string,
-  _options?: DeleteBranchOptions
+  storage: RefStorage,
+  name: string,
+  options?: DeleteBranchOptions
 ): Promise<void> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  const manager = new BranchManager(storage)
+  return manager.deleteBranch(name, options)
 }
 
 /**
@@ -1119,13 +1158,13 @@ export async function deleteBranch(
  * ```
  */
 export async function renameBranch(
-  _storage: RefStorage,
-  _oldName: string,
-  _newName: string,
-  _options?: RenameBranchOptions
+  storage: RefStorage,
+  oldName: string,
+  newName: string,
+  options?: RenameBranchOptions
 ): Promise<Branch> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  const manager = new BranchManager(storage)
+  return manager.renameBranch(oldName, newName, options)
 }
 
 /**
@@ -1144,11 +1183,11 @@ export async function renameBranch(
  * ```
  */
 export async function listBranches(
-  _storage: RefStorage,
-  _options?: ListBranchesOptions
+  storage: RefStorage,
+  options?: ListBranchesOptions
 ): Promise<Branch[]> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+  const manager = new BranchManager(storage)
+  return manager.listBranches(options)
 }
 
 /**
@@ -1165,7 +1204,7 @@ export async function listBranches(
  * const current = await getCurrentBranch(storage)
  * ```
  */
-export async function getCurrentBranch(_storage: RefStorage): Promise<Branch | null> {
-  // TODO: Implement in GREEN phase
-  throw new Error('Not implemented')
+export async function getCurrentBranch(storage: RefStorage): Promise<Branch | null> {
+  const manager = new BranchManager(storage)
+  return manager.getCurrentBranch()
 }
