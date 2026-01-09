@@ -77,6 +77,71 @@ export interface R2ObjectsLike {
 }
 
 /**
+ * Database storage interface for GitModule persistence.
+ * Provides access to the git, git_branches, and git_content tables.
+ */
+export interface GitStorage {
+  /**
+   * SQL execution interface.
+   */
+  sql: {
+    /**
+     * Execute a SQL query with optional parameters.
+     * @param query - SQL query string (can use ? placeholders)
+     * @param params - Parameter values for placeholders
+     * @returns Result object with toArray() method for reading rows
+     */
+    exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
+  }
+}
+
+/**
+ * Row structure for the git table.
+ */
+export interface GitRow {
+  id: number
+  repo: string
+  path: string | null
+  branch: string
+  commit: string | null
+  last_sync: number | null
+  object_prefix: string
+  created_at: number | null
+  updated_at: number | null
+}
+
+/**
+ * Row structure for the git_branches table.
+ */
+export interface GitBranchRow {
+  id: number
+  repo_id: number
+  name: string
+  head: string | null
+  upstream: string | null
+  tracking: number
+  ahead: number
+  behind: number
+  created_at: number | null
+  updated_at: number | null
+}
+
+/**
+ * Row structure for the git_content table.
+ */
+export interface GitContentRow {
+  id: number
+  repo_id: number
+  path: string
+  content: Uint8Array | null
+  mode: string
+  status: string
+  sha: string | null
+  created_at: number | null
+  updated_at: number | null
+}
+
+/**
  * Git binding configuration for the module.
  * Represents the connection between a DO and a git repository.
  */
@@ -143,6 +208,13 @@ export interface GitModuleOptions {
    * @default 'git/objects'
    */
   objectPrefix?: string
+
+  /**
+   * Database storage for persistent state.
+   * When provided, GitModule will persist state to the git, git_branches,
+   * and git_content tables.
+   */
+  storage?: GitStorage
 }
 
 /**
@@ -323,6 +395,16 @@ export class GitModule {
   private readonly objectPrefix: string
 
   /**
+   * Database storage for persistence.
+   */
+  private readonly storage?: GitStorage
+
+  /**
+   * Database row ID for this repository binding.
+   */
+  private repoId?: number
+
+  /**
    * Current HEAD commit SHA.
    */
   private currentCommit?: string
@@ -336,6 +418,13 @@ export class GitModule {
    * Staged files pending commit.
    */
   private stagedFiles: Set<string> = new Set()
+
+  /**
+   * Pending objects to push to R2.
+   * Map of SHA to { type, data } for objects that have been committed locally
+   * but not yet pushed to the R2 object store.
+   */
+  private pendingObjects: Map<string, { type: string; data: Uint8Array }> = new Map()
 
   /**
    * Create a new GitModule instance.
@@ -359,6 +448,7 @@ export class GitModule {
     this.r2 = options.r2
     this.fs = options.fs
     this.objectPrefix = options.objectPrefix ?? 'git/objects'
+    this.storage = options.storage
   }
 
   /**
@@ -391,10 +481,68 @@ export class GitModule {
   /**
    * Optional initialization hook.
    * Called when the module is first loaded.
+   * When storage is provided, loads or creates the repository binding from the database.
    */
   async initialize(): Promise<void> {
-    // Initialization logic if needed
-    // For example, check R2 connectivity or validate configuration
+    if (!this.storage) return
+
+    // Try to load existing repository binding
+    const existingRows = this.storage.sql.exec(
+      'SELECT id, commit, last_sync FROM git WHERE repo = ?',
+      this.repo
+    ).toArray() as Pick<GitRow, 'id' | 'commit' | 'last_sync'>[]
+
+    if (existingRows.length > 0) {
+      // Load existing state
+      const row = existingRows[0]
+      this.repoId = row.id
+      this.currentCommit = row.commit ?? undefined
+      this.lastSyncTime = row.last_sync ? new Date(row.last_sync) : undefined
+
+      // Load staged files from git_content table
+      const stagedRows = this.storage.sql.exec(
+        'SELECT path FROM git_content WHERE repo_id = ? AND status = ?',
+        this.repoId,
+        'staged'
+      ).toArray() as Pick<GitContentRow, 'path'>[]
+
+      for (const staged of stagedRows) {
+        this.stagedFiles.add(staged.path)
+      }
+    } else {
+      // Create new repository binding
+      const now = Date.now()
+      this.storage.sql.exec(
+        `INSERT INTO git (repo, path, branch, object_prefix, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        this.repo,
+        this.path ?? null,
+        this.branch,
+        this.objectPrefix,
+        now,
+        now
+      )
+
+      // Get the inserted row ID
+      const insertedRows = this.storage.sql.exec(
+        'SELECT id FROM git WHERE repo = ?',
+        this.repo
+      ).toArray() as Pick<GitRow, 'id'>[]
+
+      if (insertedRows.length > 0) {
+        this.repoId = insertedRows[0].id
+
+        // Create the branch record
+        this.storage.sql.exec(
+          `INSERT INTO git_branches (repo_id, name, tracking, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+          this.repoId,
+          this.branch,
+          now,
+          now
+        )
+      }
+    }
   }
 
   /**
@@ -488,6 +636,9 @@ export class GitModule {
       this.currentCommit = commitSha
       this.lastSyncTime = new Date()
 
+      // Persist sync state to database
+      await this.persistSyncState()
+
       return {
         success: true,
         objectsFetched,
@@ -546,13 +697,24 @@ export class GitModule {
     }
 
     try {
+      let objectsPushed = 0
+
+      // Push all pending objects to R2
+      for (const [sha, { data }] of this.pendingObjects) {
+        await this.storeObject(sha, data)
+        objectsPushed++
+      }
+
+      // Clear pending objects after successful push
+      this.pendingObjects.clear()
+
       // Update the ref to point to our current commit
       const refKey = `${this.objectPrefix}/refs/heads/${this.branch}`
       await this.r2.put(refKey, this.currentCommit)
 
       return {
         success: true,
-        objectsPushed: 1,
+        objectsPushed,
         commit: this.currentCommit
       }
     } catch (error) {
@@ -611,6 +773,8 @@ export class GitModule {
     const filesToAdd = Array.isArray(files) ? files : [files]
     for (const file of filesToAdd) {
       this.stagedFiles.add(file)
+      // Persist staged file to database
+      await this.persistStagedFile(file)
     }
   }
 
@@ -636,15 +800,136 @@ export class GitModule {
       throw new Error('Nothing to commit - no files staged')
     }
 
-    // For now, return a placeholder hash
-    // Real implementation would create proper git objects
-    const timestamp = Date.now()
-    const hash = await this.hashString(`${message}${timestamp}${this.currentCommit ?? ''}`)
+    const encoder = new TextEncoder()
 
-    this.currentCommit = hash
+    // Create blob objects for each staged file
+    const treeEntries: Array<{ mode: string; name: string; sha: string }> = []
+
+    for (const filePath of this.stagedFiles) {
+      // Read file content from filesystem if available
+      let content: Uint8Array
+      if (this.fs) {
+        try {
+          const fileContent = await this.fs.readFile(filePath)
+          content = typeof fileContent === 'string'
+            ? encoder.encode(fileContent)
+            : new Uint8Array(fileContent)
+        } catch {
+          // File doesn't exist or can't be read, create empty blob
+          content = new Uint8Array(0)
+        }
+      } else {
+        // No filesystem, create placeholder content
+        content = encoder.encode(`placeholder content for ${filePath}`)
+      }
+
+      // Create blob object
+      const blobHeader = encoder.encode(`blob ${content.length}\0`)
+      const blobData = new Uint8Array(blobHeader.length + content.length)
+      blobData.set(blobHeader)
+      blobData.set(content, blobHeader.length)
+      const blobSha = await this.hashBytes(blobData)
+
+      // Store blob content (without header) for push
+      this.pendingObjects.set(blobSha, { type: 'blob', data: content })
+
+      // Add to tree entries (use basename for tree entry name)
+      const name = filePath.split('/').pop() || filePath
+      treeEntries.push({ mode: '100644', name, sha: blobSha })
+    }
+
+    // Sort tree entries by name (git requirement)
+    treeEntries.sort((a, b) => a.name.localeCompare(b.name))
+
+    // Create tree object content
+    const treeContent = this.buildTreeContent(treeEntries)
+    const treeHeader = encoder.encode(`tree ${treeContent.length}\0`)
+    const treeData = new Uint8Array(treeHeader.length + treeContent.length)
+    treeData.set(treeHeader)
+    treeData.set(treeContent, treeHeader.length)
+    const treeSha = await this.hashBytes(treeData)
+
+    // Store tree for push
+    this.pendingObjects.set(treeSha, { type: 'tree', data: treeContent })
+
+    // Create commit object
+    const timestamp = Math.floor(Date.now() / 1000)
+    const timezone = '+0000'
+    const author = `GitModule <git@gitx.do> ${timestamp} ${timezone}`
+
+    let commitContent = `tree ${treeSha}\n`
+    if (this.currentCommit) {
+      commitContent += `parent ${this.currentCommit}\n`
+    }
+    commitContent += `author ${author}\n`
+    commitContent += `committer ${author}\n`
+    commitContent += `\n${message}\n`
+
+    const commitContentBytes = encoder.encode(commitContent)
+    const commitHeader = encoder.encode(`commit ${commitContentBytes.length}\0`)
+    const commitData = new Uint8Array(commitHeader.length + commitContentBytes.length)
+    commitData.set(commitHeader)
+    commitData.set(commitContentBytes, commitHeader.length)
+    const commitSha = await this.hashBytes(commitData)
+
+    // Store commit for push
+    this.pendingObjects.set(commitSha, { type: 'commit', data: commitContentBytes })
+
+    this.currentCommit = commitSha
     this.stagedFiles.clear()
 
-    return { hash }
+    // Persist commit state to database and clear staged files
+    await this.persistCommitState(commitSha)
+
+    return { hash: commitSha }
+  }
+
+  /**
+   * Build tree content from entries.
+   * Format: mode name\0sha20bytes (repeated)
+   */
+  private buildTreeContent(entries: Array<{ mode: string; name: string; sha: string }>): Uint8Array {
+    const encoder = new TextEncoder()
+    const parts: Uint8Array[] = []
+
+    for (const entry of entries) {
+      const modeAndName = encoder.encode(`${entry.mode} ${entry.name}\0`)
+      const sha20 = this.hexToBytes(entry.sha)
+      const entryData = new Uint8Array(modeAndName.length + 20)
+      entryData.set(modeAndName)
+      entryData.set(sha20, modeAndName.length)
+      parts.push(entryData)
+    }
+
+    // Combine all parts
+    const totalLength = parts.reduce((sum, part) => sum + part.length, 0)
+    const result = new Uint8Array(totalLength)
+    let offset = 0
+    for (const part of parts) {
+      result.set(part, offset)
+      offset += part.length
+    }
+
+    return result
+  }
+
+  /**
+   * Convert hex string to bytes.
+   */
+  private hexToBytes(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
+    }
+    return bytes
+  }
+
+  /**
+   * Hash raw bytes using SHA-1.
+   */
+  private async hashBytes(data: Uint8Array): Promise<string> {
+    const hashBuffer = await crypto.subtle.digest('SHA-1', data)
+    return this.bytesToHex(new Uint8Array(hashBuffer))
   }
 
   /**
@@ -793,6 +1078,77 @@ export class GitModule {
     const data = encoder.encode(input)
     const hashBuffer = await crypto.subtle.digest('SHA-1', data)
     return this.bytesToHex(new Uint8Array(hashBuffer))
+  }
+
+  /**
+   * Persist sync state to the database.
+   * Updates the git table with the current commit and last sync timestamp.
+   */
+  private async persistSyncState(): Promise<void> {
+    if (!this.storage || !this.repoId) return
+
+    const now = Date.now()
+    this.storage.sql.exec(
+      `UPDATE git SET commit = ?, last_sync = ?, updated_at = ? WHERE id = ?`,
+      this.currentCommit ?? null,
+      now,
+      now,
+      this.repoId
+    )
+  }
+
+  /**
+   * Persist a staged file to the database.
+   * Inserts or updates a record in the git_content table.
+   */
+  private async persistStagedFile(file: string): Promise<void> {
+    if (!this.storage || !this.repoId) return
+
+    const now = Date.now()
+    // Use INSERT OR REPLACE to handle both new and existing files
+    this.storage.sql.exec(
+      `INSERT INTO git_content (repo_id, path, status, created_at, updated_at)
+       VALUES (?, ?, 'staged', ?, ?)
+       ON CONFLICT(repo_id, path) DO UPDATE SET status = 'staged', updated_at = ?`,
+      this.repoId,
+      file,
+      now,
+      now,
+      now
+    )
+  }
+
+  /**
+   * Persist commit state to the database.
+   * Updates the git table with the new commit hash and clears staged files.
+   */
+  private async persistCommitState(hash: string): Promise<void> {
+    if (!this.storage || !this.repoId) return
+
+    const now = Date.now()
+
+    // Update the commit hash in the git table
+    this.storage.sql.exec(
+      `UPDATE git SET commit = ?, updated_at = ? WHERE id = ?`,
+      hash,
+      now,
+      this.repoId
+    )
+
+    // Update branch head
+    this.storage.sql.exec(
+      `UPDATE git_branches SET head = ?, updated_at = ? WHERE repo_id = ? AND name = ?`,
+      hash,
+      now,
+      this.repoId,
+      this.branch
+    )
+
+    // Clear staged files from git_content
+    this.storage.sql.exec(
+      `DELETE FROM git_content WHERE repo_id = ? AND status = 'staged'`,
+      this.repoId
+    )
   }
 }
 
