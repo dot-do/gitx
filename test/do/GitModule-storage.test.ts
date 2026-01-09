@@ -42,23 +42,23 @@ class MockGitStorage implements GitStorage {
 
   sql = {
     exec: (query: string, ...params: unknown[]): { toArray(): unknown[] } => {
+      // Handle SELECT id, commit, last_sync FROM git WHERE repo = ? (for initialize - check first)
+      if (query.includes('SELECT id, commit, last_sync FROM git WHERE repo =')) {
+        const repo = params[0] as string
+        for (const row of this.gitTable.values()) {
+          if (row.repo === repo) {
+            return { toArray: () => [{ id: row.id, commit: row.commit, last_sync: row.last_sync }] }
+          }
+        }
+        return { toArray: () => [] }
+      }
+
       // Handle SELECT id FROM git WHERE repo = ? (for getting repoId after insert)
       if (query.includes('SELECT id FROM git WHERE repo =')) {
         const repo = params[0] as string
         for (const row of this.gitTable.values()) {
           if (row.repo === repo) {
             return { toArray: () => [{ id: row.id }] }
-          }
-        }
-        return { toArray: () => [] }
-      }
-
-      // Handle SELECT id, commit, last_sync FROM git WHERE repo = ? (for initialize)
-      if (query.includes('SELECT') && query.includes('FROM git WHERE repo =')) {
-        const repo = params[0] as string
-        for (const row of this.gitTable.values()) {
-          if (row.repo === repo) {
-            return { toArray: () => [{ id: row.id, commit: row.commit, last_sync: row.last_sync }] }
           }
         }
         return { toArray: () => [] }
@@ -77,25 +77,8 @@ class MockGitStorage implements GitStorage {
         return { toArray: () => results }
       }
 
-      // Handle INSERT INTO git
-      if (query.includes('INSERT INTO git')) {
-        const id = this.autoIncrement.git++
-        const row: GitRow = {
-          id,
-          repo: params[0] as string,
-          path: params[1] as string | null,
-          branch: params[2] as string,
-          commit: null,
-          last_sync: null,
-          object_prefix: params[3] as string,
-          created_at: params[4] as number | null,
-          updated_at: params[5] as number | null,
-        }
-        this.gitTable.set(id, row)
-        return { toArray: () => [] }
-      }
-
-      // Handle INSERT INTO git_branches
+      // Handle INSERT INTO git_branches (must check before git table)
+      // Note: tracking=1 is hardcoded in the SQL, not a param
       if (query.includes('INSERT INTO git_branches')) {
         const id = this.autoIncrement.git_branches++
         const row: GitBranchRow = {
@@ -104,11 +87,11 @@ class MockGitStorage implements GitStorage {
           name: params[1] as string,
           head: null,
           upstream: null,
-          tracking: params[2] as number,
+          tracking: 1, // hardcoded in GitModule's INSERT statement
           ahead: 0,
           behind: 0,
-          created_at: params[3] as number | null,
-          updated_at: params[4] as number | null,
+          created_at: params[2] as number | null,
+          updated_at: params[3] as number | null,
         }
         this.gitBranchesTable.set(id, row)
         return { toArray: () => [] }
@@ -143,6 +126,24 @@ class MockGitStorage implements GitStorage {
           updated_at: params[3] as number | null,
         }
         this.gitContentTable.set(id, row)
+        return { toArray: () => [] }
+      }
+
+      // Handle INSERT INTO git (the base table - must check after git_branches and git_content)
+      if (query.includes('INSERT INTO git (') || query.includes('INSERT INTO git\n')) {
+        const id = this.autoIncrement.git++
+        const row: GitRow = {
+          id,
+          repo: params[0] as string,
+          path: params[1] as string | null,
+          branch: params[2] as string,
+          commit: null,
+          last_sync: null,
+          object_prefix: params[3] as string,
+          created_at: params[4] as number | null,
+          updated_at: params[5] as number | null,
+        }
+        this.gitTable.set(id, row)
         return { toArray: () => [] }
       }
 
@@ -667,11 +668,18 @@ describe('GitModule Database Integration', () => {
       })
       await git.initialize()
 
+      // Verify last_sync is null before sync
+      const rowBefore = storage.getGitRow('org/repo')
+      expect(rowBefore?.last_sync).toBeNull()
+
       const beforeSync = Date.now()
       await git.sync()
 
       const row = storage.getGitRow('org/repo')
-      expect(row?.last_sync).toBeGreaterThanOrEqual(beforeSync)
+      expect(row?.last_sync).toBeDefined()
+      expect(row?.last_sync).not.toBeNull()
+      expect(typeof row?.last_sync).toBe('number')
+      expect(row!.last_sync!).toBeGreaterThanOrEqual(beforeSync)
     })
 
     it('should update commit hash after sync when ref exists', async () => {

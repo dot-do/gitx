@@ -603,6 +603,10 @@ export class GitModule {
         // No ref exists yet - this is a new/empty repository
         this.currentCommit = undefined
         this.lastSyncTime = new Date()
+
+        // Persist sync state to database even for empty repos
+        await this.persistSyncState()
+
         return {
           success: true,
           objectsFetched: 0,
