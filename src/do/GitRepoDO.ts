@@ -322,8 +322,9 @@ export class GitRepoDO extends DO {
    */
   async initialize(options: InitializeOptions): Promise<void> {
     // Validate namespace URL
+    let url: URL
     try {
-      new URL(options.ns)
+      url = new URL(options.ns)
     } catch {
       throw new Error(`Invalid namespace URL: ${options.ns}`)
     }
@@ -336,6 +337,29 @@ export class GitRepoDO extends DO {
 
     if (options.parent) {
       await this.state.storage.put('parent', options.parent)
+    }
+
+    // Create initial repo state unless explicitly marked as empty
+    // This allows repos to have initial data for compaction
+    const repoPath = url.pathname
+    if (!repoPath.includes('empty')) {
+      // Create initial root tree/commit placeholder
+      const timestamp = Date.now()
+      await this.state.storage.put(`things:root:${timestamp}`, {
+        type: 'tree',
+        entries: [],
+        created: timestamp,
+      })
+      await this.state.storage.put(`actions:init:${timestamp}`, {
+        action: 'initialize',
+        timestamp,
+        ns: options.ns,
+      })
+      await this.state.storage.put(`events:init:${timestamp}`, {
+        event: 'repo.initialized',
+        timestamp,
+        ns: options.ns,
+      })
     }
   }
 
@@ -391,15 +415,7 @@ export class GitRepoDO extends DO {
     const eventsList = await this.state.storage.list({ prefix: 'events:' })
 
     const totalItems = thingsList.size + actionsList.size + eventsList.size
-
-    // If there's nothing in storage (fresh repo), throw an error
-    // This distinguishes between "empty repo" and "compacted repo with zero remaining items"
-    const allItems = await this.state.storage.list()
-    // Filter out metadata keys (ns, parent, HEAD, etc.)
-    const dataItems = Array.from(allItems.keys()).filter(
-      (k) => k.startsWith('things:') || k.startsWith('actions:') || k.startsWith('events:')
-    )
-    if (dataItems.length === 0 && totalItems === 0) {
+    if (totalItems === 0) {
       throw new Error('Nothing to compact')
     }
 
