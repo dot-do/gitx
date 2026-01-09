@@ -49,8 +49,6 @@ import {
   TraversalOptions
 } from '../ops/commit-traversal'
 import {
-  diffTrees,
-  DiffResult,
   DiffStatus,
   ObjectStore as DiffObjectStore
 } from '../ops/tree-diff'
@@ -63,6 +61,170 @@ import {
 } from '../ops/branch'
 import { createCommit, CommitAuthor, CommitOptions } from '../ops/commit'
 import type { CommitObject, TreeObject } from '../types/objects'
+
+/**
+ * Recursively flatten a tree object into a map of path -> entry.
+ * @param objectStore - Object store for fetching trees
+ * @param treeSha - SHA of the tree to flatten
+ * @param prefix - Path prefix for entries
+ * @returns Map of full paths to tree entries
+ */
+async function flattenTree(
+  objectStore: RepositoryContext['objectStore'],
+  treeSha: string,
+  prefix: string = ''
+): Promise<Map<string, { sha: string; mode: string }>> {
+  const result = new Map<string, { sha: string; mode: string }>()
+
+  const tree = await objectStore.getTree(treeSha)
+  if (!tree) return result
+
+  for (const entry of tree.entries) {
+    const fullPath = prefix ? `${prefix}/${entry.name}` : entry.name
+
+    if (entry.mode === '040000') {
+      // Recursively process subdirectory
+      const subEntries = await flattenTree(objectStore, entry.sha, fullPath)
+      for (const [path, subEntry] of subEntries) {
+        result.set(path, subEntry)
+      }
+    } else {
+      // File entry
+      result.set(fullPath, { sha: entry.sha, mode: entry.mode })
+    }
+  }
+
+  return result
+}
+
+/**
+ * Compare index entries to HEAD tree entries to detect staged changes.
+ * @param headEntries - Flattened HEAD tree entries
+ * @param indexEntries - Index entries with stage=0 (non-conflict)
+ * @returns Array of changes with status and path
+ */
+function compareIndexToHead(
+  headEntries: Map<string, { sha: string; mode: string }>,
+  indexEntries: Array<{ path: string; mode: string; sha: string; stage: number }>
+): Array<{ status: DiffStatus; path: string; oldPath?: string; oldMode?: string; newMode?: string; oldSha?: string; newSha?: string }> {
+  const changes: Array<{ status: DiffStatus; path: string; oldPath?: string; oldMode?: string; newMode?: string; oldSha?: string; newSha?: string }> = []
+  const indexMap = new Map<string, { sha: string; mode: string; stage: number }>()
+
+  // Build index map (only stage 0 entries, which are normal entries)
+  for (const entry of indexEntries) {
+    if (entry.stage === 0) {
+      indexMap.set(entry.path, { sha: entry.sha, mode: entry.mode, stage: entry.stage })
+    }
+  }
+
+  // Check for conflict entries (stage > 0)
+  const conflictPaths = new Set<string>()
+  for (const entry of indexEntries) {
+    if (entry.stage > 0) {
+      conflictPaths.add(entry.path)
+    }
+  }
+
+  // Add conflict entries as unmerged
+  for (const path of conflictPaths) {
+    changes.push({ status: DiffStatus.UNMERGED, path })
+  }
+
+  // Track added and deleted files for rename detection
+  const addedFiles: Array<{ path: string; sha: string; mode: string }> = []
+  const deletedFiles: Array<{ path: string; sha: string; mode: string }> = []
+
+  // Files in index but not in HEAD = Added (potential rename target)
+  for (const [path, indexEntry] of indexMap) {
+    if (conflictPaths.has(path)) continue // Skip conflicts
+
+    const headEntry = headEntries.get(path)
+    if (!headEntry) {
+      addedFiles.push({ path, sha: indexEntry.sha, mode: indexEntry.mode })
+    } else if (headEntry.sha !== indexEntry.sha) {
+      // Modified
+      changes.push({
+        status: DiffStatus.MODIFIED,
+        path,
+        oldMode: headEntry.mode,
+        newMode: indexEntry.mode,
+        oldSha: headEntry.sha,
+        newSha: indexEntry.sha
+      })
+    } else if (headEntry.mode !== indexEntry.mode) {
+      // Mode changed (e.g., chmod +x)
+      changes.push({
+        status: DiffStatus.TYPE_CHANGED,
+        path,
+        oldMode: headEntry.mode,
+        newMode: indexEntry.mode,
+        oldSha: headEntry.sha,
+        newSha: indexEntry.sha
+      })
+    }
+  }
+
+  // Files in HEAD but not in index = Deleted (potential rename source)
+  for (const [path, headEntry] of headEntries) {
+    if (conflictPaths.has(path)) continue // Skip conflicts
+
+    if (!indexMap.has(path)) {
+      deletedFiles.push({ path, sha: headEntry.sha, mode: headEntry.mode })
+    }
+  }
+
+  // Detect renames: deleted file with same SHA as added file
+  const renamedSourcePaths = new Set<string>()
+  const renamedTargetPaths = new Set<string>()
+
+  for (const deleted of deletedFiles) {
+    // Find an added file with the same SHA (exact content match = rename)
+    const matchingAdded = addedFiles.find(added =>
+      added.sha === deleted.sha && !renamedTargetPaths.has(added.path)
+    )
+
+    if (matchingAdded) {
+      // This is a rename
+      changes.push({
+        status: DiffStatus.RENAMED,
+        path: matchingAdded.path,
+        oldPath: deleted.path,
+        oldMode: deleted.mode,
+        newMode: matchingAdded.mode,
+        oldSha: deleted.sha,
+        newSha: matchingAdded.sha
+      })
+      renamedSourcePaths.add(deleted.path)
+      renamedTargetPaths.add(matchingAdded.path)
+    }
+  }
+
+  // Add remaining deleted files (not part of rename)
+  for (const deleted of deletedFiles) {
+    if (!renamedSourcePaths.has(deleted.path)) {
+      changes.push({
+        status: DiffStatus.DELETED,
+        path: deleted.path,
+        oldMode: deleted.mode,
+        oldSha: deleted.sha
+      })
+    }
+  }
+
+  // Add remaining added files (not part of rename)
+  for (const added of addedFiles) {
+    if (!renamedTargetPaths.has(added.path)) {
+      changes.push({
+        status: DiffStatus.ADDED,
+        path: added.path,
+        newMode: added.mode,
+        newSha: added.sha
+      })
+    }
+  }
+
+  return changes
+}
 
 /**
  * Repository context for MCP tool operations.
@@ -668,39 +830,119 @@ export const gitTools: MCPTool[] = [
           lines.push('')
         }
 
-        // Get staged changes (index vs HEAD)
-        let stagedChanges: DiffResult | null = null
-        if (headSha && ctx.index) {
-          const headCommit = await ctx.objectStore.getCommit(headSha)
-          if (headCommit) {
-            // Get index entries for future tree building
-            // Note: Full implementation would build a tree from these entries
-            void ctx.index.getEntries() // Acknowledge index exists but tree building not yet implemented
-            const diffStore: DiffObjectStore = {
-              getTree: (sha: string) => ctx.objectStore.getTree(sha),
-              getBlob: (sha: string) => ctx.objectStore.getBlob(sha),
-              exists: (sha: string) => ctx.objectStore.hasObject(sha)
+        // Get staged changes (index vs HEAD) using direct comparison
+        let stagedChanges: Array<{ status: DiffStatus; path: string; oldPath?: string; oldMode?: string; newMode?: string; oldSha?: string; newSha?: string }> = []
+        let untrackedFiles: string[] = []
+        let workdirChanges: Array<{ status: DiffStatus; path: string }> = []
+
+        if (ctx.index) {
+          const indexEntries = await ctx.index.getEntries()
+
+          // Get HEAD tree entries for comparison
+          let headEntries = new Map<string, { sha: string; mode: string }>()
+          if (headSha) {
+            const headCommit = await ctx.objectStore.getCommit(headSha)
+            if (headCommit) {
+              headEntries = await flattenTree(ctx.objectStore, headCommit.tree)
             }
-            stagedChanges = await diffTrees(
-              diffStore,
-              headCommit.tree,
-              null, // TODO: Build tree from index entries for proper staging area comparison
-              { recursive: true }
-            )
+          }
+
+          // Compare index to HEAD to find staged changes
+          stagedChanges = compareIndexToHead(headEntries, indexEntries)
+
+          // Check for untracked, modified, and deleted files in workdir
+          if (ctx.workdir) {
+            const workdirFiles = await ctx.workdir.getFiles()
+            const indexMap = new Map(indexEntries.filter(e => e.stage === 0).map(e => [e.path, e]))
+            const workdirMap = new Map(workdirFiles.map(f => [f.path, f]))
+
+            // Check files in workdir
+            for (const file of workdirFiles) {
+              const indexEntry = indexMap.get(file.path)
+              if (!indexEntry) {
+                // File in workdir but not in index = untracked
+                untrackedFiles.push(file.path)
+              } else if (indexEntry.sha !== file.sha) {
+                // File content differs from index = unstaged content modification
+                workdirChanges.push({ status: DiffStatus.MODIFIED, path: file.path })
+              } else if (indexEntry.mode !== file.mode) {
+                // Same content but different mode = unstaged mode change
+                workdirChanges.push({ status: DiffStatus.TYPE_CHANGED, path: file.path })
+              }
+            }
+
+            // Check for deleted files (in index but not in workdir)
+            for (const [path, _indexEntry] of indexMap) {
+              if (!workdirMap.has(path)) {
+                // File in index but not in workdir = unstaged deletion
+                workdirChanges.push({ status: DiffStatus.DELETED, path })
+              }
+            }
           }
         }
 
+        // Separate unmerged (conflict) entries
+        const unmergedChanges = stagedChanges.filter(c => c.status === DiffStatus.UNMERGED)
+        const normalStagedChanges = stagedChanges.filter(c => c.status !== DiffStatus.UNMERGED)
+
+        // Format unmerged (conflict) files
+        if (unmergedChanges.length > 0) {
+          if (!short) {
+            lines.push('Unmerged paths:')
+            lines.push('  (use "git add <file>..." to mark resolution)')
+            lines.push('')
+          }
+          for (const entry of unmergedChanges) {
+            if (short) {
+              lines.push(`UU ${entry.path}`)
+            } else {
+              lines.push(`        both modified:   ${entry.path}`)
+            }
+          }
+          if (!short) lines.push('')
+        }
+
         // Format staged changes
-        if (stagedChanges && stagedChanges.entries.length > 0) {
+        if (normalStagedChanges.length > 0) {
           if (!short) {
             lines.push('Changes to be committed:')
             lines.push('  (use "git restore --staged <file>..." to unstage)')
             lines.push('')
           }
-          for (const entry of stagedChanges.entries) {
-            const statusChar = entry.status
+          for (const entry of normalStagedChanges) {
             if (short) {
-              lines.push(`${statusChar}  ${entry.path}`)
+              // XY format: X = index status, Y = workdir status (space = no change)
+              const workdirStatus = workdirChanges.find(w => w.path === entry.path) ? 'M' : ' '
+              if (entry.status === DiffStatus.RENAMED && entry.oldPath) {
+                lines.push(`${entry.status}${workdirStatus} ${entry.oldPath} -> ${entry.path}`)
+              } else {
+                lines.push(`${entry.status}${workdirStatus} ${entry.path}`)
+              }
+            } else {
+              const statusText = getStatusText(entry.status)
+              if (entry.status === DiffStatus.RENAMED && entry.oldPath) {
+                lines.push(`        ${statusText}:   ${entry.oldPath} -> ${entry.path}`)
+              } else {
+                lines.push(`        ${statusText}:   ${entry.path}`)
+              }
+            }
+          }
+          if (!short) lines.push('')
+        }
+
+        // Format unstaged workdir changes (not already counted as staged)
+        const pureWorkdirChanges = workdirChanges.filter(w =>
+          !normalStagedChanges.find(s => s.path === w.path)
+        )
+        if (pureWorkdirChanges.length > 0) {
+          if (!short) {
+            lines.push('Changes not staged for commit:')
+            lines.push('  (use "git add <file>..." to update what will be committed)')
+            lines.push('')
+          }
+          for (const entry of pureWorkdirChanges) {
+            if (short) {
+              lines.push(` ${entry.status} ${entry.path}`)
             } else {
               const statusText = getStatusText(entry.status)
               lines.push(`        ${statusText}:   ${entry.path}`)
@@ -709,8 +951,26 @@ export const gitTools: MCPTool[] = [
           if (!short) lines.push('')
         }
 
-        // If no changes
-        if (!stagedChanges || stagedChanges.entries.length === 0) {
+        // Format untracked files
+        if (untrackedFiles.length > 0) {
+          if (!short) {
+            lines.push('Untracked files:')
+            lines.push('  (use "git add <file>..." to include in what will be committed)')
+            lines.push('')
+          }
+          for (const file of untrackedFiles) {
+            if (short) {
+              lines.push(`?? ${file}`)
+            } else {
+              lines.push(`        ${file}`)
+            }
+          }
+          if (!short) lines.push('')
+        }
+
+        // If no changes at all
+        if (normalStagedChanges.length === 0 && workdirChanges.length === 0 &&
+            untrackedFiles.length === 0 && unmergedChanges.length === 0) {
           if (!short) {
             lines.push('nothing to commit, working tree clean')
           }
@@ -723,6 +983,7 @@ export const gitTools: MCPTool[] = [
               text: lines.join('\n'),
             },
           ],
+          isError: false,
         }
       } catch (error) {
         return {
