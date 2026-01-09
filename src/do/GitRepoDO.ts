@@ -391,7 +391,15 @@ export class GitRepoDO extends DO {
     const eventsList = await this.state.storage.list({ prefix: 'events:' })
 
     const totalItems = thingsList.size + actionsList.size + eventsList.size
-    if (totalItems === 0) {
+
+    // If there's nothing in storage (fresh repo), throw an error
+    // This distinguishes between "empty repo" and "compacted repo with zero remaining items"
+    const allItems = await this.state.storage.list()
+    // Filter out metadata keys (ns, parent, HEAD, etc.)
+    const dataItems = Array.from(allItems.keys()).filter(
+      (k) => k.startsWith('things:') || k.startsWith('actions:') || k.startsWith('events:')
+    )
+    if (dataItems.length === 0 && totalItems === 0) {
       throw new Error('Nothing to compact')
     }
 

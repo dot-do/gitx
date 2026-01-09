@@ -799,5 +799,143 @@ describe('Tree Object Storage', () => {
       const tree = await objectStore.getTreeObject('')
       expect(tree).toBeNull()
     })
+
+    describe('Invalid entry handling', () => {
+      it('should reject tree entry with invalid mode', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '999999', name: 'file.txt', sha: sampleBlobSha }
+        ]
+
+        // Should throw or reject when storing with invalid mode
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with empty mode', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '', name: 'file.txt', sha: sampleBlobSha }
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with null byte in name', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'file\0.txt', sha: sampleBlobSha }
+        ]
+
+        // Null bytes in filenames are invalid - they are used as delimiters
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with empty name', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: '', sha: sampleBlobSha }
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with path separator in name', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'path/to/file.txt', sha: sampleBlobSha }
+        ]
+
+        // Tree entries should only contain single directory component names
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with invalid SHA format', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'file.txt', sha: 'not-a-valid-sha' }
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with SHA of wrong length', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'file.txt', sha: 'abc123' }  // Too short
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject tree entry with uppercase SHA', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'file.txt', sha: 'A'.repeat(40) }  // Should be lowercase
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject duplicate entry names in tree', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: 'file.txt', sha: sampleBlobSha },
+          { mode: '100644', name: 'file.txt', sha: sampleBlobSha2 }  // Duplicate name
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject . as entry name', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: '.', sha: sampleBlobSha }
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+
+      it('should reject .. as entry name', async () => {
+        const entries: TreeEntry[] = [
+          { mode: '100644', name: '..', sha: sampleBlobSha }
+        ]
+
+        await expect(objectStore.putTreeObject(entries)).rejects.toThrow()
+      })
+    })
+
+    describe('Malformed tree parsing', () => {
+      it('should handle corrupted tree data gracefully', async () => {
+        // Inject malformed tree data directly into storage
+        const corruptedData = encoder.encode('not a valid tree format')
+        storage.injectObject('e'.repeat(40), 'tree', corruptedData)
+
+        // Attempting to parse should throw or return null
+        const tree = await objectStore.getTreeObject('e'.repeat(40))
+        // Either returns null or throws - implementation dependent
+        expect(tree === null || tree.entries.length === 0).toBe(true)
+      })
+
+      it('should handle tree with truncated SHA bytes', async () => {
+        // Build tree with truncated SHA (less than 20 bytes after null)
+        const mode = '100644'
+        const name = 'file.txt'
+        const modeNameNull = encoder.encode(`${mode} ${name}\0`)
+        // Only provide 10 bytes of SHA instead of 20
+        const truncatedSha = new Uint8Array(10)
+        const corruptedTree = new Uint8Array(modeNameNull.length + truncatedSha.length)
+        corruptedTree.set(modeNameNull)
+        corruptedTree.set(truncatedSha, modeNameNull.length)
+
+        storage.injectObject('f'.repeat(40), 'tree', corruptedTree)
+
+        // Parsing truncated data should be handled gracefully
+        const tree = await objectStore.getTreeObject('f'.repeat(40))
+        // Either returns null, throws, or returns malformed entry
+        // The important thing is it doesn't crash
+        expect(tree === null || tree.entries[0]?.sha.length !== 40).toBe(true)
+      })
+
+      it('should handle tree with missing null byte between entries', async () => {
+        // Build malformed tree data without proper null separator
+        const malformed = encoder.encode('100644 file.txt')
+        // Missing null byte and SHA
+        storage.injectObject('0'.repeat(40), 'tree', malformed)
+
+        const tree = await objectStore.getTreeObject('0'.repeat(40))
+        // Should handle gracefully
+        expect(tree === null || tree.entries.length === 0).toBe(true)
+      })
+    })
   })
 })
