@@ -1071,16 +1071,6 @@ export class GitModule {
   }
 
   /**
-   * Simple hash function for placeholder commit generation.
-   */
-  private async hashString(input: string): Promise<string> {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(input)
-    const hashBuffer = await crypto.subtle.digest('SHA-1', data)
-    return this.bytesToHex(new Uint8Array(hashBuffer))
-  }
-
-  /**
    * Persist sync state to the database.
    * Updates the git table with the current commit and last sync timestamp.
    */

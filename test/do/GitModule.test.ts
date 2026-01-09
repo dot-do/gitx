@@ -563,4 +563,49 @@ describe('GitModule R2 integration', () => {
     const keys = mockR2._listKeys()
     expect(keys.some((k) => k.includes('refs/heads/main'))).toBe(true)
   })
+
+  it('should push git objects (blob, tree, commit) to R2', async () => {
+    // Add a file with content
+    mockFs._setFile('/test.txt', 'Hello, World!')
+
+    await gitModule.add('/test.txt')
+    const commitResult = await gitModule.commit('Add test file')
+    const pushResult = await gitModule.push()
+
+    expect(pushResult.success).toBe(true)
+    // Should have pushed at least 3 objects: blob, tree, commit
+    expect(pushResult.objectsPushed).toBeGreaterThanOrEqual(3)
+
+    // Check that objects were stored in R2 using the standard git object path format
+    const keys = mockR2._listKeys()
+
+    // Verify ref was updated
+    expect(keys.some((k) => k.includes('refs/heads/main'))).toBe(true)
+
+    // Verify objects are stored using the two-character prefix directory structure
+    const objectKeys = keys.filter((k) => k.match(/git\/objects\/[a-f0-9]{2}\/[a-f0-9]{38}/))
+    expect(objectKeys.length).toBeGreaterThanOrEqual(3)
+
+    // The commit SHA should match what was returned
+    expect(pushResult.commit).toBe((commitResult as { hash: string }).hash)
+  })
+
+  it('should only push new objects on subsequent pushes', async () => {
+    // First commit and push
+    mockFs._setFile('/file1.txt', 'Content 1')
+    await gitModule.add('/file1.txt')
+    await gitModule.commit('First commit')
+    const firstPush = await gitModule.push()
+    expect(firstPush.objectsPushed).toBeGreaterThanOrEqual(3)
+
+    // Second commit and push
+    mockFs._setFile('/file2.txt', 'Content 2')
+    await gitModule.add('/file2.txt')
+    await gitModule.commit('Second commit')
+    const secondPush = await gitModule.push()
+
+    // Second push should also have new objects
+    expect(secondPush.success).toBe(true)
+    expect(secondPush.objectsPushed).toBeGreaterThanOrEqual(3)
+  })
 })
