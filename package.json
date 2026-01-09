@@ -1,6 +1,6 @@
 {
   "name": "gitx.do",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "Git on Cloudflare Durable Objects - A complete git reimplementation for the edge",
   "type": "module",
   "main": "dist/index.js",

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.3] - 2026-01-09
+## [0.1.0] - 2026-01-09
 
 ### Added
 
@@ -30,4 +30,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **R2 Object Storage**: Efficient storage of Git objects using Cloudflare R2
 - **AI-Ready**: Built for AI agents to manage code repositories autonomously
 
-[0.0.3]: https://github.com/dot-do/gitx/releases/tag/v0.0.3
+[0.1.0]: https://github.com/dot-do/gitx/releases/tag/v0.0.3
