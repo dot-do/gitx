@@ -7,6 +7,11 @@
  * The module depends on FsModule for file system operations during command execution,
  * enabling sandboxed bash operations within the DO's virtual filesystem.
  *
+ * Features:
+ * - AST-based safety analysis for command parsing
+ * - Configurable command blocking and confirmation requirements
+ * - Support for database-backed execution policies
+ *
  * @module do/BashModule
  *
  * @example
@@ -28,6 +33,13 @@
  * }
  * ```
  */
+
+// Import AST-based safety analysis
+import {
+  parseBashCommand,
+  analyzeASTSafety,
+  type SafetyIssue,
+} from './bash-ast'
 
 // ============================================================================
 // Types and Interfaces
@@ -331,6 +343,13 @@ export interface BashModuleOptions {
    * @default 'default'
    */
   policyName?: string
+
+  /**
+   * Whether to use AST-based safety analysis.
+   * When true, commands are parsed into an AST for more accurate safety analysis.
+   * @default true
+   */
+  useAST?: boolean
 }
 
 /**
@@ -356,6 +375,17 @@ export interface SafetyAnalysis {
    * Impact level of the command.
    */
   impact: 'none' | 'low' | 'medium' | 'high' | 'critical'
+
+  /**
+   * Detailed issues found during AST analysis.
+   * Only populated when useAST option is true.
+   */
+  issues?: SafetyIssue[]
+
+  /**
+   * Whether AST-based analysis was used.
+   */
+  usedAST?: boolean
 }
 
 // ============================================================================
@@ -477,6 +507,11 @@ export class BashModule {
   private enabled: boolean = true
 
   /**
+   * Whether to use AST-based safety analysis.
+   */
+  private readonly useAST: boolean
+
+  /**
    * Commands considered dangerous and requiring confirmation.
    */
   private static readonly DANGEROUS_COMMANDS = new Set([
@@ -541,6 +576,7 @@ export class BashModule {
     this.requireConfirmation = options.requireConfirmation ?? true
     this.storage = options.storage
     this.policyName = options.policyName ?? 'default'
+    this.useAST = options.useAST ?? true
   }
 
   /**
@@ -923,6 +959,10 @@ export class BashModule {
   /**
    * Analyze a command for safety.
    *
+   * Uses AST-based analysis by default for more accurate command parsing
+   * and safety classification. Falls back to regex-based analysis if
+   * useAST is disabled.
+   *
    * @param input - The command or script to analyze
    * @returns Safety analysis result
    *
@@ -935,6 +975,56 @@ export class BashModule {
    * ```
    */
   analyze(input: string): SafetyAnalysis {
+    // Use AST-based analysis if enabled
+    if (this.useAST) {
+      return this.analyzeWithAST(input)
+    }
+
+    // Fall back to regex-based analysis
+    return this.analyzeWithRegex(input)
+  }
+
+  /**
+   * Analyze a command using AST-based parsing.
+   *
+   * Parses the command into an AST and inspects nodes for safety issues.
+   * This provides more accurate analysis than regex patterns because it
+   * understands command structure, arguments, and pipelines.
+   *
+   * @param input - The command or script to analyze
+   * @returns Safety analysis result with AST details
+   * @internal
+   */
+  private analyzeWithAST(input: string): SafetyAnalysis {
+    try {
+      const ast = parseBashCommand(input)
+      const astAnalysis = analyzeASTSafety(ast, this.blockedCommands, input)
+
+      return {
+        dangerous: astAnalysis.dangerous,
+        reason: astAnalysis.reason,
+        commands: astAnalysis.commands,
+        impact: astAnalysis.impact,
+        issues: astAnalysis.issues,
+        usedAST: true,
+      }
+    } catch {
+      // If AST parsing fails, fall back to regex analysis
+      return this.analyzeWithRegex(input)
+    }
+  }
+
+  /**
+   * Analyze a command using regex patterns.
+   *
+   * This is the fallback analysis method when AST parsing is disabled
+   * or fails. It uses simple pattern matching.
+   *
+   * @param input - The command or script to analyze
+   * @returns Safety analysis result
+   * @internal
+   */
+  private analyzeWithRegex(input: string): SafetyAnalysis {
     const commands = this.extractCommands(input)
     let dangerous = false
     let reason: string | undefined
@@ -989,7 +1079,8 @@ export class BashModule {
       dangerous,
       reason,
       commands,
-      impact
+      impact,
+      usedAST: false,
     }
   }
 

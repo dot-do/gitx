@@ -104,6 +104,52 @@ export {
 }
 
 // ============================================================================
+// Bash AST Parser Imports and Exports
+// ============================================================================
+
+import {
+  parseBashCommand,
+  analyzeASTSafety,
+  parseAndAnalyze,
+  type ASTNodeType,
+  type ListOperator,
+  type RedirectType,
+  type ASTNode,
+  type WordNode,
+  type RedirectNode,
+  type AssignmentNode,
+  type CommandNode,
+  type PipelineNode,
+  type ListNode,
+  type SubshellNode,
+  type FunctionNode,
+  type ImpactLevel,
+  type ASTSafetyAnalysis,
+  type SafetyIssue,
+} from './bash-ast'
+
+export {
+  parseBashCommand,
+  analyzeASTSafety,
+  parseAndAnalyze,
+  type ASTNodeType,
+  type ListOperator,
+  type RedirectType,
+  type ASTNode,
+  type WordNode,
+  type RedirectNode,
+  type AssignmentNode,
+  type CommandNode,
+  type PipelineNode,
+  type ListNode,
+  type SubshellNode,
+  type FunctionNode,
+  type ImpactLevel,
+  type ASTSafetyAnalysis,
+  type SafetyIssue,
+}
+
+// ============================================================================
 // Mixin Exports
 // ============================================================================
 
