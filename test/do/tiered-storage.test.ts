@@ -150,15 +150,36 @@ class MockSqlStorage implements SqlStorage {
           this.tables.set(tableName, [])
         }
 
-        // Parse columns and values
+        // Parse columns
         const columnsMatch = query.match(/\(([^)]+)\)\s*VALUES/i)
         const columns = columnsMatch
           ? columnsMatch[1].split(',').map(c => c.trim())
           : []
 
+        // Parse VALUES clause to handle mixed placeholders and literals
+        const valuesMatch = query.match(/VALUES\s*\(([^)]+)\)/i)
+        const valuesParts = valuesMatch
+          ? valuesMatch[1].split(',').map(v => v.trim())
+          : []
+
         const row: Record<string, unknown> = {}
+        let paramIdx = 0
+
         columns.forEach((col, idx) => {
-          row[col] = params[idx]
+          const valuePart = valuesParts[idx] || '?'
+          if (valuePart === '?') {
+            row[col] = params[paramIdx++]
+          } else {
+            // Parse literal value (number, string, null)
+            const num = Number(valuePart)
+            if (!isNaN(num)) {
+              row[col] = num
+            } else if (valuePart.toUpperCase() === 'NULL') {
+              row[col] = null
+            } else {
+              row[col] = valuePart.replace(/^['"]|['"]$/g, '')
+            }
+          }
         })
 
         // Handle OR REPLACE
@@ -252,19 +273,21 @@ class MockSqlStorage implements SqlStorage {
         const tableName = match[1]
         const table = this.tables.get(tableName) ?? []
 
-        // Parse SET clause to count placeholders
+        // Parse SET clause
         const setClause = match[2]
         const setParts = setClause.split(',').map(s => s.trim())
-        const setPlaceholders = (setClause.match(/\?/g) || []).length
+
+        // Count placeholders in SET clause to know where WHERE params start
+        const setPlaceholderCount = (setClause.match(/\?/g) || []).length
 
         // Find matching rows using params after SET placeholders
         const whereClause = match[3]
-        const whereParams = params.slice(setPlaceholders)
+        const whereParams = params.slice(setPlaceholderCount)
         const matching = this.filterByWhere(table, whereClause, whereParams)
 
-        let paramIdx = 0
-
         for (const row of matching) {
+          // Reset paramIdx for each row (though typically we only match one)
+          let paramIdx = 0
           for (const part of setParts) {
             if (part.includes('=')) {
               const eqIdx = part.indexOf('=')
@@ -272,10 +295,10 @@ class MockSqlStorage implements SqlStorage {
               const val = part.slice(eqIdx + 1).trim()
               if (val === '?') {
                 row[col] = params[paramIdx++]
-              } else if (val.includes('+')) {
-                // Handle increment like access_count = access_count + 1
+              } else if (val.includes(col) && val.includes('+')) {
+                // Handle self-increment like access_count = access_count + 1
                 row[col] = (Number(row[col]) || 0) + 1
-              } else if (val === 'NULL') {
+              } else if (val.toUpperCase() === 'NULL') {
                 row[col] = null
               }
             }
@@ -431,8 +454,9 @@ describe('TieredStorage', () => {
 
       expect(tier).toBe('warm')
 
-      // Verify in R2
-      expect(r2.hasKey('test/objects/bb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')).toBe(true)
+      // Verify in R2 - sha is 'b000...' (40 chars), so key is test/objects/b0/00...
+      // sha.slice(0,2) = 'b0', sha.slice(2) = '00000000000000000000000000000000000000'
+      expect(r2.hasKey(`test/objects/${sha.slice(0, 2)}/${sha.slice(2)}`)).toBe(true)
     })
 
     it('should not duplicate objects', async () => {
@@ -451,8 +475,10 @@ describe('TieredStorage', () => {
     it('should store different object types', async () => {
       const types: ObjectType[] = ['blob', 'tree', 'commit', 'tag']
 
-      for (const type of types) {
-        const sha = createSha(type.charAt(0))
+      for (let i = 0; i < types.length; i++) {
+        const type = types[i]
+        // Use index to ensure unique SHAs
+        const sha = createSha(`type${i}`)
         await storage.putObject(sha, type, createTestData(`${type} content`))
       }
 
