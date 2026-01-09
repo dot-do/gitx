@@ -568,7 +568,7 @@ export class ObjectStore {
   async putTagObject(tag: {
     object: string
     objectType: ObjectType
-    tagger: Author
+    tagger?: Author
     message: string
     name: string
   }): Promise<string> {
@@ -577,7 +577,9 @@ export class ObjectStore {
     lines.push(`object ${tag.object}`)
     lines.push(`type ${tag.objectType}`)
     lines.push(`tag ${tag.name}`)
-    lines.push(`tagger ${tag.tagger.name} <${tag.tagger.email}> ${tag.tagger.timestamp} ${tag.tagger.timezone}`)
+    if (tag.tagger) {
+      lines.push(`tagger ${tag.tagger.name} <${tag.tagger.email}> ${tag.tagger.timestamp} ${tag.tagger.timezone}`)
+    }
     lines.push('')
     lines.push(tag.message)
 
@@ -1303,7 +1305,7 @@ export class ObjectStore {
     let object = ''
     let objectType: ObjectType = 'commit'
     let name = ''
-    let tagger: Author | null = null
+    let tagger: Author | undefined = undefined
     let messageStartIndex = 0
 
     for (let i = 0; i < lines.length; i++) {
@@ -1320,11 +1322,18 @@ export class ObjectStore {
       } else if (line.startsWith('tag ')) {
         name = line.slice(4)
       } else if (line.startsWith('tagger ')) {
-        tagger = parseAuthorLine(line)
+        try {
+          tagger = parseAuthorLine(line)
+        } catch {
+          // Malformed tagger line - leave tagger as undefined
+          return null
+        }
       }
     }
 
-    if (!tagger) {
+    // Validate required fields - object and name must be present
+    // tagger is optional (some older tags or special tags may not have it)
+    if (!object || !name) {
       return null
     }
 

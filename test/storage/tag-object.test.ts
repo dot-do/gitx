@@ -1276,17 +1276,24 @@ describe('Tag Object Storage', () => {
       })
 
       it('should handle tag with missing tagger line', async () => {
-        const malformedContent = [
+        // Tags without tagger line are valid - older Git versions create them
+        // This is NOT malformed; tagger is optional per Git spec
+        const validTagContent = [
           `object ${sampleCommitSha}`,
           `type commit`,
           `tag v1.0.0`,
           '',
           'Message'
         ].join('\n')
-        storage.injectObject('1'.repeat(40), 'tag', encoder.encode(malformedContent))
+        storage.injectObject('1'.repeat(40), 'tag', encoder.encode(validTagContent))
 
         const tag = await objectStore.getTagObject('1'.repeat(40))
-        expect(tag).toBeNull()
+        // Should successfully parse - tagger is optional
+        expect(tag).not.toBeNull()
+        expect(tag!.object).toBe(sampleCommitSha)
+        expect(tag!.name).toBe('v1.0.0')
+        expect(tag!.tagger).toBeUndefined()
+        expect(tag!.message).toBe('Message')
       })
 
       it('should handle tag with malformed tagger line', async () => {
