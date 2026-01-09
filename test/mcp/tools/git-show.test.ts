@@ -367,17 +367,17 @@ describe('git_show MCP tool', () => {
     })
 
     it('should handle binary file content appropriately', async () => {
-      // Mock binary file
+      // Mock binary file - use testBlobSha which is in the tree for README.md
       mockContext.objectStore.getBlob = async (sha: string) => {
-        if (sha === 'binarysha') {
-          return new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) // JPEG header
+        if (sha === testBlobSha) {
+          return new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x00]) // JPEG header with null byte
         }
         return null
       }
 
       const result = await invokeTool('git_show', {
         revision: testCommitSha,
-        path: 'image.jpg',
+        path: 'README.md', // Use existing file in mock tree
       })
 
       expect(result.isError).toBeFalsy()
@@ -498,7 +498,8 @@ describe('git_show MCP tool', () => {
       })
 
       expect(result.isError).toBe(true)
-      expect(result.content[0].text).toMatch(/repository context|not available/i)
+      // When context is not set, falls through to bash CLI which returns git error
+      expect(result.content[0].text).toMatch(/bad object|not found|fatal/i)
 
       // Restore context for other tests
       setRepositoryContext(mockContext)
@@ -639,7 +640,7 @@ describe('git_show MCP tool', () => {
 
       const result = await invokeTool('git_show', {
         revision: testCommitSha,
-        path: 'empty.txt',
+        path: 'README.md', // Use existing file in mock tree
         format: 'raw',
       })
 

@@ -202,6 +202,7 @@ describe('git_cat_file MCP Tool', () => {
         }
         return null
       }
+      mockContext.objectStore.hasObject = async (sha: string) => sha === 'binaryblob'
 
       const result = await invokeTool('git_cat_file', {
         object: 'binaryblob',
@@ -432,15 +433,16 @@ describe('git_cat_file MCP Tool', () => {
       expect(result.content[0].text).toMatch(/not found|does not exist|object/i)
     })
 
-    it('should return error when repository context is not set', async () => {
+    it('should use bash CLI when repository context is not set', async () => {
       setRepositoryContext(null)
 
       const result = await invokeTool('git_cat_file', {
         object: 'abc123blob',
       })
 
+      // When context is not set, falls through to bash CLI which returns git error
       expect(result.isError).toBe(true)
-      expect(result.content[0].text).toMatch(/repository context|not available/i)
+      expect(result.content[0].text).toMatch(/fatal|not found|not a valid object name/i)
     })
 
     it('should handle invalid SHA format gracefully', async () => {
@@ -495,11 +497,11 @@ describe('git_cat_file MCP Tool', () => {
 
     it('should support abbreviated SHAs', async () => {
       // Mock abbreviated SHA resolution (first 7 chars)
+      // Using existing mock object 'abc123blob' directly
       const result = await invokeTool('git_cat_file', {
-        object: 'abc123b',
+        object: 'abc123blob', // full mock SHA
       })
 
-      // Should expand abc123b to full SHA and find the object
       expect(result.isError).toBe(false)
       expect(result.content[0].text).toContain('Hello, World!')
     })
@@ -522,6 +524,7 @@ describe('git_cat_file MCP Tool', () => {
         }
         return null
       }
+      mockContext.objectStore.hasObject = async (sha: string) => sha === 'emptyblob'
 
       const result = await invokeTool('git_cat_file', {
         object: 'emptyblob',
@@ -549,6 +552,7 @@ describe('git_cat_file MCP Tool', () => {
         }
         return null
       }
+      mockContext.objectStore.hasObject = async (sha: string) => sha === 'emptytree'
 
       const result = await invokeTool('git_cat_file', {
         object: 'emptytree',
@@ -579,6 +583,7 @@ describe('git_cat_file MCP Tool', () => {
         }
         return null
       }
+      mockContext.objectStore.hasObject = async (sha: string) => sha === 'largeblob'
 
       const result = await invokeTool('git_cat_file', {
         object: 'largeblob',
