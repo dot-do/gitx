@@ -173,6 +173,14 @@ export type ASTNode =
 export type ImpactLevel = 'none' | 'low' | 'medium' | 'high' | 'critical'
 
 /**
+ * Safety level classification for commands.
+ * - 'safe': Command can be executed without confirmation
+ * - 'dangerous': Command requires confirmation but can be executed with confirm flag
+ * - 'critical': Command is ALWAYS blocked regardless of confirmation (destructive/irreversible)
+ */
+export type SafetyLevel = 'safe' | 'dangerous' | 'critical'
+
+/**
  * Safety classification result from AST analysis.
  */
 export interface ASTSafetyAnalysis {
@@ -180,6 +188,14 @@ export interface ASTSafetyAnalysis {
    * Whether the command is considered dangerous.
    */
   dangerous: boolean
+
+  /**
+   * Safety classification level.
+   * - 'safe': Can execute without confirmation
+   * - 'dangerous': Requires confirmation (confirm flag allows execution)
+   * - 'critical': Always blocked, cannot be executed even with confirmation
+   */
+  safetyLevel: SafetyLevel
 
   /**
    * Reason for the classification.
@@ -214,7 +230,7 @@ export interface SafetyIssue {
   /**
    * Type of safety issue.
    */
-  type: 'dangerous_command' | 'dangerous_pattern' | 'blocked_command' | 'privilege_escalation' | 'data_destruction' | 'network_exfil' | 'code_injection'
+  type: 'dangerous_command' | 'dangerous_pattern' | 'blocked_command' | 'privilege_escalation' | 'data_destruction' | 'network_exfil' | 'code_injection' | 'critical_pattern'
 
   /**
    * Description of the issue.
@@ -225,6 +241,12 @@ export interface SafetyIssue {
    * Severity of the issue.
    */
   severity: ImpactLevel
+
+  /**
+   * Whether this issue represents a critical command that cannot be executed even with confirmation.
+   * When true, the command will be blocked regardless of the confirm flag.
+   */
+  critical?: boolean
 
   /**
    * Location in the original command.
@@ -805,6 +827,57 @@ const MEDIUM_IMPACT_COMMANDS = new Set([
 ])
 
 /**
+ * Critical patterns that should ALWAYS be blocked, regardless of confirmation.
+ * These patterns represent commands that could cause catastrophic, irreversible damage.
+ */
+const CRITICAL_PATTERNS: Array<{
+  pattern: RegExp
+  message: string
+}> = [
+  // rm -rf / or rm -rf /* (delete entire filesystem)
+  { pattern: /\brm\s+(-[rfvI]+\s+)*\/\s*$/, message: 'Cannot execute rm targeting root filesystem' },
+  { pattern: /\brm\s+(-[rfvI]+\s+)*\/\*/, message: 'Cannot execute rm with wildcard on root' },
+  // rm -rf with --no-preserve-root (explicit bypass of safety)
+  { pattern: /\brm\s+.*--no-preserve-root/, message: 'Cannot execute rm with --no-preserve-root' },
+  // Fork bomb patterns
+  { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, message: 'Fork bomb detected' },
+  { pattern: /\.\(\)\s*\{\s*\.\s*\|\s*\.\s*&\s*\}\s*;\s*\./, message: 'Fork bomb variant detected' },
+  // Writing random data to block devices
+  { pattern: /\bdd\s+.*if=\/dev\/(u?random|zero)\s+.*of=\/dev\/[hs]d[a-z]/, message: 'Cannot write to disk device' },
+  { pattern: /\bdd\s+.*of=\/dev\/[hs]d[a-z].*if=\/dev\/(u?random|zero)/, message: 'Cannot write to disk device' },
+  // Overwriting MBR
+  { pattern: /\bdd\s+.*of=\/dev\/[hs]d[a-z]\s+.*bs=\d+\s+.*count=1/, message: 'Cannot overwrite disk boot sector' },
+  // mkfs on system devices without confirmation
+  { pattern: /\bmkfs(\.\w+)?\s+(-[a-zA-Z]+\s+)*\/dev\/[hs]d[a-z]\d*/, message: 'Cannot format disk device' },
+  // Direct writes to /dev/sda, /dev/hda, /dev/nvme, etc.
+  { pattern: />\s*\/dev\/[hs]d[a-z]/, message: 'Cannot redirect output to disk device' },
+  { pattern: />\s*\/dev\/nvme\d+n\d+/, message: 'Cannot redirect output to NVMe device' },
+  // Kernel panic triggers
+  { pattern: /echo\s+[cso]\s*>\s*\/proc\/sysrq-trigger/, message: 'Cannot trigger kernel sysrq' },
+  // Memory bomb / consuming all memory
+  { pattern: /\bwhile\s*\(\s*true\s*\)\s*;\s*do\s+\w+\s*=\s*\$\w+\$\w+/, message: 'Potential memory bomb detected' },
+  // Overwriting critical boot files
+  { pattern: />\s*\/boot\//, message: 'Cannot write to /boot' },
+  { pattern: /\brm\s+(-[rfvI]+\s+)*\/boot/, message: 'Cannot delete /boot' },
+  // System destruction via mv
+  { pattern: /\bmv\s+\/\s+/, message: 'Cannot move root filesystem' },
+  { pattern: /\bmv\s+(-[a-zA-Z]+\s+)*\/\s+/, message: 'Cannot move root filesystem' },
+]
+
+/**
+ * Check if a command matches any critical pattern.
+ * Returns the matching pattern info if found, null otherwise.
+ */
+function matchesCriticalPattern(input: string): { pattern: RegExp; message: string } | null {
+  for (const { pattern, message } of CRITICAL_PATTERNS) {
+    if (pattern.test(input)) {
+      return { pattern, message }
+    }
+  }
+  return null
+}
+
+/**
  * Check if a command argument represents a dangerous path.
  */
 function isDangerousPath(arg: string): boolean {
@@ -912,8 +985,20 @@ function findSafetyIssues(ast: ASTNode, blockedCommands: Set<string> = new Set()
             arg.value.includes('r') && arg.value.includes('f') && arg.value.startsWith('-'))
           const hasDangerousPath = node.args.some(arg => isDangerousPath(arg.value))
           const hasWildcard = node.args.some(arg => arg.value.includes('*'))
+          const hasRootPath = node.args.some(arg => arg.value === '/' || arg.value === '/*')
+          const hasNoPreserveRoot = node.args.some(arg => arg.value === '--no-preserve-root')
 
-          if ((hasForceFlags && hasDangerousPath) || (hasForceFlags && hasWildcard)) {
+          // Critical: rm targeting root or with --no-preserve-root
+          if ((hasForceFlags && hasRootPath) || hasNoPreserveRoot) {
+            issues.push({
+              type: 'critical_pattern',
+              message: `rm targeting root filesystem is always blocked`,
+              severity: 'critical',
+              critical: true,
+              start: node.start,
+              end: node.end,
+            })
+          } else if ((hasForceFlags && hasDangerousPath) || (hasForceFlags && hasWildcard)) {
             issues.push({
               type: 'data_destruction',
               message: `rm with recursive/force flags targeting dangerous path`,
@@ -928,13 +1013,18 @@ function findSafetyIssues(ast: ASTNode, blockedCommands: Set<string> = new Set()
         if (cmdName === 'dd') {
           const ofArg = node.args.find(arg => arg.value.startsWith('of='))
           if (ofArg && ofArg.value.includes('/dev/')) {
-            issues.push({
-              type: 'data_destruction',
-              message: `dd writing to device`,
-              severity: 'critical',
-              start: node.start,
-              end: node.end,
-            })
+            // Check if it's writing to a block device (critical) vs a safe device like /dev/null
+            const isSafeDevice = ['/dev/null', '/dev/zero', '/dev/random', '/dev/urandom'].some(d => ofArg.value.includes(d))
+            if (!isSafeDevice) {
+              issues.push({
+                type: 'critical_pattern',
+                message: `dd writing to device is always blocked`,
+                severity: 'critical',
+                critical: true,
+                start: node.start,
+                end: node.end,
+              })
+            }
           }
         }
 
@@ -968,7 +1058,7 @@ function findSafetyIssues(ast: ASTNode, blockedCommands: Set<string> = new Set()
       }
 
       case 'pipeline': {
-        // Check for curl/wget piped to shell
+        // Check for curl/wget piped to shell (critical - remote code execution)
         const cmds = node.commands
         for (let i = 0; i < cmds.length - 1; i++) {
           const current = cmds[i]
@@ -979,9 +1069,10 @@ function findSafetyIssues(ast: ASTNode, blockedCommands: Set<string> = new Set()
             if ((currentName === 'curl' || currentName === 'wget') &&
                 (nextName === 'bash' || nextName === 'sh' || nextName === 'zsh')) {
               issues.push({
-                type: 'code_injection',
-                message: `Piping ${currentName} output to shell is dangerous`,
+                type: 'critical_pattern',
+                message: `Piping ${currentName} output to shell is always blocked`,
                 severity: 'critical',
+                critical: true,
                 start: node.start,
                 end: node.end,
               })
@@ -1004,13 +1095,15 @@ function findSafetyIssues(ast: ASTNode, blockedCommands: Set<string> = new Set()
 
   visit(ast)
 
-  // Check for fork bomb pattern using original input if available
+  // Check for critical patterns in the original input
   const textToCheck = originalInput ?? ast.raw
-  if (/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/.test(textToCheck)) {
+  const criticalMatch = matchesCriticalPattern(textToCheck)
+  if (criticalMatch) {
     issues.push({
-      type: 'code_injection',
-      message: 'Fork bomb detected',
+      type: 'critical_pattern',
+      message: criticalMatch.message,
       severity: 'critical',
+      critical: true,
       start: 0,
       end: textToCheck.length,
     })
@@ -1043,6 +1136,22 @@ function determineImpact(issues: SafetyIssue[], commands: string[]): ImpactLevel
 }
 
 /**
+ * Determine safety level from issues.
+ * - 'critical': Has issues marked as critical (cannot be executed even with confirm)
+ * - 'dangerous': Has issues but none are critical (can be executed with confirm)
+ * - 'safe': No issues found
+ */
+function determineSafetyLevel(issues: SafetyIssue[]): SafetyLevel {
+  if (issues.some(i => i.critical === true)) {
+    return 'critical'
+  }
+  if (issues.length > 0) {
+    return 'dangerous'
+  }
+  return 'safe'
+}
+
+/**
  * Analyze a bash command AST for safety.
  *
  * @param ast - The parsed AST to analyze
@@ -1067,10 +1176,12 @@ export function analyzeASTSafety(
   const commands = extractCommands(ast)
   const issues = findSafetyIssues(ast, blockedCommands, originalInput)
   const impact = determineImpact(issues, commands)
+  const safetyLevel = determineSafetyLevel(issues)
   const dangerous = issues.length > 0
 
   return {
     dangerous,
+    safetyLevel,
     reason: issues.length > 0 ? issues[0].message : undefined,
     commands,
     impact,

