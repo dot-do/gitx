@@ -379,4 +379,5 @@ MIT
 
 - [GitHub](https://github.com/dot-do/gitx)
 - [Documentation](https://gitx.do)
-- [dotdo Framework](https://do.org.ai)
+- [.do](https://do.org.ai)
+- [Platform.do](https://platform.do)
