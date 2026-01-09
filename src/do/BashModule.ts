@@ -1273,6 +1273,139 @@ export class BashModule {
     // Otherwise, single-quote escape
     return `'${arg.replace(/'/g, "'\\''")}'`
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Tagged Template Literal Support
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Tagged template literal for safe bash command execution.
+   *
+   * This method allows using template literal syntax for bash commands with
+   * automatic variable interpolation and escaping. Variables are safely
+   * escaped to prevent shell injection attacks.
+   *
+   * @param strings - Template literal string parts
+   * @param values - Interpolated values
+   * @returns Promise resolving to the execution result
+   *
+   * @example
+   * ```typescript
+   * // Simple usage
+   * const result = await this.$.bash`ls -la`
+   *
+   * // With interpolation
+   * const dir = '/tmp/my folder'
+   * const result = await this.$.bash`ls -la ${dir}`
+   *
+   * // With multiple variables
+   * const src = 'file.txt'
+   * const dest = 'backup/file.txt'
+   * const result = await this.$.bash`cp ${src} ${dest}`
+   * ```
+   */
+  tag(
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ): Promise<BashResult> {
+    const command = this.buildCommandFromTemplate(strings, values)
+    return this.run(command)
+  }
+
+  /**
+   * Build a command string from template literal parts with safe escaping.
+   *
+   * @param strings - Template literal string parts
+   * @param values - Interpolated values
+   * @returns The constructed command string with escaped values
+   * @internal
+   */
+  private buildCommandFromTemplate(
+    strings: TemplateStringsArray,
+    values: unknown[]
+  ): string {
+    let result = ''
+
+    for (let i = 0; i < strings.length; i++) {
+      result += strings[i]
+
+      if (i < values.length) {
+        const value = values[i]
+        result += this.escapeTemplateValue(value)
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Escape a template literal value for safe shell interpolation.
+   *
+   * Handles various types of values:
+   * - null/undefined: empty string
+   * - string: escaped with single quotes if needed
+   * - number/boolean: converted to string directly
+   * - array: each element escaped and joined with spaces
+   * - object: JSON stringified and escaped
+   *
+   * @param value - The value to escape
+   * @returns The escaped string representation
+   * @internal
+   */
+  private escapeTemplateValue(value: unknown): string {
+    // Handle null/undefined
+    if (value === null || value === undefined) {
+      return ''
+    }
+
+    // Handle numbers and booleans - safe to use directly
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+
+    // Handle arrays - escape each element and join
+    if (Array.isArray(value)) {
+      return value.map(v => this.escapeTemplateValue(v)).join(' ')
+    }
+
+    // Handle objects (except arrays) - JSON stringify and escape
+    if (typeof value === 'object') {
+      return this.escapeShellString(JSON.stringify(value))
+    }
+
+    // Handle strings
+    return this.escapeShellString(String(value))
+  }
+
+  /**
+   * Escape a string for safe shell use.
+   *
+   * Uses single-quote escaping which is the safest form of escaping
+   * for bash. Single quotes prevent all special character interpretation
+   * except for the single quote itself.
+   *
+   * @param str - The string to escape
+   * @returns The escaped string
+   * @internal
+   */
+  private escapeShellString(str: string): string {
+    // If the string is empty, return empty quoted string
+    if (str === '') {
+      return "''"
+    }
+
+    // If the string contains no special characters, return as-is
+    // This is more readable for simple cases like file paths without spaces
+    if (/^[a-zA-Z0-9._\-/=@:]+$/.test(str)) {
+      return str
+    }
+
+    // Otherwise, use single-quote escaping
+    // Single quotes prevent all interpretation except ' itself
+    // To include a single quote, we end the quoted string, add an escaped quote, and start a new quoted string
+    // 'It'\''s' -> It's
+    return `'${str.replace(/'/g, "'\\''")}'`
+  }
 }
 
 // ============================================================================
