@@ -196,3 +196,73 @@ export {
   type WithGitOptions,
   type WithGitContext,
 }
+
+// ============================================================================
+// FsModule Imports and Exports
+// ============================================================================
+
+import {
+  FsModule,
+  createFsModule,
+  isFsModule,
+  // Constants
+  S_IFMT,
+  S_IFREG,
+  S_IFDIR,
+  S_IFLNK,
+  // Error classes
+  ENOENT,
+  EEXIST,
+  EISDIR,
+  ENOTDIR,
+  ENOTEMPTY,
+  // Types
+  type FsModuleOptions,
+  type SqlStorage,
+  type SqlResult,
+  type R2BucketLike as FsR2BucketLike,
+  type R2ObjectLike as FsR2ObjectLike,
+  type ReadOptions,
+  type WriteOptions,
+  type MkdirOptions,
+  type RmdirOptions,
+  type RemoveOptions,
+  type ReaddirOptions,
+  type MoveOptions,
+  type CopyOptions,
+  type Dirent,
+  type Stats,
+} from './FsModule'
+
+export {
+  FsModule,
+  createFsModule,
+  isFsModule,
+  // Constants
+  S_IFMT,
+  S_IFREG,
+  S_IFDIR,
+  S_IFLNK,
+  // Error classes
+  ENOENT,
+  EEXIST,
+  EISDIR,
+  ENOTDIR,
+  ENOTEMPTY,
+  // Types
+  type FsModuleOptions,
+  type SqlStorage,
+  type SqlResult,
+  type FsR2BucketLike,
+  type FsR2ObjectLike,
+  type ReadOptions,
+  type WriteOptions,
+  type MkdirOptions,
+  type RmdirOptions,
+  type RemoveOptions,
+  type ReaddirOptions,
+  type MoveOptions,
+  type CopyOptions,
+  type Dirent,
+  type Stats,
+}
