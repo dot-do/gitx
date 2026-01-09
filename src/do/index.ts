@@ -56,6 +56,29 @@ export {
 } from './GitModule'
 
 // ============================================================================
+// BashModule Exports
+// ============================================================================
+
+export {
+  // Main class
+  BashModule,
+  // Factory function
+  createBashModule,
+  // Type guard
+  isBashModule,
+  // Types
+  type BashModuleOptions,
+  type BashResult,
+  type ExecOptions,
+  type SpawnOptions,
+  type SpawnHandle,
+  type BashExecutor,
+  type SafetyAnalysis,
+  // Re-export FsCapability (already exported from GitModule, but alias here)
+  type FsCapability as BashFsCapability,
+} from './BashModule'
+
+// ============================================================================
 // Mixin Exports (placeholder for gitx-0qbp task)
 // ============================================================================
 
