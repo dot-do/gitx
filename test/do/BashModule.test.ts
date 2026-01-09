@@ -575,3 +575,345 @@ describe('BashModule requireConfirmation option', () => {
     expect(result.blocked).toBeUndefined()
   })
 })
+
+// ============================================================================
+// Mock Storage Implementation
+// ============================================================================
+
+/**
+ * Mock BashStorage for testing database integration
+ */
+class MockBashStorage {
+  private tables: Map<string, unknown[]> = new Map()
+  private autoIncrementId = 1
+
+  constructor() {
+    this.tables.set('exec', [])
+  }
+
+  sql = {
+    exec: (query: string, ...params: unknown[]) => {
+      const rows = this.executeQuery(query, params)
+      return {
+        toArray: () => rows
+      }
+    }
+  }
+
+  private executeQuery(query: string, params: unknown[]): unknown[] {
+    const execTable = this.tables.get('exec') as Record<string, unknown>[]
+
+    // Handle SELECT queries
+    if (query.toUpperCase().startsWith('SELECT')) {
+      if (query.includes('WHERE name = ?')) {
+        const name = params[0] as string
+        return execTable.filter(row => row.name === name)
+      }
+      if (query.includes('WHERE id = ?')) {
+        const id = params[0] as number
+        return execTable.filter(row => row.id === id)
+      }
+      return execTable
+    }
+
+    // Handle INSERT queries
+    if (query.toUpperCase().startsWith('INSERT')) {
+      const newRow: Record<string, unknown> = {
+        id: this.autoIncrementId++,
+        name: params[0] as string,
+        blocked_commands: params[1],
+        require_confirmation: params[2],
+        default_timeout: params[3],
+        default_cwd: params[4],
+        allowed_patterns: params[5],
+        denied_patterns: params[6],
+        max_concurrent: params[7],
+        enabled: params[8],
+        created_at: params[9],
+        updated_at: params[10],
+      }
+      execTable.push(newRow)
+      return []
+    }
+
+    // Handle UPDATE queries
+    if (query.toUpperCase().startsWith('UPDATE')) {
+      const id = params[params.length - 1] as number
+      const rowIndex = execTable.findIndex(row => row.id === id)
+      if (rowIndex >= 0) {
+        execTable[rowIndex] = {
+          ...execTable[rowIndex],
+          blocked_commands: params[0],
+          require_confirmation: params[1],
+          default_timeout: params[2],
+          default_cwd: params[3],
+          allowed_patterns: params[4],
+          denied_patterns: params[5],
+          max_concurrent: params[6],
+          enabled: params[7],
+          updated_at: params[8],
+        }
+      }
+      return []
+    }
+
+    return []
+  }
+
+  // Test helper to inspect stored data
+  _getExecTable(): unknown[] {
+    return this.tables.get('exec') || []
+  }
+
+  _reset(): void {
+    this.tables.set('exec', [])
+    this.autoIncrementId = 1
+  }
+}
+
+// ============================================================================
+// Database Integration Tests
+// ============================================================================
+
+describe('BashModule with storage integration', () => {
+  let mockStorage: MockBashStorage
+  let mockExecutor: MockBashExecutor
+
+  beforeEach(() => {
+    mockStorage = new MockBashStorage()
+    mockExecutor = new MockBashExecutor()
+  })
+
+  describe('initialize()', () => {
+    it('should create a new policy in the database when none exists', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'test-policy',
+        blockedCommands: ['rm', 'wget'],
+      })
+
+      await module.initialize()
+
+      const execTable = mockStorage._getExecTable() as Record<string, unknown>[]
+      expect(execTable.length).toBe(1)
+      expect(execTable[0].name).toBe('test-policy')
+      expect(JSON.parse(execTable[0].blocked_commands as string)).toEqual(['rm', 'wget'])
+    })
+
+    it('should load existing policy from database', async () => {
+      // Create a policy directly in storage
+      mockStorage.sql.exec(
+        `INSERT INTO exec (name, blocked_commands, require_confirmation, default_timeout, default_cwd, allowed_patterns, denied_patterns, max_concurrent, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        'existing-policy',
+        JSON.stringify(['curl', 'scp']),
+        0,
+        60000,
+        '/home',
+        null,
+        null,
+        10,
+        1,
+        Date.now(),
+        Date.now()
+      )
+
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'existing-policy',
+      })
+
+      await module.initialize()
+
+      const policy = module.getPolicy()
+      expect(policy.blockedCommands).toEqual(['curl', 'scp'])
+      expect(policy.requireConfirmation).toBe(false)
+      expect(policy.defaultTimeout).toBe(60000)
+      expect(policy.defaultCwd).toBe('/home')
+      expect(policy.maxConcurrent).toBe(10)
+    })
+
+    it('should use default policy name when not specified', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+      })
+
+      await module.initialize()
+
+      const policy = module.getPolicy()
+      expect(policy.name).toBe('default')
+    })
+  })
+
+  describe('getPolicy()', () => {
+    it('should return current policy configuration', () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        blockedCommands: ['rm'],
+        requireConfirmation: true,
+        defaultTimeout: 45000,
+        cwd: '/app',
+        policyName: 'my-policy',
+      })
+
+      const policy = module.getPolicy()
+
+      expect(policy.name).toBe('my-policy')
+      expect(policy.blockedCommands).toEqual(['rm'])
+      expect(policy.requireConfirmation).toBe(true)
+      expect(policy.defaultTimeout).toBe(45000)
+      expect(policy.defaultCwd).toBe('/app')
+    })
+  })
+
+  describe('updatePolicy()', () => {
+    it('should update policy and persist to database', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'update-test',
+      })
+
+      await module.initialize()
+
+      await module.updatePolicy({
+        blockedCommands: ['rm', 'dd', 'mkfs'],
+        requireConfirmation: false,
+        defaultTimeout: 60000,
+        maxConcurrent: 3,
+      })
+
+      const policy = module.getPolicy()
+      expect(policy.blockedCommands).toEqual(['rm', 'dd', 'mkfs'])
+      expect(policy.requireConfirmation).toBe(false)
+      expect(policy.defaultTimeout).toBe(60000)
+      expect(policy.maxConcurrent).toBe(3)
+
+      // Verify persistence
+      const execTable = mockStorage._getExecTable() as Record<string, unknown>[]
+      expect(execTable.length).toBe(1)
+      expect(JSON.parse(execTable[0].blocked_commands as string)).toEqual(['rm', 'dd', 'mkfs'])
+    })
+
+    it('should update individual policy fields', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'partial-update',
+        blockedCommands: ['rm'],
+        defaultTimeout: 30000,
+      })
+
+      await module.initialize()
+
+      // Only update timeout
+      await module.updatePolicy({
+        defaultTimeout: 90000,
+      })
+
+      const policy = module.getPolicy()
+      expect(policy.blockedCommands).toEqual(['rm']) // Unchanged
+      expect(policy.defaultTimeout).toBe(90000) // Updated
+    })
+  })
+
+  describe('block() with storage', () => {
+    it('should persist blocked command to database', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'block-test',
+      })
+
+      await module.initialize()
+
+      module.block('dangerous-cmd')
+
+      // Allow async persistence to complete
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      const execTable = mockStorage._getExecTable() as Record<string, unknown>[]
+      const blockedCommands = JSON.parse(execTable[0].blocked_commands as string)
+      expect(blockedCommands).toContain('dangerous-cmd')
+    })
+  })
+
+  describe('unblock() with storage', () => {
+    it('should persist unblocked command to database', async () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'unblock-test',
+        blockedCommands: ['cmd1', 'cmd2', 'cmd3'],
+      })
+
+      await module.initialize()
+
+      module.unblock('cmd2')
+
+      // Allow async persistence to complete
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      const execTable = mockStorage._getExecTable() as Record<string, unknown>[]
+      const blockedCommands = JSON.parse(execTable[0].blocked_commands as string)
+      expect(blockedCommands).toEqual(['cmd1', 'cmd3'])
+      expect(blockedCommands).not.toContain('cmd2')
+    })
+  })
+
+  describe('isEnabled()', () => {
+    it('should return true by default', () => {
+      const module = new BashModule({ executor: mockExecutor })
+      expect(module.isEnabled()).toBe(true)
+    })
+
+    it('should reflect enabled state from loaded policy', async () => {
+      // Create a disabled policy
+      mockStorage.sql.exec(
+        `INSERT INTO exec (name, blocked_commands, require_confirmation, default_timeout, default_cwd, allowed_patterns, denied_patterns, max_concurrent, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        'disabled-policy',
+        '[]',
+        1,
+        30000,
+        '/',
+        null,
+        null,
+        5,
+        0,  // disabled
+        Date.now(),
+        Date.now()
+      )
+
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+        policyName: 'disabled-policy',
+      })
+
+      await module.initialize()
+
+      expect(module.isEnabled()).toBe(false)
+    })
+  })
+
+  describe('hasStorage()', () => {
+    it('should return true when storage is configured', () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+        storage: mockStorage,
+      })
+      expect(module.hasStorage()).toBe(true)
+    })
+
+    it('should return false when storage is not configured', () => {
+      const module = new BashModule({
+        executor: mockExecutor,
+      })
+      expect(module.hasStorage()).toBe(false)
+    })
+  })
+})

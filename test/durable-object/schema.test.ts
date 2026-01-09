@@ -218,6 +218,34 @@ describe('SchemaManager', () => {
       expect(indexes).toContain('idx_hot_objects_accessed')
     })
 
+    it('should create exec table for BashModule integration', async () => {
+      await schemaManager.initializeSchema()
+
+      const tables = storage.getTables()
+      expect(tables).toContain('exec')
+
+      const columns = storage.getTableColumns('exec')
+      expect(columns).toBeDefined()
+      expect(columns).toContain('id')
+      expect(columns).toContain('name')
+      expect(columns).toContain('blocked_commands')
+      expect(columns).toContain('require_confirmation')
+      expect(columns).toContain('default_timeout')
+      expect(columns).toContain('default_cwd')
+      expect(columns).toContain('allowed_patterns')
+      expect(columns).toContain('denied_patterns')
+      expect(columns).toContain('max_concurrent')
+      expect(columns).toContain('enabled')
+    })
+
+    it('should create exec table indexes', async () => {
+      await schemaManager.initializeSchema()
+
+      const indexes = storage.getIndexes()
+      expect(indexes).toContain('idx_exec_name')
+      expect(indexes).toContain('idx_exec_enabled')
+    })
+
     it('should be idempotent - can be called multiple times without error', async () => {
       await schemaManager.initializeSchema()
       const tablesAfterFirst = storage.getTables()
@@ -276,6 +304,14 @@ describe('SchemaManager', () => {
       expect(isValid).toBe(false)
     })
 
+    it('should return false when exec table is missing', async () => {
+      await schemaManager.initializeSchema()
+      storage.removeTable('exec')
+
+      const isValid = await schemaManager.validateSchema()
+      expect(isValid).toBe(false)
+    })
+
     it('should return false when schema is not initialized', async () => {
       const isValid = await schemaManager.validateSchema()
       expect(isValid).toBe(false)
@@ -289,12 +325,15 @@ describe('SchemaManager', () => {
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS hot_objects')
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS wal')
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS refs')
+      expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS exec')
     })
 
     it('should contain CREATE INDEX statements for performance indexes', () => {
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_objects_type')
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_wal_flushed')
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_hot_objects_accessed')
+      expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_exec_name')
+      expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_exec_enabled')
     })
   })
 

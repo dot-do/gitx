@@ -11,6 +11,10 @@
  * - `hot_objects`: Frequently accessed objects cache
  * - `wal`: Write-ahead log for durability
  * - `refs`: Git references (branches, tags, HEAD)
+ * - `git`: Repository bindings for GitModule integration
+ * - `git_branches`: Branch tracking information per repository
+ * - `git_content`: Staged file content for commits
+ * - `exec`: Execution safety settings and policies for BashModule
  *
  * @module durable-object/schema
  *
@@ -114,11 +118,18 @@ export const SCHEMA_VERSION = 1
  * - `hot_objects`: Cache for frequently accessed objects
  * - `wal`: Write-ahead log for crash recovery
  * - `refs`: Git references (branches, tags, symbolic refs)
+ * - `git`: Repository bindings (repo, branch, commit, last_sync)
+ * - `git_branches`: Branch info per repository (name, head, upstream)
+ * - `git_content`: Staged file content (path, content, status)
+ * - `exec`: Execution policies (blocked_commands, require_confirmation, etc.)
  *
  * **Indexes**:
  * - `idx_objects_type`: Fast lookup by object type
  * - `idx_wal_flushed`: Find unflushed WAL entries
  * - `idx_hot_objects_accessed`: LRU eviction ordering
+ * - `idx_git_branches_repo`: Fast branch lookup by repository
+ * - `idx_git_content_repo_path`: Fast staged file lookup
+ * - `idx_exec_name`: Fast lookup by policy name
  */
 export const SCHEMA_SQL = `
 -- Git objects (blobs, trees, commits, tags)
@@ -138,12 +149,79 @@ CREATE TABLE IF NOT EXISTS wal (id INTEGER PRIMARY KEY AUTOINCREMENT, operation 
 -- Refs table
 CREATE TABLE IF NOT EXISTS refs (name TEXT PRIMARY KEY, target TEXT NOT NULL, type TEXT DEFAULT 'sha', updated_at INTEGER);
 
+-- Git repository bindings for GitModule integration
+-- Stores repository configuration and sync state
+CREATE TABLE IF NOT EXISTS git (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT NOT NULL UNIQUE,
+  path TEXT,
+  branch TEXT NOT NULL DEFAULT 'main',
+  commit TEXT,
+  last_sync INTEGER,
+  object_prefix TEXT DEFAULT 'git/objects',
+  created_at INTEGER,
+  updated_at INTEGER
+);
+
+-- Git branches table for tracking branch state per repository
+-- Each repository can have multiple branches tracked
+CREATE TABLE IF NOT EXISTS git_branches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id INTEGER NOT NULL REFERENCES git(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  head TEXT,
+  upstream TEXT,
+  tracking INTEGER DEFAULT 0,
+  ahead INTEGER DEFAULT 0,
+  behind INTEGER DEFAULT 0,
+  created_at INTEGER,
+  updated_at INTEGER,
+  UNIQUE(repo_id, name)
+);
+
+-- Git content table for staged files awaiting commit
+-- Stores file path, content blob, and staging status
+CREATE TABLE IF NOT EXISTS git_content (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id INTEGER NOT NULL REFERENCES git(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  content BLOB,
+  mode TEXT DEFAULT '100644',
+  status TEXT NOT NULL DEFAULT 'staged',
+  sha TEXT,
+  created_at INTEGER,
+  updated_at INTEGER,
+  UNIQUE(repo_id, path)
+);
+
+-- Exec table for BashModule execution safety settings and policies
+-- Stores blocked commands, confirmation requirements, and execution policies
+CREATE TABLE IF NOT EXISTS exec (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  blocked_commands TEXT,
+  require_confirmation INTEGER DEFAULT 1,
+  default_timeout INTEGER DEFAULT 30000,
+  default_cwd TEXT DEFAULT '/',
+  allowed_patterns TEXT,
+  denied_patterns TEXT,
+  max_concurrent INTEGER DEFAULT 5,
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER,
+  updated_at INTEGER
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type);
 CREATE INDEX IF NOT EXISTS idx_wal_flushed ON wal(flushed);
 CREATE INDEX IF NOT EXISTS idx_hot_objects_accessed ON hot_objects(accessed_at);
 CREATE INDEX IF NOT EXISTS idx_object_index_tier ON object_index(tier);
 CREATE INDEX IF NOT EXISTS idx_object_index_pack_id ON object_index(pack_id);
+CREATE INDEX IF NOT EXISTS idx_git_branches_repo ON git_branches(repo_id);
+CREATE INDEX IF NOT EXISTS idx_git_content_repo_path ON git_content(repo_id, path);
+CREATE INDEX IF NOT EXISTS idx_git_content_status ON git_content(status);
+CREATE INDEX IF NOT EXISTS idx_exec_name ON exec(name);
+CREATE INDEX IF NOT EXISTS idx_exec_enabled ON exec(enabled);
 `
 
 /**
@@ -153,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_object_index_pack_id ON object_index(pack_id);
  * Used by validateSchema() to verify all required tables exist.
  * @internal
  */
-const REQUIRED_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'refs']
+const REQUIRED_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'refs', 'git', 'git_branches', 'git_content', 'exec']
 
 // ============================================================================
 // SchemaManager Class

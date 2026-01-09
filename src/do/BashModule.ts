@@ -186,6 +186,102 @@ export interface BashExecutor {
 }
 
 /**
+ * Database storage interface for BashModule persistence.
+ * Provides access to the exec table for safety settings and policies.
+ */
+export interface BashStorage {
+  /**
+   * SQL execution interface.
+   */
+  sql: {
+    /**
+     * Execute a SQL query with optional parameters.
+     * @param query - SQL query string (can use ? placeholders)
+     * @param params - Parameter values for placeholders
+     * @returns Result object with toArray() method for reading rows
+     */
+    exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
+  }
+}
+
+/**
+ * Row structure for the exec table.
+ * Represents an execution policy with safety settings.
+ */
+export interface ExecRow {
+  id: number
+  name: string
+  blocked_commands: string | null
+  require_confirmation: number
+  default_timeout: number
+  default_cwd: string
+  allowed_patterns: string | null
+  denied_patterns: string | null
+  max_concurrent: number
+  enabled: number
+  created_at: number | null
+  updated_at: number | null
+}
+
+/**
+ * Execution policy configuration.
+ * Used to define and persist execution safety settings.
+ */
+export interface ExecPolicy {
+  /**
+   * Unique name for this policy.
+   */
+  name: string
+
+  /**
+   * List of commands that are blocked from execution.
+   */
+  blockedCommands: string[]
+
+  /**
+   * Whether to require confirmation for dangerous commands.
+   * @default true
+   */
+  requireConfirmation: boolean
+
+  /**
+   * Default timeout for commands in milliseconds.
+   * @default 30000
+   */
+  defaultTimeout: number
+
+  /**
+   * Default working directory for commands.
+   * @default '/'
+   */
+  defaultCwd: string
+
+  /**
+   * Regex patterns for allowed commands.
+   * If specified, only matching commands are allowed.
+   */
+  allowedPatterns?: string[]
+
+  /**
+   * Regex patterns for denied commands.
+   * Matching commands are blocked regardless of other settings.
+   */
+  deniedPatterns?: string[]
+
+  /**
+   * Maximum number of concurrent executions.
+   * @default 5
+   */
+  maxConcurrent: number
+
+  /**
+   * Whether this policy is enabled.
+   * @default true
+   */
+  enabled: boolean
+}
+
+/**
  * Configuration options for BashModule.
  */
 export interface BashModuleOptions {
@@ -223,6 +319,18 @@ export interface BashModuleOptions {
    * @default true
    */
   requireConfirmation?: boolean
+
+  /**
+   * Database storage for persistent settings.
+   * When provided, BashModule will persist settings to the exec table.
+   */
+  storage?: BashStorage
+
+  /**
+   * Policy name to use when persisting settings.
+   * @default 'default'
+   */
+  policyName?: string
 }
 
 /**
@@ -316,22 +424,57 @@ export class BashModule {
   /**
    * Default working directory.
    */
-  private readonly defaultCwd: string
+  private defaultCwd: string
 
   /**
    * Default timeout in milliseconds.
    */
-  private readonly defaultTimeout: number
+  private defaultTimeout: number
 
   /**
    * List of blocked commands.
    */
-  private readonly blockedCommands: Set<string>
+  private blockedCommands: Set<string>
 
   /**
    * Whether to require confirmation for dangerous commands.
    */
-  private readonly requireConfirmation: boolean
+  private requireConfirmation: boolean
+
+  /**
+   * Database storage for persistence.
+   */
+  private readonly storage?: BashStorage
+
+  /**
+   * Policy name for database operations.
+   */
+  private readonly policyName: string
+
+  /**
+   * Database row ID for this policy.
+   */
+  private policyId?: number
+
+  /**
+   * Allowed command patterns (regex).
+   */
+  private allowedPatterns: RegExp[] = []
+
+  /**
+   * Denied command patterns (regex).
+   */
+  private deniedPatterns: RegExp[] = []
+
+  /**
+   * Maximum concurrent executions.
+   */
+  private maxConcurrent: number = 5
+
+  /**
+   * Whether the policy is enabled.
+   */
+  private enabled: boolean = true
 
   /**
    * Commands considered dangerous and requiring confirmation.
@@ -396,15 +539,147 @@ export class BashModule {
     this.defaultTimeout = options.defaultTimeout ?? 30000
     this.blockedCommands = new Set(options.blockedCommands ?? [])
     this.requireConfirmation = options.requireConfirmation ?? true
+    this.storage = options.storage
+    this.policyName = options.policyName ?? 'default'
   }
 
   /**
    * Optional initialization hook.
    * Called when the module is first loaded.
+   * When storage is provided, loads or creates the execution policy from the database.
    */
   async initialize(): Promise<void> {
-    // Initialization logic if needed
-    // For example, verify executor connectivity
+    if (!this.storage) return
+
+    // Try to load existing policy
+    const existingRows = this.storage.sql.exec(
+      'SELECT * FROM exec WHERE name = ?',
+      this.policyName
+    ).toArray() as ExecRow[]
+
+    if (existingRows.length > 0) {
+      // Load existing settings
+      const row = existingRows[0]
+      this.policyId = row.id
+      this.loadFromRow(row)
+    } else {
+      // Create new policy with current settings
+      await this.persistPolicy()
+    }
+  }
+
+  /**
+   * Load settings from a database row.
+   */
+  private loadFromRow(row: ExecRow): void {
+    // Parse blocked commands from JSON string
+    if (row.blocked_commands) {
+      try {
+        const commands = JSON.parse(row.blocked_commands) as string[]
+        this.blockedCommands = new Set(commands)
+      } catch {
+        this.blockedCommands = new Set()
+      }
+    }
+
+    this.requireConfirmation = row.require_confirmation === 1
+    this.defaultTimeout = row.default_timeout
+    this.defaultCwd = row.default_cwd
+    this.maxConcurrent = row.max_concurrent
+    this.enabled = row.enabled === 1
+
+    // Parse allowed patterns
+    if (row.allowed_patterns) {
+      try {
+        const patterns = JSON.parse(row.allowed_patterns) as string[]
+        this.allowedPatterns = patterns.map(p => new RegExp(p))
+      } catch {
+        this.allowedPatterns = []
+      }
+    }
+
+    // Parse denied patterns
+    if (row.denied_patterns) {
+      try {
+        const patterns = JSON.parse(row.denied_patterns) as string[]
+        this.deniedPatterns = patterns.map(p => new RegExp(p))
+      } catch {
+        this.deniedPatterns = []
+      }
+    }
+  }
+
+  /**
+   * Persist current policy settings to the database.
+   */
+  private async persistPolicy(): Promise<void> {
+    if (!this.storage) return
+
+    const now = Date.now()
+    const blockedCommandsJson = JSON.stringify(Array.from(this.blockedCommands))
+    const allowedPatternsJson = this.allowedPatterns.length > 0
+      ? JSON.stringify(this.allowedPatterns.map(p => p.source))
+      : null
+    const deniedPatternsJson = this.deniedPatterns.length > 0
+      ? JSON.stringify(this.deniedPatterns.map(p => p.source))
+      : null
+
+    if (this.policyId) {
+      // Update existing policy
+      this.storage.sql.exec(
+        `UPDATE exec SET
+          blocked_commands = ?,
+          require_confirmation = ?,
+          default_timeout = ?,
+          default_cwd = ?,
+          allowed_patterns = ?,
+          denied_patterns = ?,
+          max_concurrent = ?,
+          enabled = ?,
+          updated_at = ?
+        WHERE id = ?`,
+        blockedCommandsJson,
+        this.requireConfirmation ? 1 : 0,
+        this.defaultTimeout,
+        this.defaultCwd,
+        allowedPatternsJson,
+        deniedPatternsJson,
+        this.maxConcurrent,
+        this.enabled ? 1 : 0,
+        now,
+        this.policyId
+      )
+    } else {
+      // Insert new policy
+      this.storage.sql.exec(
+        `INSERT INTO exec (
+          name, blocked_commands, require_confirmation, default_timeout,
+          default_cwd, allowed_patterns, denied_patterns, max_concurrent,
+          enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        this.policyName,
+        blockedCommandsJson,
+        this.requireConfirmation ? 1 : 0,
+        this.defaultTimeout,
+        this.defaultCwd,
+        allowedPatternsJson,
+        deniedPatternsJson,
+        this.maxConcurrent,
+        this.enabled ? 1 : 0,
+        now,
+        now
+      )
+
+      // Get the inserted row ID
+      const insertedRows = this.storage.sql.exec(
+        'SELECT id FROM exec WHERE name = ?',
+        this.policyName
+      ).toArray() as Pick<ExecRow, 'id'>[]
+
+      if (insertedRows.length > 0) {
+        this.policyId = insertedRows[0].id
+      }
+    }
   }
 
   /**
@@ -742,20 +1017,30 @@ export class BashModule {
 
   /**
    * Add a command to the blocked list.
+   * Persists the change to the database if storage is configured.
    *
    * @param command - Command to block
    */
   block(command: string): void {
     this.blockedCommands.add(command)
+    // Persist to database asynchronously
+    this.persistPolicy().catch(() => {
+      // Silently ignore persistence errors
+    })
   }
 
   /**
    * Remove a command from the blocked list.
+   * Persists the change to the database if storage is configured.
    *
    * @param command - Command to unblock
    */
   unblock(command: string): void {
     this.blockedCommands.delete(command)
+    // Persist to database asynchronously
+    this.persistPolicy().catch(() => {
+      // Silently ignore persistence errors
+    })
   }
 
   /**
@@ -765,6 +1050,78 @@ export class BashModule {
    */
   getBlockedCommands(): string[] {
     return Array.from(this.blockedCommands)
+  }
+
+  /**
+   * Get the current execution policy.
+   *
+   * @returns Current policy configuration
+   */
+  getPolicy(): ExecPolicy {
+    return {
+      name: this.policyName,
+      blockedCommands: Array.from(this.blockedCommands),
+      requireConfirmation: this.requireConfirmation,
+      defaultTimeout: this.defaultTimeout,
+      defaultCwd: this.defaultCwd,
+      allowedPatterns: this.allowedPatterns.map(p => p.source),
+      deniedPatterns: this.deniedPatterns.map(p => p.source),
+      maxConcurrent: this.maxConcurrent,
+      enabled: this.enabled
+    }
+  }
+
+  /**
+   * Update the execution policy.
+   * Persists the changes to the database if storage is configured.
+   *
+   * @param policy - Partial policy configuration to update
+   */
+  async updatePolicy(policy: Partial<Omit<ExecPolicy, 'name'>>): Promise<void> {
+    if (policy.blockedCommands !== undefined) {
+      this.blockedCommands = new Set(policy.blockedCommands)
+    }
+    if (policy.requireConfirmation !== undefined) {
+      this.requireConfirmation = policy.requireConfirmation
+    }
+    if (policy.defaultTimeout !== undefined) {
+      this.defaultTimeout = policy.defaultTimeout
+    }
+    if (policy.defaultCwd !== undefined) {
+      this.defaultCwd = policy.defaultCwd
+    }
+    if (policy.allowedPatterns !== undefined) {
+      this.allowedPatterns = policy.allowedPatterns.map(p => new RegExp(p))
+    }
+    if (policy.deniedPatterns !== undefined) {
+      this.deniedPatterns = policy.deniedPatterns.map(p => new RegExp(p))
+    }
+    if (policy.maxConcurrent !== undefined) {
+      this.maxConcurrent = policy.maxConcurrent
+    }
+    if (policy.enabled !== undefined) {
+      this.enabled = policy.enabled
+    }
+
+    await this.persistPolicy()
+  }
+
+  /**
+   * Check if the policy is enabled.
+   *
+   * @returns True if the policy is enabled
+   */
+  isEnabled(): boolean {
+    return this.enabled
+  }
+
+  /**
+   * Check if database storage is available.
+   *
+   * @returns True if storage is configured
+   */
+  hasStorage(): boolean {
+    return this.storage !== undefined
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
