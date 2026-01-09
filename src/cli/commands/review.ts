@@ -285,7 +285,34 @@ function parseDiffLines(diff: string): { oldLines: string[]; newLines: string[];
  * // gitx review --split main feature/auth
  * // gitx review --interactive
  */
-export async function reviewCommand(_ctx: CommandContext): Promise<void> {
+export async function reviewCommand(ctx: CommandContext): Promise<void> {
+  const { options, stdout } = ctx
+
+  // Handle --help flag
+  if (options.help || options.h) {
+    stdout(`gitx review - PR-style diff review between branches or commits
+
+Usage: gitx review [options] [<base>] [<head>]
+       gitx review [options] <base>..<head>
+       gitx review [options] <base>...<head>
+
+Options:
+  -i, --interactive  Enable interactive terminal UI
+  -s, --split        Use side-by-side split view
+  -h, --help         Show this help message
+
+Arguments:
+  <base>  Base branch or commit (defaults to main/master)
+  <head>  Head branch or commit (defaults to HEAD)
+
+Examples:
+  gitx review                    Review current branch vs main
+  gitx review main feature       Review feature vs main
+  gitx review main..feature      Same as above (PR syntax)
+  gitx review -i                 Interactive mode`)
+    return
+  }
+
   throw new Error('Not implemented')
 }
 

@@ -27,6 +27,7 @@
 import cac from 'cac'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
+import { checkoutCommand } from './commands/checkout'
 
 // ============================================================================
 // Types
@@ -179,7 +180,7 @@ type CommandHandler = (ctx: CommandContext) => void | Promise<void>
 // ============================================================================
 
 /** Available subcommands for the CLI */
-const SUBCOMMANDS = ['status', 'diff', 'log', 'blame', 'commit', 'branch', 'review', 'web'] as const
+const SUBCOMMANDS = ['status', 'diff', 'log', 'blame', 'commit', 'branch', 'checkout', 'review', 'web'] as const
 
 /** Current CLI version */
 const VERSION = '0.0.1'
@@ -330,7 +331,8 @@ export class CLI {
         'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'D', 'list',
         'interactive', 'port', 'open', 'verbose', 'vv', 'u', 'includeUntracked', 'keepIndex', 'index',
         'message', 'quiet', 'q', 'pathspec', 'force', 'f', 'b', 'B', 'track', 't', 'merge', 'detach',
-        'orphan', 'theirs', 'ours', 'conflict', 'patch', 'p']
+        'orphan', 'theirs', 'ours', 'conflict', 'patch', 'p', 'ff', 'ffOnly', 'squash', 'abort',
+        'continue', 'strategy', 'strategyOption', 'update', 'dryRun', 'intentToAdd', 'refresh', 'A', 'N']
       for (const key of Object.keys(parsed.options)) {
         if (!knownFlags.includes(key) && key !== '--') {
           this.stderr(`Unknown option: --${key}\nRun 'gitx --help' for available commands.`)
@@ -409,6 +411,7 @@ Commands:
   blame     Show what revision and author last modified each line
   commit    Record changes to the repository
   branch    List, create, or delete branches
+  checkout  Switch branches or restore working tree files
   review    Review pull requests
   web       Start the web interface
 
@@ -435,6 +438,7 @@ Options:
       blame: 'Show what revision and author last modified each line',
       commit: 'Record changes to the repository',
       branch: 'List, create, or delete branches',
+      checkout: 'Switch branches or restore working tree files',
       review: 'Review pull requests',
       web: 'Start the web interface'
     }
@@ -659,6 +663,22 @@ export function parseArgs(args: string[]): ParsedArgs {
   cli.option('--conflict <style>', 'Conflict style')
   cli.option('-p, --patch', 'Select hunks interactively')
 
+  // Merge command options
+  cli.option('--no-ff', 'Create a merge commit even when fast-forward is possible')
+  cli.option('--ff-only', 'Refuse to merge unless fast-forward is possible')
+  cli.option('--squash', 'Squash commits without creating merge commit')
+  cli.option('--abort', 'Abort the current in-progress merge')
+  cli.option('--continue', 'Continue the merge after resolving conflicts')
+  cli.option('--strategy <strategy>', 'Use the given merge strategy')
+  cli.option('--strategy-option <option>', 'Pass option to merge strategy')
+
+  // Add command options
+  cli.option('-A, --all', 'Add all files (new, modified, deleted)')
+  cli.option('--update', 'Update tracked files only')
+  cli.option('--dry-run', 'Show what would be added')
+  cli.option('-N, --intent-to-add', 'Record that the path will be added later')
+  cli.option('--refresh', "Don't add, just refresh stat info")
+
   // Parse arguments
   const parsed = cli.parse(['node', 'gitx', ...args], { run: false })
 
@@ -701,9 +721,15 @@ export function parseArgs(args: string[]): ParsedArgs {
   const options = { ...parsed.options }
   delete options['--']
 
-  // Convert numeric options
+  // Convert numeric options (only if they look like numbers)
   if (options.n !== undefined && typeof options.n === 'string') {
-    options.n = parseInt(options.n, 10)
+    const parsed = parseInt(options.n, 10)
+    // Only convert if it's a valid number (for log command)
+    // For add command, -n file.txt should keep 'file.txt' as string
+    if (!isNaN(parsed)) {
+      options.n = parsed
+    }
+    // Otherwise keep as string for add command to handle
   }
   if (options.port !== undefined && typeof options.port === 'string') {
     options.port = parseInt(options.port, 10)
@@ -746,6 +772,9 @@ export async function runCLI(args: string[], options: CLIOptions = {}): Promise<
     stdout: options.stdout,
     stderr: options.stderr
   })
+
+  // Register built-in command handlers
+  cli.registerCommand('checkout', checkoutCommand)
 
   return cli.run(args)
 }

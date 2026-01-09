@@ -2322,7 +2322,7 @@ export const gitTools: MCPTool[] = [
   // git_show tool - uses bash CLI
   {
     name: 'git_show',
-    description: 'show various types of objects (commits, trees, blobs, tags) with their content and metadata',
+    description: 'Show various types of objects (commits, trees, blobs, tags) with their content and metadata',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3151,7 +3151,7 @@ export const gitTools: MCPTool[] = [
   // git_cat_file tool - uses bash CLI
   {
     name: 'git_cat_file',
-    description: 'Git cat-file - provide content or type/size information for repository objects',
+    description: 'Show content or type/size information for repository objects',
     inputSchema: {
       type: 'object',
       properties: {

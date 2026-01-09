@@ -116,7 +116,7 @@ describe('git_show MCP tool', () => {
     it('should have descriptive description', () => {
       const tool = getTool('git_show')
       expect(tool?.description).toBeDefined()
-      expect(tool?.description).toContain('show')
+      expect(tool?.description.toLowerCase()).toContain('show')
       expect(tool?.description.length).toBeGreaterThan(20)
     })
 

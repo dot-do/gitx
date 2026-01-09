@@ -284,6 +284,25 @@ async function updateRef(cwd: string, sha: string): Promise<void> {
 export async function commitCommand(ctx: CommandContext): Promise<void> {
   const { cwd, options, stdout, stderr } = ctx
 
+  // Handle --help flag
+  if (options.help || options.h) {
+    stdout(`gitx commit - Record changes to the repository
+
+Usage: gitx commit [options]
+
+Options:
+  -m <message>    Use the given message as the commit message
+  -a, --all       Stage all modified and deleted files before committing
+  --amend         Amend the previous commit
+  -h, --help      Show this help message
+
+Examples:
+  gitx commit -m "Add new feature"
+  gitx commit -am "Fix bug"
+  gitx commit --amend -m "Updated message"`)
+    return
+  }
+
   // Check for message option
   const message = options.m as string | undefined
   const amend = options.amend as boolean | undefined

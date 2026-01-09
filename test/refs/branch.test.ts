@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   BranchManager,
+  BranchManagerOptions,
   Branch,
   BranchError,
   CreateBranchOptions,
@@ -33,9 +34,11 @@ function createMockBackend(): RefStorageBackend {
   const packedRefs = new Map<string, string>()
   const locks = new Set<string>()
 
-  // Initialize with HEAD pointing to main
+  // Initialize with HEAD pointing to main, plus a remote tracking branch
   refs.set('HEAD', { name: 'HEAD', target: 'refs/heads/main', type: 'symbolic' })
   refs.set('refs/heads/main', { name: 'refs/heads/main', target: sampleSha, type: 'direct' })
+  refs.set('refs/remotes/origin/main', { name: 'refs/remotes/origin/main', target: sampleSha, type: 'direct' })
+  refs.set('refs/remotes/origin/develop', { name: 'refs/remotes/origin/develop', target: sampleSha2, type: 'direct' })
 
   return {
     async readRef(name: string): Promise<Ref | null> {
@@ -119,11 +122,17 @@ describe('BranchManager', () => {
   let backend: RefStorageBackend
   let storage: RefStorage
   let manager: BranchManager
+  // Set of valid commit SHAs for testing
+  const validCommits = new Set([sampleSha, sampleSha2, sampleSha3])
 
   beforeEach(() => {
     backend = createMockBackend()
     storage = new RefStorage(backend)
-    manager = new BranchManager(storage)
+    // Create manager with commitExists validator that checks our set of valid commits
+    const options: BranchManagerOptions = {
+      commitExists: async (sha: string) => validCommits.has(sha)
+    }
+    manager = new BranchManager(storage, options)
   })
 
   // ==========================================================================
@@ -439,7 +448,10 @@ describe('BranchManager', () => {
 
     describe('Unmerged branches', () => {
       it('should fail if branch is not fully merged without force', async () => {
-        // Assuming experiment has unmerged commits
+        // Update experiment branch to point to a different SHA (simulating unmerged commits)
+        // Use force:true to overwrite the existing branch created in beforeEach
+        await manager.createBranch('experiment', { startPoint: sampleSha2, force: true })
+
         const options: DeleteBranchOptions = {
           force: false
         }
@@ -456,6 +468,10 @@ describe('BranchManager', () => {
       })
 
       it('should delete unmerged branch with force option', async () => {
+        // Update experiment branch to point to a different SHA (simulating unmerged commits)
+        // Use force:true to overwrite the existing branch created in beforeEach
+        await manager.createBranch('experiment', { startPoint: sampleSha2, force: true })
+
         const options: DeleteBranchOptions = {
           force: true
         }

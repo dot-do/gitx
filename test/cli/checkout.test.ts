@@ -113,6 +113,11 @@ async function createMockGitRepo(basePath: string, options: {
       const fullPath = path.join(basePath, filePath)
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
+
+      // Also store in mock-objects for checkout restoration
+      const mockPath = path.join(gitDir, 'mock-objects', filePath.replace(/\//g, '_'))
+      await fs.mkdir(path.dirname(mockPath), { recursive: true })
+      await fs.writeFile(mockPath, content)
     }
   }
 

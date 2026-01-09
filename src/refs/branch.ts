@@ -311,16 +311,32 @@ export type BranchErrorCode =
  * await manager.deleteBranch('feature/auth')
  * ```
  */
+/**
+ * Options for creating a BranchManager.
+ */
+export interface BranchManagerOptions {
+  /**
+   * Optional callback to verify that a commit SHA exists.
+   * If provided, createBranch will validate SHA start points.
+   */
+  commitExists?: (sha: string) => Promise<boolean>
+}
+
 export class BranchManager {
   /** Storage for tracking information (simulated config) */
   private trackingInfo: Map<string, BranchTrackingInfo> = new Map()
+  /** Optional callback to check if commits exist */
+  private commitExists?: (sha: string) => Promise<boolean>
 
   /**
    * Create a new BranchManager.
    *
    * @param storage - RefStorage instance for ref operations
+   * @param options - Optional configuration
    */
-  constructor(private storage: RefStorage) {}
+  constructor(private storage: RefStorage, options?: BranchManagerOptions) {
+    this.commitExists = options?.commitExists
+  }
 
   /**
    * Create a new branch.
@@ -377,9 +393,14 @@ export class BranchManager {
     let sha: string
 
     // If startPoint is a valid SHA, use it directly
-    // Note: In a real implementation, we would verify the object exists in the object store
-    // For this implementation, we trust the caller that the SHA represents a valid commit
     if (isValidSha(startPoint)) {
+      // If we have a commitExists validator, verify the commit exists
+      if (this.commitExists) {
+        const exists = await this.commitExists(startPoint)
+        if (!exists) {
+          throw new BranchError(`Invalid start point: ${startPoint}`, 'INVALID_START_POINT', name)
+        }
+      }
       sha = startPoint
     } else {
       // Try to resolve as ref

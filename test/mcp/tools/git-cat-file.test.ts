@@ -119,7 +119,8 @@ describe('git_cat_file MCP Tool', () => {
 
     it('should have correct description', () => {
       const tool = getTool('git_cat_file')
-      expect(tool?.description).toContain('cat')
+      // Description should mention content and objects (cat-file shows object content)
+      expect(tool?.description.toLowerCase()).toContain('content')
       expect(tool?.description.toLowerCase()).toContain('object')
     })
 

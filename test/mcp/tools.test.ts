@@ -782,8 +782,8 @@ describe('MCP Git Tool Definitions', () => {
   })
 
   describe('Complete git tools array', () => {
-    it('should have exactly 18 git tools defined', () => {
-      expect(gitTools).toHaveLength(18)
+    it('should have exactly 22 git tools defined', () => {
+      expect(gitTools).toHaveLength(22)
     })
 
     it('should have unique tool names', () => {
@@ -812,8 +812,9 @@ describe('MCP Git Tool Definitions', () => {
       })
     })
 
-    it('should have path property in all git tools except git_clone', () => {
-      const toolsWithPath = gitTools.filter((t) => t.name !== 'git_clone')
+    it('should have path property in all git tools except git_clone and git_cat_file', () => {
+      // git_clone creates new repos, git_cat_file operates on objects by SHA
+      const toolsWithPath = gitTools.filter((t) => t.name !== 'git_clone' && t.name !== 'git_cat_file')
       toolsWithPath.forEach((tool) => {
         expect(tool.inputSchema.properties).toHaveProperty('path')
       })
