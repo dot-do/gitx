@@ -18,21 +18,33 @@ class MockDurableObjectStorage implements DurableObjectStorage {
     exec: (query: string, ...params: unknown[]): { toArray(): unknown[] } => {
       this.executedQueries.push(query)
 
-      // Parse CREATE TABLE statements
-      const createTableMatch = query.match(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([^)]+)\)/gi)
-      if (createTableMatch) {
-        for (const match of createTableMatch) {
-          const tableMatch = match.match(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([^)]+)\)/i)
-          if (tableMatch) {
-            const tableName = tableMatch[1]
-            const columnsStr = tableMatch[2]
-            const columns = columnsStr
-              .split(',')
-              .map(col => col.trim().split(/\s+/)[0])
-              .filter(col => col && !col.toUpperCase().startsWith('PRIMARY') && !col.toUpperCase().startsWith('FOREIGN'))
-            this.tables.set(tableName, { columns, rows: [] })
-          }
+      // Parse CREATE TABLE statements (handles multi-line and nested parentheses)
+      const tableRegex = /CREATE TABLE IF NOT EXISTS (\w+)\s*\(/gi
+      let match
+      while ((match = tableRegex.exec(query)) !== null) {
+        const tableName = match[1]
+        const startIdx = match.index + match[0].length
+        let depth = 1
+        let endIdx = startIdx
+        while (endIdx < query.length && depth > 0) {
+          if (query[endIdx] === '(') depth++
+          else if (query[endIdx] === ')') depth--
+          endIdx++
         }
+        const columnsStr = query.slice(startIdx, endIdx - 1)
+        // Parse columns, excluding constraint definitions
+        const columns = columnsStr
+          .split(',')
+          .map(col => col.trim().split(/\s+/)[0])
+          .filter(col =>
+            col &&
+            !col.toUpperCase().startsWith('PRIMARY') &&
+            !col.toUpperCase().startsWith('FOREIGN') &&
+            !col.toUpperCase().startsWith('UNIQUE') &&
+            !col.toUpperCase().startsWith('CHECK') &&
+            !col.toUpperCase().startsWith('CONSTRAINT')
+          )
+        this.tables.set(tableName, { columns, rows: [] })
       }
 
       // Parse CREATE INDEX statements
@@ -146,6 +158,9 @@ describe('SchemaManager', () => {
       expect(tables).toContain('hot_objects')
       expect(tables).toContain('wal')
       expect(tables).toContain('refs')
+      expect(tables).toContain('git')
+      expect(tables).toContain('git_branches')
+      expect(tables).toContain('git_content')
     })
 
     it('should create objects table with correct columns', async () => {
@@ -246,6 +261,73 @@ describe('SchemaManager', () => {
       expect(indexes).toContain('idx_exec_enabled')
     })
 
+    it('should create git table for GitModule integration', async () => {
+      await schemaManager.initializeSchema()
+
+      const tables = storage.getTables()
+      expect(tables).toContain('git')
+
+      const columns = storage.getTableColumns('git')
+      expect(columns).toBeDefined()
+      expect(columns).toContain('id')
+      expect(columns).toContain('repo')
+      expect(columns).toContain('path')
+      expect(columns).toContain('branch')
+      expect(columns).toContain('commit')
+      expect(columns).toContain('last_sync')
+      expect(columns).toContain('object_prefix')
+      expect(columns).toContain('created_at')
+      expect(columns).toContain('updated_at')
+    })
+
+    it('should create git_branches table for branch tracking', async () => {
+      await schemaManager.initializeSchema()
+
+      const tables = storage.getTables()
+      expect(tables).toContain('git_branches')
+
+      const columns = storage.getTableColumns('git_branches')
+      expect(columns).toBeDefined()
+      expect(columns).toContain('id')
+      expect(columns).toContain('repo_id')
+      expect(columns).toContain('name')
+      expect(columns).toContain('head')
+      expect(columns).toContain('upstream')
+      expect(columns).toContain('tracking')
+      expect(columns).toContain('ahead')
+      expect(columns).toContain('behind')
+      expect(columns).toContain('created_at')
+      expect(columns).toContain('updated_at')
+    })
+
+    it('should create git_content table for staged files', async () => {
+      await schemaManager.initializeSchema()
+
+      const tables = storage.getTables()
+      expect(tables).toContain('git_content')
+
+      const columns = storage.getTableColumns('git_content')
+      expect(columns).toBeDefined()
+      expect(columns).toContain('id')
+      expect(columns).toContain('repo_id')
+      expect(columns).toContain('path')
+      expect(columns).toContain('content')
+      expect(columns).toContain('mode')
+      expect(columns).toContain('status')
+      expect(columns).toContain('sha')
+      expect(columns).toContain('created_at')
+      expect(columns).toContain('updated_at')
+    })
+
+    it('should create git-related indexes', async () => {
+      await schemaManager.initializeSchema()
+
+      const indexes = storage.getIndexes()
+      expect(indexes).toContain('idx_git_branches_repo')
+      expect(indexes).toContain('idx_git_content_repo_path')
+      expect(indexes).toContain('idx_git_content_status')
+    })
+
     it('should be idempotent - can be called multiple times without error', async () => {
       await schemaManager.initializeSchema()
       const tablesAfterFirst = storage.getTables()
@@ -312,6 +394,30 @@ describe('SchemaManager', () => {
       expect(isValid).toBe(false)
     })
 
+    it('should return false when git table is missing', async () => {
+      await schemaManager.initializeSchema()
+      storage.removeTable('git')
+
+      const isValid = await schemaManager.validateSchema()
+      expect(isValid).toBe(false)
+    })
+
+    it('should return false when git_branches table is missing', async () => {
+      await schemaManager.initializeSchema()
+      storage.removeTable('git_branches')
+
+      const isValid = await schemaManager.validateSchema()
+      expect(isValid).toBe(false)
+    })
+
+    it('should return false when git_content table is missing', async () => {
+      await schemaManager.initializeSchema()
+      storage.removeTable('git_content')
+
+      const isValid = await schemaManager.validateSchema()
+      expect(isValid).toBe(false)
+    })
+
     it('should return false when schema is not initialized', async () => {
       const isValid = await schemaManager.validateSchema()
       expect(isValid).toBe(false)
@@ -326,6 +432,9 @@ describe('SchemaManager', () => {
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS wal')
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS refs')
       expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS exec')
+      expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS git')
+      expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS git_branches')
+      expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS git_content')
     })
 
     it('should contain CREATE INDEX statements for performance indexes', () => {
@@ -334,6 +443,9 @@ describe('SchemaManager', () => {
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_hot_objects_accessed')
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_exec_name')
       expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_exec_enabled')
+      expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_git_branches_repo')
+      expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_git_content_repo_path')
+      expect(SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS idx_git_content_status')
     })
   })
 
