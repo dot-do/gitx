@@ -35,8 +35,7 @@ import type { Ref } from '../refs/storage'
 import { parseRefContent, serializeRefContent } from '../refs/storage'
 
 // Import hash utilities from local utils module
-// Note: fsx.do exports similar functions, but its main entry pulls in cloudflare:workers
-// which doesn't work in Node.js test environment
+// Note: sha1 is re-exported from fsx.do and works in Workers environment
 import { sha1 } from '../utils/hash'
 
 // Import pako for compression (still needed as fsx.do CAS handles this internally)

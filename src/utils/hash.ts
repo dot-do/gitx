@@ -5,7 +5,7 @@
  * identification and verification. Git uses SHA-1 as its primary hash algorithm,
  * with SHA-256 available as an optional newer algorithm (Git v2.29+).
  *
- * Core hash primitives (async) are re-exported from fsx.do for consistency.
+ * Core hash primitives are imported from fsx.do which uses the Web Crypto API.
  * Sync primitives are kept local for pack operations that need streaming SHA1.
  *
  * @module utils/hash
@@ -24,48 +24,16 @@
  * ```
  */
 
-// Re-export hash functions from local sha1 module
-// Note: fsx.do exports similar functions, but its main entry pulls in cloudflare:workers
-// which doesn't work in Node.js test environment. Keep using local implementations.
-export { bytesToHex, hexToBytes, sha1Hex } from './sha1'
+// Re-export hash functions from fsx.do - now works in Workers environment
+export { sha1, sha256, bytesToHex, hexToBytes } from 'fsx.do'
 
-// Local implementations that work in both Node.js and Workers environments
-import { sha1Hex as sha1HexSync, bytesToHex as localBytesToHex } from './sha1'
+// Keep local sync implementations for pack operations that need streaming SHA1
+export { sha1Hex } from './sha1'
 
-// Crypto type declarations for Workers environment
-declare const crypto: {
-  subtle?: {
-    digest(algorithm: string, data: ArrayBufferView): Promise<ArrayBuffer>
-  }
-} | undefined
-
-/**
- * SHA-1 hash function (async for Web Crypto API compatibility)
- * Uses Web Crypto API when available, falls back to sync implementation
- */
-export async function sha1(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  // Use Web Crypto API if available
-  if (typeof crypto !== 'undefined' && crypto?.subtle) {
-    const hashBuffer = await crypto.subtle.digest('SHA-1', bytes)
-    return localBytesToHex(new Uint8Array(hashBuffer))
-  }
-  // Fall back to sync implementation
-  return sha1HexSync(bytes)
-}
-
-/**
- * SHA-256 hash function (async for Web Crypto API compatibility)
- */
-export async function sha256(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  if (typeof crypto !== 'undefined' && crypto?.subtle) {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
-    return localBytesToHex(new Uint8Array(hashBuffer))
-  }
-  // SHA-256 sync implementation would go here - for now throw
-  throw new Error('SHA-256 requires Web Crypto API')
-}
+// Import local bytesToHex for cache key generation (synchronous)
+import { bytesToHex as localBytesToHex } from './sha1'
+// Import sha1 from fsx.do for the hashObject function
+import { sha1 } from 'fsx.do'
 
 /**
  * Hash a Git object with its type header.
