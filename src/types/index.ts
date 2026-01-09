@@ -14,3 +14,9 @@ export * from './storage'
 
 // Worker Loader Types
 export * from './worker-loader'
+
+// Consolidated Interface Types
+export * from './interfaces'
+
+// GitCapability Types (DO integration)
+export * from './capability'
