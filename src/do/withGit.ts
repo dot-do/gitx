@@ -304,7 +304,7 @@ export function withGit<TBase extends Constructor>(
               return self.git
             }
             // Forward to original context
-            const value = (target as Record<string | symbol, unknown>)[prop]
+            const value = (target as unknown as Record<string | symbol, unknown>)[prop]
             if (typeof value === 'function') {
               return (value as (...args: unknown[]) => unknown).bind(target)
             }

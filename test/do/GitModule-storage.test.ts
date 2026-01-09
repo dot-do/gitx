@@ -42,23 +42,23 @@ class MockGitStorage implements GitStorage {
 
   sql = {
     exec: (query: string, ...params: unknown[]): { toArray(): unknown[] } => {
-      // Handle SELECT queries on git table
-      if (query.includes('SELECT') && query.includes('FROM git WHERE repo =')) {
+      // Handle SELECT id FROM git WHERE repo = ? (for getting repoId after insert)
+      if (query.includes('SELECT id FROM git WHERE repo =')) {
         const repo = params[0] as string
-        for (const [id, row] of this.gitTable) {
+        for (const row of this.gitTable.values()) {
           if (row.repo === repo) {
-            return { toArray: () => [row] }
+            return { toArray: () => [{ id: row.id }] }
           }
         }
         return { toArray: () => [] }
       }
 
-      // Handle SELECT id FROM git WHERE repo = ?
-      if (query.includes('SELECT id FROM git WHERE repo =')) {
+      // Handle SELECT id, commit, last_sync FROM git WHERE repo = ? (for initialize)
+      if (query.includes('SELECT') && query.includes('FROM git WHERE repo =')) {
         const repo = params[0] as string
-        for (const [id, row] of this.gitTable) {
+        for (const row of this.gitTable.values()) {
           if (row.repo === repo) {
-            return { toArray: () => [{ id }] }
+            return { toArray: () => [{ id: row.id, commit: row.commit, last_sync: row.last_sync }] }
           }
         }
         return { toArray: () => [] }
