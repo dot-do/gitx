@@ -198,6 +198,26 @@ export {
 }
 
 // ============================================================================
+// withFs Mixin Imports and Exports
+// ============================================================================
+
+import {
+  withFs,
+  hasFsCapability,
+  type WithFsCapability,
+  type WithFsOptions,
+  type WithFsContext,
+} from './withFs'
+
+export {
+  withFs,
+  hasFsCapability,
+  type WithFsCapability,
+  type WithFsOptions,
+  type WithFsContext,
+}
+
+// ============================================================================
 // FsModule Imports and Exports
 // ============================================================================
 
@@ -265,4 +285,46 @@ export {
   type CopyOptions,
   type Dirent,
   type Stats,
+}
+
+// ============================================================================
+// Container Executor Imports and Exports
+// ============================================================================
+
+import {
+  CloudflareContainerExecutor,
+  createContainerExecutor,
+  createSandboxExecutor,
+  createHttpExecutor,
+  createWebSocketExecutor,
+  isContainerExecutor,
+  type ContainerExecutorOptions,
+  type CloudflareSandbox,
+  type SandboxExecOptions,
+  type SandboxExecResult,
+  type SandboxStreamResult,
+  type SandboxStreamChunk,
+  type SandboxProcessHandle,
+  type CloudflareContainer,
+  type CloudflareContainerInstance,
+  type ContainerStartOptions,
+} from './container-executor'
+
+export {
+  CloudflareContainerExecutor,
+  createContainerExecutor,
+  createSandboxExecutor,
+  createHttpExecutor,
+  createWebSocketExecutor,
+  isContainerExecutor,
+  type ContainerExecutorOptions,
+  type CloudflareSandbox,
+  type SandboxExecOptions,
+  type SandboxExecResult,
+  type SandboxStreamResult,
+  type SandboxStreamChunk,
+  type SandboxProcessHandle,
+  type CloudflareContainer,
+  type CloudflareContainerInstance,
+  type ContainerStartOptions,
 }
