@@ -34,20 +34,17 @@ import type { StorageBackend, StoredObjectResult, ObjectType } from './backend'
 import type { Ref } from '../refs/storage'
 import { parseRefContent, serializeRefContent } from '../refs/storage'
 
-// Local implementations for standalone operation
-import { sha1Hex } from '../utils/sha1'
+// Import hash utilities from local utils module
+// Note: fsx.do exports similar functions, but its main entry pulls in cloudflare:workers
+// which doesn't work in Node.js test environment
+import { sha1 } from '../utils/hash'
+
+// Import pako for compression (still needed as fsx.do CAS handles this internally)
 import * as pako from 'pako'
 
 // ============================================================================
-// Local Git Object Utilities (replaces fsx dependencies)
+// Git Object Utilities
 // ============================================================================
-
-/**
- * SHA-1 hash function (async wrapper for compatibility)
- */
-async function sha1(data: Uint8Array): Promise<string> {
-  return sha1Hex(data)
-}
 
 /**
  * Create a Git object with header

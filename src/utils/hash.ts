@@ -5,8 +5,8 @@
  * identification and verification. Git uses SHA-1 as its primary hash algorithm,
  * with SHA-256 available as an optional newer algorithm (Git v2.29+).
  *
- * Core hash primitives are re-exported from fsx.do, with gitx-specific
- * utilities like HashCache and hashObject defined here.
+ * Core hash primitives (async) are re-exported from fsx.do for consistency.
+ * Sync primitives are kept local for pack operations that need streaming SHA1.
  *
  * @module utils/hash
  *
@@ -24,14 +24,13 @@
  * ```
  */
 
-// Local implementations of hash primitives
+// Re-export hash functions from local sha1 module
+// Note: fsx.do exports similar functions, but its main entry pulls in cloudflare:workers
+// which doesn't work in Node.js test environment. Keep using local implementations.
+export { bytesToHex, hexToBytes, sha1Hex } from './sha1'
+
+// Local implementations that work in both Node.js and Workers environments
 import { sha1Hex as sha1HexSync, bytesToHex as localBytesToHex } from './sha1'
-
-// Re-export hash functions (async wrapper for compatibility)
-export { bytesToHex, hexToBytes } from './sha1'
-
-// Re-export sync hex for convenience
-export { sha1Hex } from './sha1'
 
 // Crypto type declarations for Workers environment
 declare const crypto: {
@@ -42,7 +41,7 @@ declare const crypto: {
 
 /**
  * SHA-1 hash function (async for Web Crypto API compatibility)
- * Falls back to sync implementation for Workers without Web Crypto
+ * Uses Web Crypto API when available, falls back to sync implementation
  */
 export async function sha1(data: Uint8Array | string): Promise<string> {
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
@@ -67,9 +66,6 @@ export async function sha256(data: Uint8Array | string): Promise<string> {
   // SHA-256 sync implementation would go here - for now throw
   throw new Error('SHA-256 requires Web Crypto API')
 }
-
-// Import for internal use
-const bytesToHex = localBytesToHex
 
 /**
  * Hash a Git object with its type header.
@@ -168,8 +164,8 @@ export class HashCache {
   private generateKey(data: Uint8Array): string {
     // Use length + first 32 bytes as key (fast and reasonably unique)
     const prefix = data.length <= 32
-      ? bytesToHex(data)
-      : bytesToHex(data.subarray(0, 32))
+      ? localBytesToHex(data)
+      : localBytesToHex(data.subarray(0, 32))
     return `${data.length}:${prefix}`
   }
 
