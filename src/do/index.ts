@@ -362,3 +362,11 @@ export {
   type R2PutOptions,
   type TieredSqlStorage,
 }
+
+// ============================================================================
+// GitRepoDO Imports and Exports
+// ============================================================================
+
+import { GitRepoDO, isGitRepoDO } from './GitRepoDO'
+
+export { GitRepoDO, isGitRepoDO }
