@@ -52,7 +52,10 @@ import {
   CommitObject,
   TagObject,
   TreeEntry,
-  Author
+  Author,
+  validateTreeEntry,
+  isValidMode,
+  isValidSha
 } from '../types/objects'
 import { hashObject } from '../utils/hash'
 import type { StorageBackend } from '../storage/backend'
@@ -418,11 +421,43 @@ export class ObjectStore {
    * ```
    */
   async putTreeObject(entries: TreeEntry[]): Promise<string> {
-    // Sort entries by name (directories get trailing / for sorting)
+    // Validate all entries first
+    const seenNames = new Set<string>()
+    for (const entry of entries) {
+      // Check for invalid names: empty, '.', '..', contains '/' or null byte
+      if (!entry.name || entry.name === '.' || entry.name === '..') {
+        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot be empty, ".", or ".."`)
+      }
+      if (entry.name.includes('/')) {
+        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot contain path separators`)
+      }
+      if (entry.name.includes('\0')) {
+        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot contain null bytes`)
+      }
+      // Check for duplicate names
+      if (seenNames.has(entry.name)) {
+        throw new Error(`Duplicate entry name: "${entry.name}". Tree entries must have unique names`)
+      }
+      seenNames.add(entry.name)
+      // Validate mode
+      if (!isValidMode(entry.mode)) {
+        throw new Error(`Invalid mode: "${entry.mode}". Valid modes: 100644, 100755, 040000, 120000, 160000`)
+      }
+      // Validate SHA
+      if (!isValidSha(entry.sha)) {
+        throw new Error(`Invalid SHA: "${entry.sha}". Must be 40 lowercase hex characters`)
+      }
+    }
+
+    // Sort entries by name using ASCII byte-order comparison
+    // Git sorts directories as if they have trailing slashes for comparison
     const sortedEntries = [...entries].sort((a, b) => {
       const aName = a.mode === '040000' ? a.name + '/' : a.name
       const bName = b.mode === '040000' ? b.name + '/' : b.name
-      return aName.localeCompare(bName)
+      // Use simple comparison for ASCII byte order
+      if (aName < bName) return -1
+      if (aName > bName) return 1
+      return 0
     })
 
     // Build tree content (without header)
@@ -1115,24 +1150,48 @@ export class ObjectStore {
     let offset = 0
     const data = obj.data
 
-    while (offset < data.length) {
-      // Find the null byte after mode+name
-      let nullIndex = offset
-      while (nullIndex < data.length && data[nullIndex] !== 0) {
-        nullIndex++
+    try {
+      while (offset < data.length) {
+        // Find the null byte after mode+name
+        let nullIndex = offset
+        while (nullIndex < data.length && data[nullIndex] !== 0) {
+          nullIndex++
+        }
+
+        // Check if we found a null byte
+        if (nullIndex >= data.length) {
+          // No null byte found - malformed data, return empty entries
+          return { type: 'tree', data: obj.data, entries: [] }
+        }
+
+        const modeNameStr = decoder.decode(data.slice(offset, nullIndex))
+        const spaceIndex = modeNameStr.indexOf(' ')
+
+        // Check for valid mode+name format
+        if (spaceIndex === -1) {
+          // No space found - malformed entry, return empty entries
+          return { type: 'tree', data: obj.data, entries: [] }
+        }
+
+        const mode = modeNameStr.slice(0, spaceIndex)
+        const name = modeNameStr.slice(spaceIndex + 1)
+
+        // Check if we have enough bytes for the 20-byte SHA
+        if (nullIndex + 21 > data.length) {
+          // Not enough bytes for SHA - return what we have parsed so far as malformed
+          return { type: 'tree', data: obj.data, entries: [] }
+        }
+
+        // Read 20-byte SHA
+        const sha20 = data.slice(nullIndex + 1, nullIndex + 21)
+        const entrySha = bytesToHex(sha20)
+
+        entries.push({ mode, name, sha: entrySha })
+        offset = nullIndex + 21
       }
-
-      const modeNameStr = decoder.decode(data.slice(offset, nullIndex))
-      const spaceIndex = modeNameStr.indexOf(' ')
-      const mode = modeNameStr.slice(0, spaceIndex)
-      const name = modeNameStr.slice(spaceIndex + 1)
-
-      // Read 20-byte SHA
-      const sha20 = data.slice(nullIndex + 1, nullIndex + 21)
-      const entrySha = bytesToHex(sha20)
-
-      entries.push({ mode, name, sha: entrySha })
-      offset = nullIndex + 21
+    } catch {
+      // Any parsing error - return null or empty entries
+      return { type: 'tree', data: obj.data, entries: [] }
     }
 
     return {
