@@ -1018,6 +1018,7 @@ export class CloudflareContainerExecutor implements BashExecutor {
       await this.sandbox.writeFile(path, content)
     } else if (this.httpExecEndpoint) {
       // Use HTTP endpoint for file writing
+      const bodyContent = typeof content === 'string' ? content : new Uint8Array(content).buffer
       await this.fetchFn(this.httpExecEndpoint.replace('/exec', '/file'), {
         method: 'PUT',
         headers: {
@@ -1025,7 +1026,7 @@ export class CloudflareContainerExecutor implements BashExecutor {
           'X-Session-Id': this.sessionId,
           'X-File-Path': path,
         },
-        body: content,
+        body: bodyContent as BodyInit,
       })
     } else {
       throw new Error('File operations not supported by this executor')

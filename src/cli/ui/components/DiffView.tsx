@@ -1,14 +1,19 @@
 // Diff View Component for gitx terminal UI
 // GREEN phase implementation
 
-import type { ReactNode } from 'react'
-
 export interface DiffViewProps {
   diff: string
   viewMode: 'split' | 'unified'
 }
 
-export function DiffView(props: DiffViewProps): ReactNode {
+export interface DiffViewElement {
+  type: 'DiffView'
+  props: DiffViewProps
+  diff: string
+  viewMode: 'split' | 'unified'
+}
+
+export function DiffView(props: DiffViewProps): DiffViewElement {
   return {
     type: 'DiffView',
     props,

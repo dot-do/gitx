@@ -192,7 +192,7 @@ export {
   // Git objects
   type Commit as CapabilityCommit,
   type RawGitObject,
-  type GitRef,
+  type GitRef as CapabilityGitRef,
   type Branch,
   type Tag,
   // Status types
@@ -209,20 +209,20 @@ export {
   type PullOptions,
   type PushOptions,
   type AddOptions,
-  type CommitOptions,
+  type CommitOptions as CapabilityCommitOptions,
   type StatusOptions,
   type LogOptions,
   type DiffOptions,
-  type BranchOptions,
-  type CheckoutOptions,
-  type MergeOptions,
+  type BranchOptions as CapabilityBranchOptions,
+  type CheckoutOptions as CapabilityCheckoutOptions,
+  type MergeOptions as CapabilityMergeOptions,
   // Authentication
   type AuthOptions,
   // Callbacks and progress
   type ProgressCallback,
   type ProgressEvent,
   // Results
-  type MergeResult,
+  type MergeResult as CapabilityMergeResult,
   type PushResult as CapabilityPushResult,
   type FetchResult,
   // Main capability interface

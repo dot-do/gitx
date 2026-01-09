@@ -53,19 +53,19 @@ const REAL_WORKER_LOADER_MARKER = Symbol.for('cloudflare.worker_loader')
 export class MockWorkerLoader implements WorkerLoader {
   private cache = new Map<string, WorkerStub>()
 
-  get(id: string, getCode: () => Promise<WorkerCode>): WorkerStub {
+  get(id: string, _getCode: () => Promise<WorkerCode>): WorkerStub {
     const cached = this.cache.get(id)
     if (cached) {
       return cached
     }
 
     const stub: WorkerStub = {
-      fetch: async (request: Request): Promise<Response> => {
+      fetch: async (_request: Request): Promise<Response> => {
         return new Response('MockWorkerLoader response')
       },
-      getEntrypoint: (name?: string): WorkerEntrypoint => {
+      getEntrypoint: (_name?: string): WorkerEntrypoint => {
         return {
-          fetch: async (request: Request): Promise<Response> => {
+          fetch: async (_request: Request): Promise<Response> => {
             return new Response('MockWorkerLoader entrypoint response')
           }
         }

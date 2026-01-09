@@ -248,6 +248,62 @@ export function sha1Verify(data: Uint8Array, expected: Uint8Array): boolean {
 }
 
 // ============================================================================
+// Hex Conversion Utilities
+// ============================================================================
+
+/**
+ * Convert bytes to hexadecimal string.
+ *
+ * @description Efficiently converts a Uint8Array to its hexadecimal
+ * representation. Each byte becomes two hex characters (00-ff).
+ *
+ * @param bytes - Input bytes to convert
+ * @returns Lowercase hexadecimal string (2 chars per byte)
+ *
+ * @example
+ * ```typescript
+ * const bytes = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f])
+ * const hex = bytesToHex(bytes)
+ * console.log(hex) // '48656c6c6f'
+ * ```
+ */
+export function bytesToHex(bytes: Uint8Array): string {
+  let hex = ''
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0')
+  }
+  return hex
+}
+
+/**
+ * Convert hexadecimal string to bytes.
+ *
+ * @description Converts a hexadecimal string back to its binary representation.
+ * Each pair of hex characters becomes one byte.
+ *
+ * @param hex - Hexadecimal string (case-insensitive)
+ * @returns Uint8Array of bytes
+ * @throws {Error} If hex string has odd length
+ *
+ * @example
+ * ```typescript
+ * const hex = '48656c6c6f'
+ * const bytes = hexToBytes(hex)
+ * console.log(new TextDecoder().decode(bytes)) // 'Hello'
+ * ```
+ */
+export function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) {
+    throw new Error('Hex string must have even length')
+  }
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16)
+  }
+  return bytes
+}
+
+// ============================================================================
 // Pre-computed constants for streaming SHA-1
 // ============================================================================
 

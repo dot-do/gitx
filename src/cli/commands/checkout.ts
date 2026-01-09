@@ -502,12 +502,14 @@ async function readMockOriginalContent(cwd: string, filePath: string): Promise<s
 
 /**
  * Store original file content in mock object storage for later restoration.
+ * @internal Reserved for future use
  */
-async function storeMockOriginalContent(cwd: string, filePath: string, content: string): Promise<void> {
+async function _storeMockOriginalContent(cwd: string, filePath: string, content: string): Promise<void> {
   const mockPath = path.join(cwd, '.git', 'mock-objects', filePath.replace(/\//g, '_'))
   await fs.mkdir(path.dirname(mockPath), { recursive: true })
   await fs.writeFile(mockPath, content)
 }
+void _storeMockOriginalContent // Preserve for future use
 
 /**
  * Checkout specific files from a commit or HEAD.
@@ -515,8 +517,8 @@ async function storeMockOriginalContent(cwd: string, filePath: string, content: 
 export async function checkoutFiles(
   cwd: string,
   files: string[],
-  source?: string,
-  options?: CheckoutOptions
+  _source?: string,
+  _options?: CheckoutOptions
 ): Promise<CheckoutResult> {
   if (!(await isGitRepo(cwd))) {
     throw new Error('not a git repository')
@@ -544,7 +546,7 @@ export async function checkoutFiles(
 
   return {
     success: true,
-    target: source || 'HEAD',
+    target: _source || 'HEAD',
     detached: false,
     modifiedFiles
   }
@@ -597,7 +599,7 @@ async function checkoutDetached(
 export async function createOrphanBranch(
   cwd: string,
   branchName: string,
-  options?: CheckoutOptions
+  _options?: CheckoutOptions
 ): Promise<CheckoutResult> {
   if (!(await isGitRepo(cwd))) {
     throw new Error('not a git repository')
@@ -790,7 +792,7 @@ Options:
     if (branchSha) {
       if (options.detach) {
         // Detach HEAD at the branch's commit
-        const result = await checkoutDetached(cwd, branchSha, { force, quiet })
+        await checkoutDetached(cwd, branchSha, { force, quiet })
         if (!quiet) {
           stdout(`Note: switching to '${target}'.`)
           stdout('')
@@ -801,8 +803,8 @@ Options:
         return
       }
 
-      const result = await switchBranch(cwd, target, { force, quiet })
-      if (!quiet && result.success) {
+      const switchResult = await switchBranch(cwd, target, { force, quiet })
+      if (!quiet && switchResult.success) {
         stdout(`Switched to branch '${target}'`)
       }
       return
@@ -811,7 +813,7 @@ Options:
     // Check if target is a tag
     const tagSha = await readTagSha(cwd, target)
     if (tagSha) {
-      const result = await checkoutDetached(cwd, tagSha, { force, quiet })
+      await checkoutDetached(cwd, tagSha, { force, quiet })
       if (!quiet) {
         stdout(`Note: switching to '${target}'.`)
         stdout('')
@@ -824,7 +826,7 @@ Options:
 
     // Check if target looks like a SHA
     if (looksLikeSha(target)) {
-      const result = await checkoutDetached(cwd, target, { force, quiet })
+      await checkoutDetached(cwd, target, { force, quiet })
       if (!quiet) {
         stdout(`Note: switching to '${target}'.`)
         stdout('')

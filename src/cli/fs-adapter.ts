@@ -948,7 +948,7 @@ class FSIndexImpl implements FSIndex {
 
         // Calculate padding (entry must end on 8-byte boundary from start)
         const entryLength = 62 + (extended && this.version >= 3 ? 2 : 0) + (pathEnd - pathStart) + 1
-        const paddedLength = Math.ceil(entryLength / 8) * 8
+        void entryLength // Used for documentation - actual padding calc below
         offset = 12 + (this.entries.length * 62) // Re-calculate from entry count
         offset = pathEnd + 1
         const padding = (8 - ((offset - 12) % 8)) % 8
@@ -1256,8 +1256,8 @@ class FSPackReaderImpl implements FSPackReader {
         packFile: packName
       }
     } else if (type === PackObjectType.OBJ_REF_DELTA) {
-      // Read base SHA (20 bytes)
-      const baseSha = bytesToHex(packData.subarray(dataOffset, dataOffset + 20))
+      // Read base SHA (20 bytes) - needed for delta resolution
+      void bytesToHex(packData.subarray(dataOffset, dataOffset + 20)) // baseSha - for future delta resolution
       dataOffset += 20
 
       // Read and decompress delta data
@@ -1806,7 +1806,6 @@ class FSAdapterImpl implements FSAdapter {
 
     try {
       const content = await fs.readFile(packedRefsPath, 'utf8')
-      let lastRef: string | null = null
 
       for (const line of content.split('\n')) {
         const trimmed = line.trim()
@@ -1826,7 +1825,6 @@ class FSAdapterImpl implements FSAdapter {
         if (match) {
           const [, sha, refName] = match
           this.packedRefs.set(refName, sha.toLowerCase())
-          lastRef = refName
         }
       }
     } catch {

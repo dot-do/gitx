@@ -347,7 +347,7 @@ async function resolveRef(cwd: string, ref: string): Promise<string | null> {
  * // gitx branch -m old new       - Rename branch
  */
 export async function branchCommand(ctx: CommandContext): Promise<void> {
-  const { cwd, args, options, stdout, stderr } = ctx
+  const { cwd, args, options, stdout } = ctx
 
   // Handle -m (rename) flag
   // Note: -m is defined as `-m <message>` in CLI for commit, but for branch it means rename
@@ -482,7 +482,7 @@ export async function branchCommand(ctx: CommandContext): Promise<void> {
  * const branches = await listBranches(cwd)
  * console.log(branches.map(b => b.name).join('\n'))
  */
-export async function listBranches(cwd: string, options?: BranchListOptions): Promise<BranchInfo[]> {
+export async function listBranches(cwd: string, _options?: BranchListOptions): Promise<BranchInfo[]> {
   if (!(await isGitRepo(cwd))) {
     throw new Error('Not a git repository')
   }

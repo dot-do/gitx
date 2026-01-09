@@ -1429,7 +1429,10 @@ async function buildPackfile(
  * @internal
  */
 async function sha1(data: Uint8Array): Promise<Uint8Array> {
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data)
+  // Create a copy as ArrayBuffer to satisfy BufferSource type
+  const buffer = new ArrayBuffer(data.length)
+  new Uint8Array(buffer).set(data)
+  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
   return new Uint8Array(hashBuffer)
 }
 

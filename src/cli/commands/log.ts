@@ -140,7 +140,7 @@ export interface LogResult {
  * @example
  * await logCommand({ cwd: '/repo', options: { n: 10 }, ... })
  */
-export async function logCommand(ctx: CommandContext): Promise<void> {
+export async function logCommand(_ctx: CommandContext): Promise<void> {
   throw new Error('Not implemented')
 }
 

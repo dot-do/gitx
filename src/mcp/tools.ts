@@ -51,7 +51,8 @@ import {
 } from '../ops/commit-traversal'
 import {
   DiffStatus,
-  ObjectStore as DiffObjectStore
+  ObjectStore as DiffObjectStore,
+  diffTrees
 } from '../ops/tree-diff'
 import {
   listBranches,
@@ -2519,9 +2520,9 @@ export const gitTools: MCPTool[] = [
           const timezone = commit.author.timezone || '+0000'
           lines.push(`Date:   ${authorDate.toUTCString()} ${timezone}`)
 
-          if (commit.gpgsig) {
+          if ((commit as CommitObject & { gpgsig?: string }).gpgsig) {
             lines.push('')
-            lines.push('gpgsig ' + commit.gpgsig)
+            lines.push('gpgsig ' + (commit as CommitObject & { gpgsig?: string }).gpgsig)
           }
 
           lines.push('')
@@ -2639,7 +2640,7 @@ export const gitTools: MCPTool[] = [
       required: ['path'],
     },
     handler: async (params) => {
-      const { path: filePath, revision, start_line, end_line, show_email, show_stats } = params as {
+      const { path: filePath, revision, start_line, end_line, show_email } = params as {
         path: string
         revision?: string
         start_line?: number
@@ -3322,8 +3323,8 @@ export const gitTools: MCPTool[] = [
             lines.push(`author ${commit.author.name} <${commit.author.email}> ${commit.author.timestamp} ${commit.author.timezone}`)
             lines.push(`committer ${commit.committer?.name || commit.author.name} <${commit.committer?.email || commit.author.email}> ${commit.committer?.timestamp || commit.author.timestamp} ${commit.committer?.timezone || commit.author.timezone}`)
 
-            if (commit.gpgsig) {
-              lines.push(`gpgsig ${commit.gpgsig}`)
+            if ((commit as CommitObject & { gpgsig?: string }).gpgsig) {
+              lines.push(`gpgsig ${(commit as CommitObject & { gpgsig?: string }).gpgsig}`)
             }
 
             lines.push('')

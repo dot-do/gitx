@@ -37,6 +37,7 @@ import {
   FsModule,
   type FsModuleOptions,
   type SqlStorage,
+  type SqlResult,
   type R2BucketLike,
   type Stats,
   type Dirent,
@@ -469,23 +470,23 @@ function createMockSqlStorage(): SqlStorage {
   let idCounter = 1
 
   return {
-    exec<T = unknown>(sql: string, ...params: unknown[]) {
+    exec<T = unknown>(sql: string, ..._params: unknown[]): SqlResult<T> {
       // Simple parsing for basic operations
       const sqlLower = sql.toLowerCase().trim()
 
       if (sqlLower.startsWith('create table')) {
         // Table creation - no-op in mock
         return {
-          one: () => null,
-          toArray: () => [],
+          one: () => null as T | null,
+          toArray: () => [] as T[],
         }
       }
 
       if (sqlLower.startsWith('create index')) {
         // Index creation - no-op in mock
         return {
-          one: () => null,
-          toArray: () => [],
+          one: () => null as T | null,
+          toArray: () => [] as T[],
         }
       }
 
@@ -498,11 +499,11 @@ function createMockSqlStorage(): SqlStorage {
         }
         const table = tables.get(tableName)!
         const id = idCounter++
-        const row = { id, ...Object.fromEntries(params.map((p, i) => [`param${i}`, p])) }
+        const row = { id }
         table.push(row)
         return {
-          one: () => row as T,
-          toArray: () => [row as T],
+          one: () => row as T | null,
+          toArray: () => [row] as T[],
         }
       }
 
@@ -520,23 +521,23 @@ function createMockSqlStorage(): SqlStorage {
       if (sqlLower.startsWith('update')) {
         // Handle UPDATE - simplified
         return {
-          one: () => null,
-          toArray: () => [],
+          one: () => null as T | null,
+          toArray: () => [] as T[],
         }
       }
 
       if (sqlLower.startsWith('delete')) {
         // Handle DELETE - simplified
         return {
-          one: () => null,
-          toArray: () => [],
+          one: () => null as T | null,
+          toArray: () => [] as T[],
         }
       }
 
       // Default fallback
       return {
-        one: () => null,
-        toArray: () => [],
+        one: () => null as T | null,
+        toArray: () => [] as T[],
       }
     },
   }

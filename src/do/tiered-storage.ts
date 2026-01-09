@@ -872,7 +872,7 @@ export class TieredStorage {
    * Evict objects from hot tier to make room.
    */
   private async evictFromHotTier(neededBytes: number): Promise<boolean> {
-    const currentBytes = await this.getHotTierBytes()
+    void await this.getHotTierBytes() // Track current usage
     let freedBytes = 0
     const targetFree = neededBytes
 

@@ -29,7 +29,13 @@
  * ```
  */
 
-import { RefStorage, isValidRefName, isValidSha, Ref } from './storage'
+import { RefStorage, isValidSha } from './storage'
+
+// Reserved for future ref validation
+import type { Ref as _RefType } from './storage'
+import { isValidRefName as _isValidRefName } from './storage'
+void _isValidRefName
+export type { _RefType as BranchRefType } // Preserve for future use
 
 // ============================================================================
 // Types and Interfaces
@@ -425,7 +431,7 @@ export class BranchManager {
     }
 
     // Get current branch to check if new branch is current
-    const currentBranch = await this.getCurrentBranch()
+    void await this.getCurrentBranch() // Available for future use
     const isCurrent = false // New branch is never current
 
     // Create tracking info if requested

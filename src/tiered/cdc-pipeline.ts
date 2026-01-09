@@ -1653,10 +1653,10 @@ export class ParquetTransformer {
 
     // Apply compression
     if (this.compression === 'gzip') {
-      dataBytes = await this.gzipCompress(dataBytes)
+      dataBytes = new Uint8Array(await this.gzipCompress(dataBytes))
     } else if (this.compression === 'snappy') {
       // Snappy simulation (use simple compression)
-      dataBytes = await this.simpleCompress(dataBytes)
+      dataBytes = new Uint8Array(await this.simpleCompress(dataBytes))
     }
 
     // Build final buffer: PAR1 + data + length (4 bytes) + PAR1
@@ -1683,7 +1683,7 @@ export class ParquetTransformer {
     if (typeof CompressionStream !== 'undefined') {
       const stream = new CompressionStream('gzip')
       const writer = stream.writable.getWriter()
-      writer.write(data)
+      writer.write(new Uint8Array(data))
       writer.close()
 
       const reader = stream.readable.getReader()

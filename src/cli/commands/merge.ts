@@ -208,14 +208,16 @@ async function resolveRef(cwd: string, ref: string): Promise<string | null> {
 
 /**
  * Get current branch SHA
+ * @internal Reserved for future use
  */
-async function getCurrentBranchSha(cwd: string): Promise<string | null> {
+async function _getCurrentBranchSha(cwd: string): Promise<string | null> {
   const head = await getCurrentHead(cwd)
   if (head.branch) {
     return readBranchSha(cwd, head.branch)
   }
   return head.sha
 }
+void _getCurrentBranchSha // Preserve for future use
 
 /**
  * Check if branches have diverged (using mock file for testing)

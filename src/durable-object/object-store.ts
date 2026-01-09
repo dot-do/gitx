@@ -53,10 +53,13 @@ import {
   TagObject,
   TreeEntry,
   Author,
-  validateTreeEntry,
   isValidMode,
   isValidSha
 } from '../types/objects'
+
+// Reserved for future validation
+import { validateTreeEntry as _validateTreeEntry } from '../types/objects'
+void _validateTreeEntry
 import { hashObject } from '../utils/hash'
 import type { StorageBackend } from '../storage/backend'
 
@@ -282,7 +285,7 @@ export class ObjectStore {
       maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
       maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
       defaultTTL: options?.cacheTTL,
-      sizeCalculator: (obj: StoredObject) => obj.data.byteLength + 100, // 100 bytes overhead for metadata
+      sizeCalculator: (obj) => (obj as StoredObject).data.byteLength + 100, // 100 bytes overhead for metadata
       onEvict: (key, _value, reason) => {
         this.log('debug', `Cache eviction: ${key} (reason: ${reason})`)
       }

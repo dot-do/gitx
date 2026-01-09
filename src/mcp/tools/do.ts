@@ -45,8 +45,9 @@ function checkSyntax(code: string): { valid: boolean; error?: string } {
 
 /**
  * Wrap user code to inject store access
+ * @internal Reserved for future sandboxed code execution
  */
-function wrapCodeWithStore(code: string, objectStore: ObjectStoreProxy): string {
+function _wrapCodeWithStore(code: string, _objectStore: ObjectStoreProxy): string {
   // Serialize store methods for injection
   return `
     const store = {
@@ -63,6 +64,7 @@ function wrapCodeWithStore(code: string, objectStore: ObjectStoreProxy): string 
     ${code}
   `
 }
+void _wrapCodeWithStore // Preserve for future sandboxed execution
 
 export async function executeDo(
   input: DoToolInput,

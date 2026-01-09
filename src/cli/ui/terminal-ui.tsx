@@ -1,14 +1,12 @@
 // Terminal UI for gitx CLI using @opentui/react
 // GREEN phase implementation - minimum code to pass tests
 
-import type { ReactNode } from 'react'
-
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface TerminalUIProps {
-  children?: ReactNode
+  children?: unknown
 }
 
 export interface KeyboardEvent {
@@ -54,11 +52,52 @@ export interface FuzzySearchProps {
   onCancel: () => void
 }
 
+// Element types for custom terminal UI components
+export interface TerminalUIAppElement {
+  type: 'TerminalUIApp'
+  props: TerminalUIProps
+  children?: unknown
+}
+
+export interface DiffViewElement {
+  type: 'DiffView'
+  props: DiffViewProps
+  diff: string
+  viewMode: 'split' | 'unified'
+}
+
+export interface LoadingSpinnerElement {
+  type: 'LoadingSpinner'
+  props: LoadingSpinnerProps
+  message?: string
+}
+
+export interface ErrorDisplayElement {
+  type: 'ErrorDisplay'
+  props: ErrorDisplayProps
+  message: string
+}
+
+export interface ScrollableContentElement {
+  type: 'ScrollableContent'
+  props: ScrollableContentProps
+  content: string
+  height: number
+}
+
+export interface FuzzySearchElement {
+  type: 'FuzzySearch'
+  props: FuzzySearchProps
+  items: string[]
+  onSelect: (item: string) => void
+  onCancel: () => void
+}
+
 // ============================================================================
 // Terminal UI App Component
 // ============================================================================
 
-export function TerminalUIApp(props: TerminalUIProps): ReactNode {
+export function TerminalUIApp(props: TerminalUIProps): TerminalUIAppElement {
   // Returns a simple representation of the app
   return {
     type: 'TerminalUIApp',
@@ -110,7 +149,7 @@ export function adaptLayoutForWidth(width: number): 'wide' | 'narrow' {
 // Diff View
 // ============================================================================
 
-export function DiffView(props: DiffViewProps): ReactNode {
+export function DiffView(props: DiffViewProps): DiffViewElement {
   // Returns a representation of the diff view component
   return {
     type: 'DiffView',
@@ -133,7 +172,7 @@ export function selectDiffViewMode(terminalWidth: number): 'split' | 'unified' {
 // Loading Spinner
 // ============================================================================
 
-export function LoadingSpinner(props: LoadingSpinnerProps): ReactNode {
+export function LoadingSpinner(props: LoadingSpinnerProps): LoadingSpinnerElement {
   // Returns a representation of the loading spinner component
   return {
     type: 'LoadingSpinner',
@@ -146,7 +185,7 @@ export function LoadingSpinner(props: LoadingSpinnerProps): ReactNode {
 // Error Display
 // ============================================================================
 
-export function ErrorDisplay(props: ErrorDisplayProps): ReactNode {
+export function ErrorDisplay(props: ErrorDisplayProps): ErrorDisplayElement {
   // Returns a representation of the error display component
   const message = props.error instanceof Error ? props.error.message : props.error
   return {
@@ -160,7 +199,7 @@ export function ErrorDisplay(props: ErrorDisplayProps): ReactNode {
 // Scrollable Content
 // ============================================================================
 
-export function ScrollableContent(props: ScrollableContentProps): ReactNode {
+export function ScrollableContent(props: ScrollableContentProps): ScrollableContentElement {
   // Returns a representation of the scrollable content component
   return {
     type: 'ScrollableContent',
@@ -174,7 +213,7 @@ export function ScrollableContent(props: ScrollableContentProps): ReactNode {
 // Fuzzy Search
 // ============================================================================
 
-export function FuzzySearch(props: FuzzySearchProps): ReactNode {
+export function FuzzySearch(props: FuzzySearchProps): FuzzySearchElement {
   // Returns a representation of the fuzzy search component
   return {
     type: 'FuzzySearch',
@@ -189,7 +228,7 @@ export function FuzzySearch(props: FuzzySearchProps): ReactNode {
 // Render Function
 // ============================================================================
 
-export function render(_element: ReactNode): void {
+export function render(_element: unknown): void {
   // Minimal render function that accepts any element
   // In a real implementation, this would render to the terminal
 }

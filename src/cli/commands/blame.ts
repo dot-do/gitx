@@ -428,7 +428,7 @@ function computeLineMapping(oldLines: string[], newLines: string[]): Map<number,
  * // gitx blame -L 10,20 src/index.ts
  * // gitx blame -C src/renamed-file.ts
  */
-export async function blameCommand(ctx: CommandContext): Promise<void> {
+export async function blameCommand(_ctx: CommandContext): Promise<void> {
   throw new Error('Not implemented')
 }
 

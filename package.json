@@ -58,6 +58,7 @@
     "@cloudflare/workers-types": "^4.20241218.0",
     "@types/node": "^22.10.2",
     "@types/pako": "^2.0.4",
+    "@types/react": "^19.2.7",
     "cac": "^6.7.14",
     "shiki": "^1.24.0",
     "typescript": "^5.7.2",

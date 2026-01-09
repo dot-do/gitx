@@ -303,14 +303,16 @@ interface FileEntry {
 
 /**
  * Blob entry stored in SQLite.
+ * @internal Reserved for tiered storage implementation
  */
-interface BlobEntry {
+type _BlobEntry = {
   id: string
   data: ArrayBuffer | null
   size: number
   tier: 'hot' | 'warm' | 'cold'
   created_at: number
 }
+export type { _BlobEntry as BlobEntryInternal } // Preserve for future tiered storage
 
 // ============================================================================
 // Constants

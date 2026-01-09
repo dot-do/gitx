@@ -661,7 +661,10 @@ function validatePackfile(data: Uint8Array): { version: number; objectCount: num
  * @internal
  */
 async function computeChecksum(data: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data)
+  // Create a copy as ArrayBuffer to satisfy BufferSource type
+  const buffer = new ArrayBuffer(data.length)
+  new Uint8Array(buffer).set(data)
+  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
   const hashArray = new Uint8Array(hashBuffer)
   return Array.from(hashArray)
     .map(b => b.toString(16).padStart(2, '0'))

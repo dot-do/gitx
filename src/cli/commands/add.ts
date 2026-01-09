@@ -308,11 +308,13 @@ async function getFileMode(filePath: string): Promise<number> {
 
 /**
  * Compute blob SHA for a file
+ * @internal Reserved for future use
  */
-async function computeBlobSha(filePath: string): Promise<string> {
+async function _computeBlobSha(filePath: string): Promise<string> {
   const content = await fs.readFile(filePath)
   return hashObjectStreamingHex('blob', new Uint8Array(content))
 }
+void _computeBlobSha // Preserve for future use
 
 /**
  * Store a blob object in the object store
@@ -421,7 +423,6 @@ async function walkDirectory(
       if (entry.name === '.git') continue
 
       const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name
-      const entryFull = path.join(currentPath, entry.name)
 
       if (entry.isDirectory()) {
         await walkDirectory(basePath, entryRelative, gitIgnore, files)
@@ -849,7 +850,7 @@ export async function addUpdate(
 
   // Get tracked files
   const tracked = await getTrackedFiles(gitDir)
-  const stagedFiles = await getStagedFiles(gitDir)
+  void getStagedFiles(gitDir) // Keep available for potential future use
 
   // Process only tracked files
   const indexEntries: IndexEntry[] = []

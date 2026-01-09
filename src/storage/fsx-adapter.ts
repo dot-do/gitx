@@ -34,13 +34,69 @@ import type { StorageBackend, StoredObjectResult, ObjectType } from './backend'
 import type { Ref } from '../refs/storage'
 import { parseRefContent, serializeRefContent } from '../refs/storage'
 
-// Import fsx CAS operations
-import { putObject as fsxPutObject } from '../../../fsx/src/cas/put-object'
-import { getObject as fsxGetObject } from '../../../fsx/src/cas/get-object'
-import { hashToPath } from '../../../fsx/src/cas/path-mapping'
-import { sha1 } from '../../../fsx/src/cas/hash'
-import { createGitObject, parseGitObject } from '../../../fsx/src/cas/git-object'
-import { compress, decompress } from '../../../fsx/src/cas/compression'
+// Local implementations for standalone operation
+import { sha1Hex } from '../utils/sha1'
+import * as pako from 'pako'
+
+// ============================================================================
+// Local Git Object Utilities (replaces fsx dependencies)
+// ============================================================================
+
+/**
+ * SHA-1 hash function (async wrapper for compatibility)
+ */
+async function sha1(data: Uint8Array): Promise<string> {
+  return sha1Hex(data)
+}
+
+/**
+ * Create a Git object with header
+ */
+function createGitObject(type: string, content: Uint8Array): Uint8Array {
+  const header = `${type} ${content.length}\0`
+  const headerBytes = new TextEncoder().encode(header)
+  const result = new Uint8Array(headerBytes.length + content.length)
+  result.set(headerBytes, 0)
+  result.set(content, headerBytes.length)
+  return result
+}
+
+/**
+ * Parse a Git object to extract type and content
+ */
+function parseGitObject(data: Uint8Array): { type: string; content: Uint8Array } {
+  // Find null byte separator
+  let nullIndex = -1
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] === 0) {
+      nullIndex = i
+      break
+    }
+  }
+  if (nullIndex === -1) {
+    throw new Error('Invalid git object: no null byte found')
+  }
+
+  const headerStr = new TextDecoder().decode(data.subarray(0, nullIndex))
+  const [type] = headerStr.split(' ')
+  const content = data.subarray(nullIndex + 1)
+
+  return { type, content }
+}
+
+/**
+ * Compress data with zlib
+ */
+async function compress(data: Uint8Array): Promise<Uint8Array> {
+  return pako.deflate(data)
+}
+
+/**
+ * Decompress zlib data
+ */
+async function decompress(data: Uint8Array): Promise<Uint8Array> {
+  return pako.inflate(data)
+}
 
 // ============================================================================
 // Types

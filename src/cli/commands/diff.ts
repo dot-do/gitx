@@ -249,7 +249,8 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   '.svelte': 'svelte',
 }
 
-const BINARY_EXTENSIONS = new Set([
+// Reserved for future binary file detection
+const _BINARY_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif',
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
   '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar',
@@ -258,6 +259,7 @@ const BINARY_EXTENSIONS = new Set([
   '.mp3', '.mp4', '.wav', '.ogg', '.avi', '.mov', '.mkv',
   '.sqlite', '.db',
 ])
+void _BINARY_EXTENSIONS // Preserve for future use
 
 // ============================================================================
 // Main Command Handler
@@ -439,9 +441,9 @@ export async function getStagedDiff(repoPath: string): Promise<DiffResult> {
  * console.log(`Last commit changed ${diff.stats.filesChanged} files`)
  */
 export async function getCommitDiff(
-  repoPath: string,
-  fromCommit: string,
-  toCommit: string
+  _repoPath: string,
+  _fromCommit: string,
+  _toCommit: string
 ): Promise<DiffResult> {
   // Return empty diff result for commit comparisons
   // In a real implementation this would resolve commits and compare trees
@@ -471,9 +473,9 @@ export async function getCommitDiff(
  * console.log(`Feature branch has ${diff.stats.insertions} new lines`)
  */
 export async function getBranchDiff(
-  repoPath: string,
-  fromBranch: string,
-  toBranch: string
+  _repoPath: string,
+  _fromBranch: string,
+  _toBranch: string
 ): Promise<DiffResult> {
   // Return empty diff result for branch comparisons
   // In a real implementation this would resolve branches and compare trees
@@ -510,7 +512,7 @@ export async function getBranchDiff(
 export async function getFileDiff(
   repoPath: string,
   filePath: string,
-  options?: { staged?: boolean; commit?: string }
+  _options?: { staged?: boolean; commit?: string }
 ): Promise<DiffResult> {
   const entries: DiffEntry[] = []
   let insertions = 0
@@ -667,7 +669,6 @@ interface DiffOp {
  * Generate diff operations from LCS
  */
 function generateDiffFromLCS(oldLines: string[], newLines: string[], dp: number[][]): DiffOp[] {
-  const ops: DiffOp[] = []
   let i = oldLines.length
   let j = newLines.length
 
@@ -708,8 +709,8 @@ function generateDiffFromLCS(oldLines: string[], newLines: string[], dp: number[
  */
 function groupIntoHunks(
   diff: DiffOp[],
-  oldLength: number,
-  newLength: number,
+  _oldLength: number,
+  _newLength: number,
   contextLines: number
 ): DiffHunk[] {
   if (diff.length === 0) return []
@@ -965,7 +966,7 @@ async function getHighlighter(): Promise<Highlighter> {
  */
 export async function highlightDiff(
   diff: DiffResult,
-  options?: { theme?: string }
+  _options?: { theme?: string }
 ): Promise<HighlightedDiff> {
   const languages = new Map<string, string>()
   const lines: string[] = []
@@ -1018,7 +1019,7 @@ export async function highlightDiff(
 /**
  * Convert Shiki tokens to ANSI escape codes
  */
-function tokensToAnsi(tokens: Array<{ content: string; color?: string }>, lineType: string): string {
+function tokensToAnsi(tokens: Array<{ content: string; color?: string }>, _lineType: string): string {
   return tokens.map(token => {
     if (token.color) {
       const hex = token.color.replace('#', '')

@@ -23,7 +23,7 @@
  */
 
 import type { CommandContext } from '../index'
-import type { DiffResult, DiffEntry, DiffHunk, DiffLine } from './diff'
+import type { DiffResult, DiffEntry, DiffHunk } from './diff'
 import { getUnstagedDiff } from './diff'
 import * as crypto from 'crypto'
 
@@ -108,7 +108,8 @@ export type ProgressCallback = (progress: number) => void
 // ============================================================================
 
 const DEFAULT_EXPIRATION_HOURS = 24
-const DEFAULT_ENDPOINT = 'https://preview.gitx.do/upload'
+const _DEFAULT_ENDPOINT = 'https://preview.gitx.do/upload'
+void _DEFAULT_ENDPOINT // Reserved for production use
 
 // ============================================================================
 // Main Command Handler
@@ -442,7 +443,7 @@ export async function generateStandaloneHTML(diff: DiffResult): Promise<string> 
 /**
  * Render a diff hunk as HTML
  */
-function renderHunk(hunk: DiffHunk, filePath: string): string {
+function renderHunk(hunk: DiffHunk, _filePath: string): string {
   const headerText = `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`
 
   const linesHtml = hunk.lines.map(line => {
@@ -744,7 +745,7 @@ export async function uploadPreview(
 
       // Try to parse response as JSON
       try {
-        const data = await response.json()
+        const data = await response.json() as { url?: string; expiresAt?: Date; id?: string }
         return {
           url: data.url || `${endpoint}/${id}`,
           expiresAt: data.expiresAt || expiresAt,

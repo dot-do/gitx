@@ -192,7 +192,7 @@ export interface StatusResult {
  * await statusCommand({ cwd: '/repo', options: { branch: true }, stdout: console.log, stderr: console.error, args: [], rawArgs: [] })
  */
 export async function statusCommand(ctx: CommandContext): Promise<void> {
-  const { cwd, options, stdout, stderr } = ctx
+  const { cwd, options, stdout } = ctx
 
   try {
     if (options.branch && !options.short) {
@@ -331,7 +331,6 @@ async function scanWorkingTree(
 
     for (const entry of entries) {
       const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name
-      const fullPath = path.join(currentPath, entry.name)
 
       // Skip .git directory
       if (entry.name === '.git') continue

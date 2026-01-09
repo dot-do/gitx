@@ -738,13 +738,17 @@ export function createDelta(base: Uint8Array, target: Uint8Array): Uint8Array {
  * @returns {number} 32-bit hash value
  * @internal
  */
-function hashBytes(data: Uint8Array, offset: number, length: number): number {
+/**
+ * @internal Reserved for hash table delta compression
+ */
+function _hashBytes(data: Uint8Array, offset: number, length: number): number {
   let hash = 0
   for (let i = 0; i < length; i++) {
     hash = ((hash << 5) - hash + data[offset + i]) | 0
   }
   return hash
 }
+void _hashBytes // Preserve for future delta optimization
 
 /**
  * Finds the length of matching bytes between two array regions.

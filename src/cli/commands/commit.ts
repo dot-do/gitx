@@ -226,8 +226,9 @@ async function getCurrentBranch(cwd: string): Promise<string | null> {
 
 /**
  * Check if HEAD is detached
+ * @internal Reserved for future use
  */
-async function isDetachedHead(cwd: string): Promise<boolean> {
+async function _isDetachedHead(cwd: string): Promise<boolean> {
   const headPath = path.join(cwd, '.git', 'HEAD')
   try {
     const content = await fs.readFile(headPath, 'utf8')
@@ -236,6 +237,7 @@ async function isDetachedHead(cwd: string): Promise<boolean> {
     return false
   }
 }
+void _isDetachedHead // Preserve for future use
 
 /**
  * Update HEAD/branch ref to new SHA
@@ -282,7 +284,7 @@ async function updateRef(cwd: string, sha: string): Promise<void> {
  * // gitx commit -a -m "fix: update all files"
  */
 export async function commitCommand(ctx: CommandContext): Promise<void> {
-  const { cwd, options, stdout, stderr } = ctx
+  const { cwd, options, stdout } = ctx
 
   // Handle --help flag
   if (options.help || options.h) {

@@ -1,8 +1,6 @@
 // Navigation List Component for gitx terminal UI
 // GREEN phase implementation
 
-import type { ReactNode } from 'react'
-
 export interface NavigationListProps {
   items: string[]
   selectedIndex: number
@@ -10,7 +8,14 @@ export interface NavigationListProps {
   onNavigate: (direction: 'up' | 'down') => void
 }
 
-export function NavigationList(props: NavigationListProps): ReactNode {
+export interface NavigationListElement {
+  type: 'NavigationList'
+  props: NavigationListProps
+  items: string[]
+  selectedIndex: number
+}
+
+export function NavigationList(props: NavigationListProps): NavigationListElement {
   return {
     type: 'NavigationList',
     props,

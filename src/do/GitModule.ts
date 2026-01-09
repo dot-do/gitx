@@ -941,7 +941,10 @@ export class GitModule {
    * Hash raw bytes using SHA-1.
    */
   private async hashBytes(data: Uint8Array): Promise<string> {
-    const hashBuffer = await crypto.subtle.digest('SHA-1', data)
+    // Create a copy as ArrayBuffer to satisfy BufferSource type
+    const buffer = new ArrayBuffer(data.length)
+    new Uint8Array(buffer).set(data)
+    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
     return this.bytesToHex(new Uint8Array(hashBuffer))
   }
 

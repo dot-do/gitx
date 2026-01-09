@@ -452,7 +452,7 @@ export class GitRepoDO extends DO {
   /**
    * Get a typed collection accessor.
    */
-  collection<T>(name: string): StoreAccessor & { type: string } {
+  collection<_T = unknown>(name: string): StoreAccessor & { type: string } {
     return {
       ...this._createStoreAccessor(`collection:${name}`),
       type: name,
@@ -660,6 +660,6 @@ export function isGitRepoDO(value: unknown): value is GitRepoDO {
   return (
     candidate.$type === 'GitRepoDO' &&
     typeof candidate.hasCapability === 'function' &&
-    (candidate as GitRepoDO).hasCapability('git')
+    (candidate as unknown as GitRepoDO).hasCapability('git')
   )
 }

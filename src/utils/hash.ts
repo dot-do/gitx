@@ -24,11 +24,52 @@
  * ```
  */
 
-// Re-export core hash primitives from fsx.do
-export { sha1, sha256, hexToBytes, bytesToHex } from '../../../fsx/src/cas/hash'
+// Local implementations of hash primitives
+import { sha1Hex as sha1HexSync, bytesToHex as localBytesToHex } from './sha1'
+
+// Re-export hash functions (async wrapper for compatibility)
+export { bytesToHex, hexToBytes } from './sha1'
+
+// Re-export sync hex for convenience
+export { sha1Hex } from './sha1'
+
+// Crypto type declarations for Workers environment
+declare const crypto: {
+  subtle?: {
+    digest(algorithm: string, data: ArrayBufferView): Promise<ArrayBuffer>
+  }
+} | undefined
+
+/**
+ * SHA-1 hash function (async for Web Crypto API compatibility)
+ * Falls back to sync implementation for Workers without Web Crypto
+ */
+export async function sha1(data: Uint8Array | string): Promise<string> {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+  // Use Web Crypto API if available
+  if (typeof crypto !== 'undefined' && crypto?.subtle) {
+    const hashBuffer = await crypto.subtle.digest('SHA-1', bytes)
+    return localBytesToHex(new Uint8Array(hashBuffer))
+  }
+  // Fall back to sync implementation
+  return sha1HexSync(bytes)
+}
+
+/**
+ * SHA-256 hash function (async for Web Crypto API compatibility)
+ */
+export async function sha256(data: Uint8Array | string): Promise<string> {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+  if (typeof crypto !== 'undefined' && crypto?.subtle) {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
+    return localBytesToHex(new Uint8Array(hashBuffer))
+  }
+  // SHA-256 sync implementation would go here - for now throw
+  throw new Error('SHA-256 requires Web Crypto API')
+}
 
 // Import for internal use
-import { sha1, bytesToHex } from '../../../fsx/src/cas/hash'
+const bytesToHex = localBytesToHex
 
 /**
  * Hash a Git object with its type header.

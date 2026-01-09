@@ -1833,7 +1833,10 @@ export class TierMigrator {
    * ```
    */
   async computeChecksum(data: Uint8Array): Promise<string> {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    // Create a copy as ArrayBuffer to satisfy BufferSource type
+    const buffer = new ArrayBuffer(data.length)
+    new Uint8Array(buffer).set(data)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
     const hashArray = Array.from(new Uint8Array(hashBuffer))
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
   }

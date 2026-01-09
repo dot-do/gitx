@@ -28,8 +28,8 @@
 
 import * as path from 'path'
 import * as fs from 'fs/promises'
-import { createFSxAdapter, FSxStorageAdapter } from '../storage/fsx-adapter'
-import type { StorageBackend, StoredObjectResult } from '../storage/backend'
+import { createFSxAdapter } from '../storage/fsx-adapter'
+import type { StorageBackend } from '../storage/backend'
 import type { ObjectType } from '../types/objects'
 
 // ============================================================================
