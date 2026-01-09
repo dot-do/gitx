@@ -328,3 +328,37 @@ export {
   type CloudflareContainerInstance,
   type ContainerStartOptions,
 }
+
+// ============================================================================
+// TieredStorage Imports and Exports
+// ============================================================================
+
+import {
+  TieredStorage,
+  createTieredStorage,
+  type TieredStorageOptions,
+  type TieredStorageStats,
+  type GetObjectResult,
+  type ObjectMetadata,
+  type StorageTier,
+  type R2BucketLike as TieredR2BucketLike,
+  type R2ObjectLike as TieredR2ObjectLike,
+  type R2ObjectsLike as TieredR2ObjectsLike,
+  type R2PutOptions,
+  type SqlStorage as TieredSqlStorage,
+} from './tiered-storage'
+
+export {
+  TieredStorage,
+  createTieredStorage,
+  type TieredStorageOptions,
+  type TieredStorageStats,
+  type GetObjectResult,
+  type ObjectMetadata,
+  type StorageTier,
+  type TieredR2BucketLike,
+  type TieredR2ObjectLike,
+  type TieredR2ObjectsLike,
+  type R2PutOptions,
+  type TieredSqlStorage,
+}
