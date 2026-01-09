@@ -1434,6 +1434,143 @@ export function createBashModule(options: BashModuleOptions = {}): BashModule {
 }
 
 // ============================================================================
+// Callable BashModule Types and Factory
+// ============================================================================
+
+/**
+ * Tagged template function signature for bash commands.
+ *
+ * @example
+ * ```typescript
+ * const result = await bash`ls -la ${dir}`
+ * ```
+ */
+export interface BashTagFunction {
+  (strings: TemplateStringsArray, ...values: unknown[]): Promise<BashResult>
+}
+
+/**
+ * A BashModule that can also be called directly as a tagged template literal.
+ *
+ * This type represents a BashModule instance that has been wrapped with
+ * a Proxy to enable both direct method calls and tagged template syntax.
+ *
+ * @example
+ * ```typescript
+ * // Create a callable bash module
+ * const bash = createCallableBashModule({ executor })
+ *
+ * // Use as tagged template
+ * const result = await bash`ls -la ${dir}`
+ *
+ * // Use as regular module
+ * const result2 = await bash.exec('git', ['status'])
+ * ```
+ */
+export type CallableBashModule = BashModule & BashTagFunction
+
+/**
+ * Create a callable BashModule instance that supports tagged template literals.
+ *
+ * This factory creates a BashModule wrapped in a Proxy that allows both:
+ * - Standard method calls: `bash.exec('ls', ['-la'])`
+ * - Tagged template syntax: `bash\`ls -la ${dir}\``
+ *
+ * The tagged template syntax automatically escapes interpolated values
+ * to prevent shell injection attacks.
+ *
+ * @param options - Configuration options for the module
+ * @returns A callable BashModule instance
+ *
+ * @example
+ * ```typescript
+ * import { createCallableBashModule } from 'gitx.do/do'
+ *
+ * // In a Durable Object
+ * class MyDO extends DO {
+ *   bash = createCallableBashModule({
+ *     executor: containerExecutor,
+ *     fs: this.$.fs,
+ *     cwd: '/app'
+ *   })
+ *
+ *   async listFiles(dir: string) {
+ *     // Use tagged template syntax
+ *     const result = await this.bash`ls -la ${dir}`
+ *     return result.stdout
+ *   }
+ *
+ *   async runWithArgs() {
+ *     // Or use regular methods
+ *     const result = await this.bash.exec('npm', ['install'])
+ *     return result
+ *   }
+ * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Handle special characters safely
+ * const filename = "file with 'quotes' and spaces"
+ * const result = await bash`cat ${filename}`
+ * // Executes: cat 'file with '\''quotes'\'' and spaces'
+ * ```
+ */
+export function createCallableBashModule(
+  options: BashModuleOptions = {}
+): CallableBashModule {
+  const module = new BashModule(options)
+
+  // Create a function that calls the tag method
+  const tagFn = (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ): Promise<BashResult> => {
+    return module.tag(strings, ...values)
+  }
+
+  // Create a Proxy that makes the module callable
+  return new Proxy(tagFn, {
+    // Forward property access to the module
+    get(target, prop, receiver) {
+      if (prop in module) {
+        const value = (module as unknown as Record<string | symbol, unknown>)[prop]
+        // Bind methods to the module
+        if (typeof value === 'function') {
+          return value.bind(module)
+        }
+        return value
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+
+    // Forward property setting to the module
+    set(target, prop, value) {
+      if (prop in module) {
+        (module as unknown as Record<string | symbol, unknown>)[prop] = value
+        return true
+      }
+      return Reflect.set(target, prop, value)
+    },
+
+    // Forward has checks to the module
+    has(target, prop) {
+      return prop in module || Reflect.has(target, prop)
+    },
+
+    // Make instanceof work
+    getPrototypeOf() {
+      return BashModule.prototype
+    },
+
+    // Forward apply to the tag function
+    apply(target, _thisArg, args) {
+      return target(...(args as [TemplateStringsArray, ...unknown[]]))
+    },
+  }) as CallableBashModule
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 
@@ -1445,4 +1582,18 @@ export function createBashModule(options: BashModuleOptions = {}): BashModule {
  */
 export function isBashModule(value: unknown): value is BashModule {
   return value instanceof BashModule
+}
+
+/**
+ * Check if a value is a CallableBashModule.
+ *
+ * @param value - Value to check
+ * @returns True if value is a CallableBashModule
+ */
+export function isCallableBashModule(value: unknown): value is CallableBashModule {
+  if (typeof value !== 'function') return false
+  if (!('name' in value)) return false
+
+  const maybeBash = value as unknown as BashModule
+  return maybeBash.name === 'bash' && 'exec' in value && typeof maybeBash.exec === 'function'
 }

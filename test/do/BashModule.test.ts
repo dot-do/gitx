@@ -917,3 +917,352 @@ describe('BashModule with storage integration', () => {
     })
   })
 })
+
+// ============================================================================
+// Tagged Template Literal Tests
+// ============================================================================
+
+describe('BashModule tagged template literals', () => {
+  let mockExecutor: MockBashExecutor
+  let bashModule: BashModule
+
+  beforeEach(() => {
+    mockExecutor = new MockBashExecutor()
+    bashModule = new BashModule({
+      executor: mockExecutor,
+      cwd: '/app',
+      requireConfirmation: false,
+    })
+  })
+
+  describe('tag() method', () => {
+    it('should execute a simple command', async () => {
+      const result = await bashModule.tag`ls -la`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('ls -la')
+    })
+
+    it('should interpolate string values', async () => {
+      const dir = '/tmp'
+      const result = await bashModule.tag`ls -la ${dir}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('ls -la /tmp')
+    })
+
+    it('should escape strings with spaces', async () => {
+      const dir = '/tmp/my folder'
+      const result = await bashModule.tag`ls -la ${dir}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe("ls -la '/tmp/my folder'")
+    })
+
+    it('should escape strings with special characters', async () => {
+      const filename = 'file; rm -rf /'
+      const result = await bashModule.tag`cat ${filename}`
+      expect(result.exitCode).toBe(0)
+      // Special characters should be quoted to prevent injection
+      expect(mockExecutor.lastCommand).toBe("cat 'file; rm -rf /'")
+    })
+
+    it('should escape strings with single quotes', async () => {
+      const filename = "it's a file"
+      const result = await bashModule.tag`cat ${filename}`
+      expect(result.exitCode).toBe(0)
+      // Single quotes in the value should be properly escaped
+      expect(mockExecutor.lastCommand).toBe("cat 'it'\\''s a file'")
+    })
+
+    it('should handle multiple interpolations', async () => {
+      const src = 'source.txt'
+      const dest = 'dest.txt'
+      const result = await bashModule.tag`cp ${src} ${dest}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('cp source.txt dest.txt')
+    })
+
+    it('should handle number values', async () => {
+      const count = 10
+      const result = await bashModule.tag`head -n ${count} file.txt`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('head -n 10 file.txt')
+    })
+
+    it('should handle boolean values', async () => {
+      const verbose = true
+      const result = await bashModule.tag`echo ${verbose}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('echo true')
+    })
+
+    it('should handle null values as empty strings', async () => {
+      const value = null
+      const result = await bashModule.tag`echo ${value}end`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('echo end')
+    })
+
+    it('should handle undefined values as empty strings', async () => {
+      const value = undefined
+      const result = await bashModule.tag`echo ${value}end`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('echo end')
+    })
+
+    it('should handle empty strings', async () => {
+      const value = ''
+      const result = await bashModule.tag`echo ${value}end`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe("echo ''end")
+    })
+
+    it('should handle array values', async () => {
+      const files = ['file1.txt', 'file2.txt', 'file3.txt']
+      const result = await bashModule.tag`cat ${files}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('cat file1.txt file2.txt file3.txt')
+    })
+
+    it('should escape array elements with spaces', async () => {
+      const files = ['file 1.txt', 'file 2.txt']
+      const result = await bashModule.tag`cat ${files}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe("cat 'file 1.txt' 'file 2.txt'")
+    })
+
+    it('should handle object values as JSON', async () => {
+      const config = { key: 'value', nested: { a: 1 } }
+      const result = await bashModule.tag`echo ${config}`
+      expect(result.exitCode).toBe(0)
+      // Objects are JSON stringified and quoted
+      expect(mockExecutor.lastCommand).toBe('echo \'{"key":"value","nested":{"a":1}}\'')
+    })
+
+    it('should handle complex interpolation patterns', async () => {
+      const user = 'john'
+      const host = 'example.com'
+      const port = 22
+      const result = await bashModule.tag`ssh -p ${port} ${user}@${host}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe('ssh -p 22 john@example.com')
+    })
+
+    it('should prevent shell injection via backticks', async () => {
+      const malicious = '$(whoami)'
+      const result = await bashModule.tag`echo ${malicious}`
+      expect(result.exitCode).toBe(0)
+      // The $() should be quoted and not executed
+      expect(mockExecutor.lastCommand).toBe("echo '$(whoami)'")
+    })
+
+    it('should prevent shell injection via backtick syntax', async () => {
+      const malicious = '`whoami`'
+      const result = await bashModule.tag`echo ${malicious}`
+      expect(result.exitCode).toBe(0)
+      // The backticks should be quoted and not executed
+      expect(mockExecutor.lastCommand).toBe("echo '`whoami`'")
+    })
+
+    it('should prevent shell injection via semicolons', async () => {
+      const malicious = 'foo; cat /etc/passwd'
+      const result = await bashModule.tag`echo ${malicious}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe("echo 'foo; cat /etc/passwd'")
+    })
+
+    it('should prevent shell injection via pipes', async () => {
+      const malicious = 'foo | cat /etc/passwd'
+      const result = await bashModule.tag`echo ${malicious}`
+      expect(result.exitCode).toBe(0)
+      expect(mockExecutor.lastCommand).toBe("echo 'foo | cat /etc/passwd'")
+    })
+
+    it('should handle paths with @ and : characters unquoted', async () => {
+      const path = 'user@host:/path/to/file'
+      const result = await bashModule.tag`scp ${path}`
+      expect(result.exitCode).toBe(0)
+      // @ and : are safe characters, no quoting needed
+      expect(mockExecutor.lastCommand).toBe('scp user@host:/path/to/file')
+    })
+
+    it('should fail without executor', async () => {
+      const moduleNoExecutor = new BashModule({ requireConfirmation: false })
+      const result = await moduleNoExecutor.tag`ls`
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toContain('No executor configured')
+    })
+  })
+})
+
+// ============================================================================
+// Callable BashModule Tests
+// ============================================================================
+
+import {
+  createCallableBashModule,
+  isCallableBashModule,
+  type CallableBashModule,
+} from '../../src/do/BashModule'
+
+describe('createCallableBashModule', () => {
+  let mockExecutor: MockBashExecutor
+
+  beforeEach(() => {
+    mockExecutor = new MockBashExecutor()
+  })
+
+  it('should create a callable module', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    expect(typeof bash).toBe('function')
+  })
+
+  it('should support tagged template syntax', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    const result = await bash`ls -la`
+    expect(result.exitCode).toBe(0)
+    expect(mockExecutor.lastCommand).toBe('ls -la')
+  })
+
+  it('should support tagged template with interpolation', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    const dir = '/home/user'
+    const result = await bash`ls -la ${dir}`
+    expect(result.exitCode).toBe(0)
+    expect(mockExecutor.lastCommand).toBe('ls -la /home/user')
+  })
+
+  it('should support regular method calls', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    const result = await bash.exec('git', ['status'])
+    expect(result.exitCode).toBe(0)
+    expect(mockExecutor.lastCommand).toBe('git status')
+  })
+
+  it('should preserve module name property', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+    })
+    expect(bash.name).toBe('bash')
+  })
+
+  it('should support hasExecutor check', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+    })
+    expect(bash.hasExecutor).toBe(true)
+  })
+
+  it('should support analyze method', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+    })
+    const analysis = bash.analyze('rm -rf /')
+    expect(analysis.dangerous).toBe(true)
+  })
+
+  it('should support block and unblock methods', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+    })
+    bash.block('curl')
+    expect(bash.getBlockedCommands()).toContain('curl')
+    bash.unblock('curl')
+    expect(bash.getBlockedCommands()).not.toContain('curl')
+  })
+
+  it('should support run method', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    const result = await bash.run('echo hello')
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('should support getPolicy method', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      cwd: '/workspace',
+      defaultTimeout: 60000,
+    })
+    const policy = bash.getPolicy()
+    expect(policy.defaultCwd).toBe('/workspace')
+    expect(policy.defaultTimeout).toBe(60000)
+  })
+
+  it('should escape special characters in template values', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+    const malicious = '$(rm -rf /)'
+    const result = await bash`echo ${malicious}`
+    expect(result.exitCode).toBe(0)
+    expect(mockExecutor.lastCommand).toBe("echo '$(rm -rf /)'")
+  })
+
+  it('should work with mixed method and template usage', async () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+      requireConfirmation: false,
+    })
+
+    // Use as template
+    const result1 = await bash`echo hello`
+    expect(result1.exitCode).toBe(0)
+
+    // Use as method
+    const result2 = await bash.exec('echo', ['world'])
+    expect(result2.exitCode).toBe(0)
+
+    // Use as template again
+    const result3 = await bash`echo goodbye`
+    expect(result3.exitCode).toBe(0)
+  })
+})
+
+describe('isCallableBashModule', () => {
+  let mockExecutor: MockBashExecutor
+
+  beforeEach(() => {
+    mockExecutor = new MockBashExecutor()
+  })
+
+  it('should return true for CallableBashModule', () => {
+    const bash = createCallableBashModule({
+      executor: mockExecutor,
+    })
+    expect(isCallableBashModule(bash)).toBe(true)
+  })
+
+  it('should return false for regular BashModule', () => {
+    const bash = new BashModule({
+      executor: mockExecutor,
+    })
+    expect(isCallableBashModule(bash)).toBe(false)
+  })
+
+  it('should return false for plain objects', () => {
+    expect(isCallableBashModule({})).toBe(false)
+  })
+
+  it('should return false for regular functions', () => {
+    const fn = () => {}
+    expect(isCallableBashModule(fn)).toBe(false)
+  })
+
+  it('should return false for null', () => {
+    expect(isCallableBashModule(null)).toBe(false)
+  })
+})

@@ -72,7 +72,9 @@ export {
 import {
   BashModule,
   createBashModule,
+  createCallableBashModule,
   isBashModule,
+  isCallableBashModule,
   type BashModuleOptions,
   type BashResult,
   type ExecOptions,
@@ -84,12 +86,16 @@ import {
   type BashStorage,
   type ExecRow,
   type ExecPolicy,
+  type BashTagFunction,
+  type CallableBashModule,
 } from './BashModule'
 
 export {
   BashModule,
   createBashModule,
+  createCallableBashModule,
   isBashModule,
+  isCallableBashModule,
   type BashModuleOptions,
   type BashResult,
   type ExecOptions,
@@ -101,6 +107,8 @@ export {
   type BashStorage,
   type ExecRow,
   type ExecPolicy,
+  type BashTagFunction,
+  type CallableBashModule,
 }
 
 // ============================================================================
