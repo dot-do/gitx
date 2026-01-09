@@ -80,7 +80,6 @@ async function createMockGitRepo(basePath: string, options: {
   await fs.mkdir(gitDir, { recursive: true })
   await fs.mkdir(path.join(gitDir, 'objects'), { recursive: true })
   await fs.mkdir(path.join(gitDir, 'refs', 'heads'), { recursive: true })
-  await fs.mkdir(path.join(gitDir, 'refs', 'stash'), { recursive: true })
   await fs.mkdir(path.join(gitDir, 'logs', 'refs'), { recursive: true })
 
   // Write HEAD

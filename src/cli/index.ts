@@ -297,12 +297,16 @@ export class CLI {
 
     // Check for help flag
     if (parsed.options.help || parsed.options.h) {
-      if (parsed.command) {
+      // If there's a registered handler, let it handle its own help
+      if (parsed.command && this.handlers.has(parsed.command)) {
+        // Pass through to handler - it will handle --help itself
+      } else if (parsed.command) {
         this.stdout(this.getSubcommandHelp(parsed.command))
+        return { exitCode: 0, command: parsed.command }
       } else {
         this.stdout(this.getHelp())
+        return { exitCode: 0, command: parsed.command }
       }
-      return { exitCode: 0, command: parsed.command }
     }
 
     // Check for version flag (only when no command is specified)
@@ -318,13 +322,20 @@ export class CLI {
     }
 
     // Check for unknown flags (flags starting with -- that aren't recognized)
-    const knownFlags = ['cwd', 'C', 'help', 'h', 'version', 'v', 'short', 'branch', 'staged',
-      'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'D', 'list',
-      'interactive', 'port', 'open', 'verbose', 'vv']
-    for (const key of Object.keys(parsed.options)) {
-      if (!knownFlags.includes(key) && key !== '--') {
-        this.stderr(`Unknown option: --${key}\nRun 'gitx --help' for available commands.`)
-        return { exitCode: 1, error: new Error(`Unknown option: --${key}`) }
+    // Skip flag validation for registered commands - they handle their own flags
+    if (parsed.command && this.handlers.has(parsed.command)) {
+      // Skip flag validation for registered commands
+    } else {
+      const knownFlags = ['cwd', 'C', 'help', 'h', 'version', 'v', 'short', 'branch', 'staged',
+        'cached', 'n', 'oneline', 'graph', 'all', 'format', 'L', 'm', 'amend', 'a', 'd', 'D', 'list',
+        'interactive', 'port', 'open', 'verbose', 'vv', 'u', 'includeUntracked', 'keepIndex', 'index',
+        'message', 'quiet', 'q', 'pathspec', 'force', 'f', 'b', 'B', 'track', 't', 'merge', 'detach',
+        'orphan', 'theirs', 'ours', 'conflict', 'patch', 'p']
+      for (const key of Object.keys(parsed.options)) {
+        if (!knownFlags.includes(key) && key !== '--') {
+          this.stderr(`Unknown option: --${key}\nRun 'gitx --help' for available commands.`)
+          return { exitCode: 1, error: new Error(`Unknown option: --${key}`) }
+        }
       }
     }
 
@@ -628,6 +639,25 @@ export function parseArgs(args: string[]): ParsedArgs {
   // Web command options
   cli.option('--port <port>', 'Port number')
   cli.option('--open', 'Open in browser')
+
+  // Stash command options
+  cli.option('-u, --include-untracked', 'Include untracked files')
+  cli.option('--keep-index', 'Keep staged changes in the index')
+  cli.option('--index', 'Restore the index state')
+  cli.option('-q, --quiet', 'Quiet mode')
+
+  // Checkout command options
+  cli.option('-b <branch>', 'Create and checkout a new branch')
+  cli.option('-B <branch>', 'Create/reset and checkout a branch')
+  cli.option('-f, --force', 'Force checkout')
+  cli.option('--detach', 'Detach HEAD at commit')
+  cli.option('--orphan <branch>', 'Create orphan branch')
+  cli.option('-t, --track', 'Set up tracking mode')
+  cli.option('--merge', 'Merge with current branch')
+  cli.option('--theirs', 'Checkout theirs version for conflicts')
+  cli.option('--ours', 'Checkout ours version for conflicts')
+  cli.option('--conflict <style>', 'Conflict style')
+  cli.option('-p, --patch', 'Select hunks interactively')
 
   // Parse arguments
   const parsed = cli.parse(['node', 'gitx', ...args], { run: false })
