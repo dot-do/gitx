@@ -1,0 +1,1 @@
+{"version":3,"file":"NavigationList.js","sourceRoot":"","sources":["../../../../../src/cli/ui/components/NavigationList.tsx"],"names":[],"mappings":"AAAA,iDAAiD;AACjD,6BAA6B;AAgB7B,MAAM,UAAU,cAAc,CAAC,KAA0B;IACvD,OAAO;QACL,IAAI,EAAE,gBAAgB;QACtB,KAAK;QACL,KAAK,EAAE,KAAK,CAAC,KAAK;QAClB,aAAa,EAAE,KAAK,CAAC,aAAa;KACnC,CAAA;AACH,CAAC"}

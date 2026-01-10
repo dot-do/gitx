@@ -950,3 +950,50 @@ export {
   type WarmTierBackend,
   type ColdTierBackend,
 } from './tiered/read-path'
+
+// =============================================================================
+// UI Components - App dashboard and Site marketing page
+// =============================================================================
+
+/**
+ * App dashboard component.
+ *
+ * @description
+ * Repository browser dashboard using @mdxui/cockpit:
+ * - Repository listing and management
+ * - Commit history viewer
+ * - Branch and tag management
+ * - File tree browser
+ * - Diff viewer
+ * - Clone/push/pull actions
+ *
+ * @example
+ * ```typescript
+ * import { App } from 'gitx.do'
+ *
+ * // Use in your application
+ * export default App
+ * ```
+ */
+export { default as App } from '../App.js'
+
+/**
+ * Site marketing page component.
+ *
+ * @description
+ * Marketing landing page using @mdxui/beacon:
+ * - Hero section with code examples
+ * - Feature highlights (Git on edge, no VMs, etc.)
+ * - Pricing section
+ * - FAQ
+ * - Footer with links
+ *
+ * @example
+ * ```typescript
+ * import { Site } from 'gitx.do'
+ *
+ * // Use in your application
+ * export default Site
+ * ```
+ */
+export { default as Site } from '../Site.js'

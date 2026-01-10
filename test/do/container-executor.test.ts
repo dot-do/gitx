@@ -768,8 +768,8 @@ describe('isContainerExecutor', () => {
   })
 })
 
-describe('Integration with BashModule', () => {
-  it('should work as a BashExecutor for BashModule', async () => {
+describe('Executor interface', () => {
+  it('should implement execute and spawn methods', async () => {
     const mockSandbox = new MockSandbox()
     mockSandbox.mockResult = {
       stdout: 'hello world',
@@ -782,7 +782,7 @@ describe('Integration with BashModule', () => {
       sandbox: mockSandbox,
     })
 
-    // Verify it satisfies the BashExecutor interface
+    // Verify it implements the executor interface
     expect(typeof executor.execute).toBe('function')
     expect(typeof executor.spawn).toBe('function')
 

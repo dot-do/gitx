@@ -45,6 +45,13 @@ interface DOState {
 }
 
 /**
+ * Service binding interface for cross-worker communication.
+ */
+interface ServiceBinding {
+  fetch(request: Request | string, init?: RequestInit): Promise<Response>
+}
+
+/**
  * Environment interface for GitRepoDO.
  */
 interface GitRepoDOEnv {
@@ -66,6 +73,16 @@ interface GitRepoDOEnv {
   PIPELINE?: {
     send(events: unknown[]): Promise<void>
   }
+  /**
+   * FSX service binding for filesystem operations.
+   * Bound via wrangler.toml [[services]] configuration.
+   */
+  FSX?: ServiceBinding
+  /**
+   * BASHX service binding for shell command execution.
+   * Bound via wrangler.toml [[services]] configuration.
+   */
+  BASHX?: ServiceBinding
 }
 
 /**
@@ -124,6 +141,93 @@ interface StoreAccessor {
   set(id: string, value: unknown): Promise<void>
   delete(id: string): Promise<boolean>
   list(options?: { prefix?: string }): Promise<Map<string, unknown>>
+}
+
+/**
+ * Filesystem capability interface for FSX service binding integration.
+ * Wraps the FSX service binding to provide filesystem operations.
+ */
+interface FsCapability {
+  readFile(path: string): Promise<string | Buffer>
+  writeFile(path: string, content: string | Buffer): Promise<void>
+  readDir(path: string): Promise<string[]>
+  exists(path: string): Promise<boolean>
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
+  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>
+  getFileId?(path: string): Promise<number | null>
+}
+
+/**
+ * Creates an FsCapability adapter that uses the FSX service binding.
+ * All filesystem operations are proxied to the fsx-do worker.
+ */
+function createFsxAdapter(fsx: ServiceBinding, namespace: string): FsCapability {
+  const baseUrl = `https://fsx.do/${namespace}`
+
+  return {
+    async readFile(path: string): Promise<string | Buffer> {
+      const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'GET' })
+      if (!response.ok) {
+        throw new Error(`Failed to read file: ${path} (${response.status})`)
+      }
+      return response.text()
+    },
+
+    async writeFile(path: string, content: string | Buffer): Promise<void> {
+      const body = typeof content === 'string' ? content : new Uint8Array(content)
+      const response = await fsx.fetch(`${baseUrl}${path}`, {
+        method: 'PUT',
+        body,
+        headers: { 'Content-Type': 'application/octet-stream' },
+      })
+      if (!response.ok) {
+        throw new Error(`Failed to write file: ${path} (${response.status})`)
+      }
+    },
+
+    async readDir(path: string): Promise<string[]> {
+      const response = await fsx.fetch(`${baseUrl}${path}?list=true`, { method: 'GET' })
+      if (!response.ok) {
+        throw new Error(`Failed to read directory: ${path} (${response.status})`)
+      }
+      const data = await response.json() as { entries: string[] }
+      return data.entries ?? []
+    },
+
+    async exists(path: string): Promise<boolean> {
+      const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'HEAD' })
+      return response.ok
+    },
+
+    async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+      const url = new URL(`${baseUrl}${path}`)
+      if (options?.recursive) url.searchParams.set('recursive', 'true')
+      const response = await fsx.fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'X-Operation': 'mkdir' },
+      })
+      if (!response.ok && response.status !== 409) {
+        throw new Error(`Failed to create directory: ${path} (${response.status})`)
+      }
+    },
+
+    async rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void> {
+      const url = new URL(`${baseUrl}${path}`)
+      if (options?.recursive) url.searchParams.set('recursive', 'true')
+      if (options?.force) url.searchParams.set('force', 'true')
+      const response = await fsx.fetch(url.toString(), { method: 'DELETE' })
+      if (!response.ok && !(options?.force && response.status === 404)) {
+        throw new Error(`Failed to remove: ${path} (${response.status})`)
+      }
+    },
+
+    async getFileId(path: string): Promise<number | null> {
+      const response = await fsx.fetch(`${baseUrl}${path}?meta=true`, { method: 'GET' })
+      if (!response.ok) return null
+      const data = await response.json() as { id?: number }
+      return data.id ?? null
+    },
+  }
 }
 
 // ============================================================================
@@ -247,12 +351,20 @@ export class GitRepoDO extends DO {
   private _rels: StoreAccessor
   private _actions: StoreAccessor
   private _events: StoreAccessor
+  private _fs?: FsCapability
 
   constructor(state: DOState, env: GitRepoDOEnv) {
     super(state, env)
 
     // GitRepoDO has git capability by default
     this._capabilities.add('git')
+
+    // Initialize FSX adapter if service binding is available
+    if (env.FSX) {
+      this._capabilities.add('fs')
+      // Use the DO ID as the namespace for FSX operations
+      this._fs = createFsxAdapter(env.FSX, state.id.toString())
+    }
 
     // Initialize router
     this._router = new Hono()
@@ -311,6 +423,23 @@ export class GitRepoDO extends DO {
    */
   get events(): StoreAccessor {
     return this._events
+  }
+
+  /**
+   * Filesystem capability accessor.
+   * Returns the FSX service binding adapter for filesystem operations.
+   * Only available when the FSX service binding is configured.
+   *
+   * @example
+   * ```typescript
+   * if (repo.fs) {
+   *   const content = await repo.fs.readFile('/config.json')
+   *   await repo.fs.writeFile('/output.txt', 'Hello, World!')
+   * }
+   * ```
+   */
+  get fs(): FsCapability | undefined {
+    return this._fs
   }
 
   // ===========================================================================

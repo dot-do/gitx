@@ -24,13 +24,125 @@
  * ```
  */
 
-import type {
-  BashExecutor,
-  BashResult,
-  ExecOptions,
-  SpawnHandle,
-  SpawnOptions,
-} from './BashModule'
+// ============================================================================
+// Executor Types (compatible with bashx.do's BashExecutor)
+// ============================================================================
+
+/**
+ * Result of a bash command execution.
+ */
+export interface BashResult {
+  /**
+   * The command that was executed.
+   */
+  command: string
+
+  /**
+   * Standard output from the command.
+   */
+  stdout: string
+
+  /**
+   * Standard error from the command.
+   */
+  stderr: string
+
+  /**
+   * Exit code from the command.
+   */
+  exitCode: number
+}
+
+/**
+ * Options for executing a command.
+ */
+export interface ExecOptions {
+  /**
+   * Working directory for command execution.
+   */
+  cwd?: string
+
+  /**
+   * Environment variables.
+   */
+  env?: Record<string, string>
+
+  /**
+   * Timeout in milliseconds.
+   */
+  timeout?: number
+
+  /**
+   * Input to provide to stdin.
+   */
+  stdin?: string
+}
+
+/**
+ * Options for spawning a command with streaming output.
+ */
+export interface SpawnOptions extends ExecOptions {
+  /**
+   * Callback for stdout data.
+   */
+  onStdout?: (data: string) => void
+
+  /**
+   * Callback for stderr data.
+   */
+  onStderr?: (data: string) => void
+
+  /**
+   * Callback for process exit.
+   */
+  onExit?: (code: number) => void
+}
+
+/**
+ * Handle for a spawned process.
+ */
+export interface SpawnHandle {
+  /**
+   * Process ID.
+   */
+  pid: number
+
+  /**
+   * Promise that resolves when the process completes.
+   */
+  done: Promise<BashResult>
+
+  /**
+   * Send a signal to the process.
+   */
+  kill: (signal?: 'SIGTERM' | 'SIGKILL' | 'SIGINT') => void
+
+  /**
+   * Write data to the process stdin.
+   */
+  write: (data: string) => void
+
+  /**
+   * Close the process stdin.
+   */
+  closeStdin: () => void
+}
+
+/**
+ * Interface for bash command execution.
+ * Compatible with bashx.do's BashExecutor interface.
+ */
+export interface BashExecutor {
+  /**
+   * Execute a command and return the result.
+   */
+  execute(command: string, options?: ExecOptions): Promise<BashResult>
+
+  /**
+   * Spawn a command for streaming execution.
+   */
+  spawn(command: string, args?: string[], options?: SpawnOptions): Promise<SpawnHandle>
+}
 
 // ============================================================================
 // Types and Interfaces

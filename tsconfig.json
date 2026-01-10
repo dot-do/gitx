@@ -13,14 +13,19 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "resolveJsonModule": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@dotdo/gitx": ["./core/index.ts"],
+      "@dotdo/gitx/*": ["./core/*"]
+    },
+    "baseUrl": "."
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "core/**/*", "App.tsx", "Site.tsx"],
   "exclude": ["node_modules", "dist", "test"]
 }

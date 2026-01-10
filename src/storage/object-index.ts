@@ -41,7 +41,7 @@
  * ```
  */
 
-import { DurableObjectStorage } from '../durable-object/schema'
+import { DurableObjectStorage } from '../do/schema'
 
 /**
  * Storage tiers for object location.

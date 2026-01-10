@@ -100,6 +100,61 @@ export { type ObjectType, type GitObject, type BlobObject, type TreeObject, type
  */
 export { type ValidationResult, validateRefName, validateRefUpdate, validateStoreParams, assertValidSha, assertValidRefName, type ObjectStore as StorageObjectStore, type BasicObjectStore, type RefObjectStore, type TreeDiffObjectStore, type CommitProvider, type BasicCommitProvider, } from './types/storage';
 /**
+ * GitCapability types for DO integration.
+ *
+ * @description
+ * TypeScript interfaces for the git capability, designed for integration
+ * with Durable Objects as the $.git proxy. Provides type definitions for:
+ * - Repository operations: clone, init, fetch, pull, push
+ * - Working tree operations: add, commit, status, log, diff
+ * - Branch operations: branch, checkout, merge
+ * - Low-level operations: resolveRef, readObject
+ *
+ * @example
+ * ```typescript
+ * import type { GitCapability, GitStatus, Commit } from 'gitx.do'
+ *
+ * // Type your $.git proxy
+ * class MyDO {
+ *   git: GitCapability = this.$.git
+ *
+ *   async createFeature(name: string): Promise<Commit> {
+ *     await this.git.checkout({ branch: `feature/${name}`, create: true })
+ *     await this.git.add({ all: true })
+ *     return await this.git.commit({ message: `feat: ${name}` })
+ *   }
+ * }
+ * ```
+ */
+export { type SHA, type RefName, type Commit as CapabilityCommit, type RawGitObject, type GitRef as CapabilityGitRef, type Branch, type Tag, type FileStatus, type GitStatus, type DiffHunk, type FileDiff, type DiffResult, type CloneOptions, type InitOptions, type FetchOptions, type PullOptions, type PushOptions, type AddOptions, type CommitOptions as CapabilityCommitOptions, type StatusOptions, type LogOptions, type DiffOptions, type BranchOptions as CapabilityBranchOptions, type CheckoutOptions as CapabilityCheckoutOptions, type MergeOptions as CapabilityMergeOptions, type AuthOptions, type ProgressCallback, type ProgressEvent, type MergeResult as CapabilityMergeResult, type PushResult as CapabilityPushResult, type FetchResult, type GitCapability, type TreePathResult, type Remote, } from './types/capability';
+/**
+ * Consolidated interface types for DO integration.
+ *
+ * @description
+ * Common interface types used across the gitx.do codebase, including:
+ * - SQL storage interfaces
+ * - R2 bucket types
+ * - KV namespace types
+ * - Durable Object types
+ * - Workflow context interfaces
+ * - Module interfaces
+ *
+ * @example
+ * ```typescript
+ * import type { SqlStorage, R2BucketLike, WorkflowContext } from 'gitx.do'
+ *
+ * class MyDO {
+ *   private storage: SqlStorage
+ *   private r2: R2BucketLike
+ *
+ *   constructor(state: DurableObjectState) {
+ *     this.storage = state.storage
+ *   }
+ * }
+ * ```
+ */
+export { type SqlResult, type SqlExec, type SqlStorage, type R2ObjectLike, type R2ObjectsLike, type R2PutOptions, type R2BucketLike, type KVNamespaceLike, type DurableObjectId, type DurableObjectStub, type DurableObjectNamespace, type DurableObjectState, type EventHandlerProxy, type ScheduleProxy, type WorkflowContext, type Module, type StorageBackedModule, type WithCapability, type GitxError, type StorageError, type R2Error, type GitError, } from './types/interfaces';
+/**
  * Packfile format handling.
  *
  * @description

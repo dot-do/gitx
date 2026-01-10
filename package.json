@@ -1,6 +1,6 @@
 {
   "name": "gitx.do",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Git on Cloudflare Durable Objects - A complete git reimplementation for the edge",
   "type": "module",
   "main": "dist/index.js",
@@ -26,6 +26,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:node": "vitest run --config vitest.node.config.ts",
+    "test:all": "vitest run && vitest run --config vitest.node.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "dev": "wrangler dev",
@@ -67,6 +69,9 @@
     "wrangler": "^3.99.0"
   },
   "dependencies": {
+    "@icons-pack/react-simple-icons": "^13.8.0",
+    "@mdxui/beacon": "^0.2.0",
+    "@mdxui/cockpit": "^0.2.0",
     "@opentui/core": "^0.1.0",
     "@opentui/react": "^0.1.0",
     "fsx.do": "^0.1.0",

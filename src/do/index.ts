@@ -66,118 +66,6 @@ export {
 }
 
 // ============================================================================
-// BashModule Imports and Exports
-// ============================================================================
-
-import {
-  BashModule,
-  createBashModule,
-  createCallableBashModule,
-  isBashModule,
-  isCallableBashModule,
-  type BashModuleOptions,
-  type BashResult,
-  type ExecOptions,
-  type SpawnOptions,
-  type SpawnHandle,
-  type BashExecutor,
-  type SafetyAnalysis,
-  type FsCapability as BashFsCapability,
-  type BashStorage,
-  type ExecRow,
-  type ExecPolicy,
-  type BashTagFunction,
-  type CallableBashModule,
-} from './BashModule'
-
-export {
-  BashModule,
-  createBashModule,
-  createCallableBashModule,
-  isBashModule,
-  isCallableBashModule,
-  type BashModuleOptions,
-  type BashResult,
-  type ExecOptions,
-  type SpawnOptions,
-  type SpawnHandle,
-  type BashExecutor,
-  type SafetyAnalysis,
-  type BashFsCapability,
-  type BashStorage,
-  type ExecRow,
-  type ExecPolicy,
-  type BashTagFunction,
-  type CallableBashModule,
-}
-
-// ============================================================================
-// Bash AST Parser Imports and Exports
-// ============================================================================
-
-import {
-  parseBashCommand,
-  analyzeASTSafety,
-  parseAndAnalyze,
-  type ASTNodeType,
-  type ListOperator,
-  type RedirectType,
-  type ASTNode,
-  type WordNode,
-  type RedirectNode,
-  type AssignmentNode,
-  type CommandNode,
-  type PipelineNode,
-  type ListNode,
-  type SubshellNode,
-  type FunctionNode,
-  type ImpactLevel,
-  type ASTSafetyAnalysis,
-  type SafetyIssue,
-} from './bash-ast'
-
-export {
-  parseBashCommand,
-  analyzeASTSafety,
-  parseAndAnalyze,
-  type ASTNodeType,
-  type ListOperator,
-  type RedirectType,
-  type ASTNode,
-  type WordNode,
-  type RedirectNode,
-  type AssignmentNode,
-  type CommandNode,
-  type PipelineNode,
-  type ListNode,
-  type SubshellNode,
-  type FunctionNode,
-  type ImpactLevel,
-  type ASTSafetyAnalysis,
-  type SafetyIssue,
-}
-
-// ============================================================================
-// withBash Mixin Imports and Exports
-// ============================================================================
-
-import {
-  withBash,
-  hasBashCapability,
-  type WithBashCapability,
-  type WithBashOptions,
-  type Constructor,
-} from './withBash'
-
-export {
-  withBash,
-  hasBashCapability,
-  type WithBashCapability,
-  type WithBashOptions,
-  type Constructor,
-}
-
-// ============================================================================
 // withGit Mixin Imports and Exports
 // ============================================================================
 
@@ -187,6 +75,7 @@ import {
   type WithGitCapability,
   type WithGitOptions,
   type WithGitContext,
+  type Constructor,
 } from './withGit'
 
 export {
@@ -195,6 +84,7 @@ export {
   type WithGitCapability,
   type WithGitOptions,
   type WithGitContext,
+  type Constructor,
 }
 
 // ============================================================================
@@ -308,6 +198,12 @@ import {
   type CloudflareContainer,
   type CloudflareContainerInstance,
   type ContainerStartOptions,
+  // Executor types (compatible with bashx.do)
+  type BashResult,
+  type ExecOptions,
+  type SpawnOptions,
+  type SpawnHandle,
+  type BashExecutor,
 } from './container-executor'
 
 export {
@@ -327,6 +223,12 @@ export {
   type CloudflareContainer,
   type CloudflareContainerInstance,
   type ContainerStartOptions,
+  // Executor types (compatible with bashx.do)
+  type BashResult,
+  type ExecOptions,
+  type SpawnOptions,
+  type SpawnHandle,
+  type BashExecutor,
 }
 
 // ============================================================================
@@ -370,3 +272,63 @@ export {
 import { GitRepoDO, isGitRepoDO } from './GitRepoDO'
 
 export { GitRepoDO, isGitRepoDO }
+
+// ============================================================================
+// Schema and Database Imports and Exports
+// ============================================================================
+
+import {
+  SchemaManager,
+  SCHEMA_VERSION,
+  SCHEMA_SQL,
+  type DurableObjectStorage,
+} from './schema'
+
+export {
+  SchemaManager,
+  SCHEMA_VERSION,
+  SCHEMA_SQL,
+  type DurableObjectStorage,
+}
+
+// ============================================================================
+// ObjectStore Imports and Exports
+// ============================================================================
+
+import {
+  ObjectStore,
+  type StoredObject,
+  type ObjectStoreOptions,
+  type ObjectStoreLogger,
+  type ObjectStoreMetrics,
+} from './object-store'
+
+export {
+  ObjectStore,
+  type StoredObject,
+  type ObjectStoreOptions,
+  type ObjectStoreLogger,
+  type ObjectStoreMetrics,
+}
+
+// ============================================================================
+// WAL (Write-Ahead Log) Imports and Exports
+// ============================================================================
+
+import {
+  WALManager,
+  type WALOperationType,
+  type TransactionState,
+  type WALEntry,
+  type Transaction,
+  type Checkpoint,
+} from './wal'
+
+export {
+  WALManager,
+  type WALOperationType,
+  type TransactionState,
+  type WALEntry,
+  type Transaction,
+  type Checkpoint,
+}

@@ -1,15 +1,45 @@
-# Wrangler configuration for gitx tests
-name = "gitx-tests"
-main = "src/index.ts"
+# Wrangler configuration for gitx-do production deployment
+name = "gitx-do"
+main = "src/worker.ts"
 compatibility_date = "2024-12-18"
 compatibility_flags = ["nodejs_compat"]
 
-# Enable Durable Objects for tests
-[durable_objects]
-bindings = []
+# Custom domain routing
+[[routes]]
+pattern = "gitx.do"
+custom_domain = true
 
-# R2 buckets (empty for tests - mocked)
+# Durable Objects
+[durable_objects]
+bindings = [
+  { name = "GITX", class_name = "GitRepoDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GitRepoDO"]
+
+# R2 buckets for git object storage
 [[r2_buckets]]
 binding = "R2"
-bucket_name = "gitx-test-bucket"
-preview_bucket_name = "gitx-test-bucket"
+bucket_name = "gitx-objects"
+
+[[r2_buckets]]
+binding = "PACK_STORAGE"
+bucket_name = "gitx-packs"
+
+# Service binding to fsx for filesystem operations
+[[services]]
+binding = "FSX"
+service = "fsx-do"
+environment = "production"
+
+# Service binding to bashx for container execution
+[[services]]
+binding = "BASHX"
+service = "bashx-do"
+environment = "production"
+
+# Production observability
+[observability]
+enabled = true
