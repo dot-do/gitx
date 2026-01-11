@@ -347,11 +347,11 @@ describe('CloudflareContainerExecutor', () => {
       })
 
       const responses = new Map([
-        ['https://container.example.com/exec', mockResponse],
+        ['https://container.example.com.ai/exec', mockResponse],
       ])
 
       const executor = new CloudflareContainerExecutor({
-        httpExecEndpoint: 'https://container.example.com/exec',
+        httpExecEndpoint: 'https://container.example.com.ai/exec',
         fetch: createMockFetch(responses),
       })
 
@@ -365,11 +365,11 @@ describe('CloudflareContainerExecutor', () => {
       const mockResponse = new Response('Internal Server Error', { status: 500 })
 
       const responses = new Map([
-        ['https://container.example.com/exec', mockResponse],
+        ['https://container.example.com.ai/exec', mockResponse],
       ])
 
       const executor = new CloudflareContainerExecutor({
-        httpExecEndpoint: 'https://container.example.com/exec',
+        httpExecEndpoint: 'https://container.example.com.ai/exec',
         fetch: createMockFetch(responses),
       })
 
@@ -390,7 +390,7 @@ describe('CloudflareContainerExecutor', () => {
       }
 
       const executor = new CloudflareContainerExecutor({
-        httpExecEndpoint: 'https://container.example.com/exec',
+        httpExecEndpoint: 'https://container.example.com.ai/exec',
         sessionId: 'test-session-123',
         fetch: mockFetch,
       })
@@ -720,7 +720,7 @@ describe('Factory functions', () => {
   describe('createHttpExecutor', () => {
     it('should create executor from HTTP endpoint', () => {
       const executor = createHttpExecutor(
-        'https://container.example.com/exec',
+        'https://container.example.com.ai/exec',
         'http-session'
       )
 
@@ -732,7 +732,7 @@ describe('Factory functions', () => {
   describe('createWebSocketExecutor', () => {
     it('should create executor from WebSocket endpoint', () => {
       const executor = createWebSocketExecutor(
-        'wss://container.example.com/ws',
+        'wss://container.example.com.ai/ws',
         'ws-session'
       )
 
@@ -860,7 +860,7 @@ describe('WebSocket streaming', () => {
 
     try {
       const executor = new CloudflareContainerExecutor({
-        wsEndpoint: 'wss://container.example.com/ws',
+        wsEndpoint: 'wss://container.example.com.ai/ws',
         sessionId: 'ws-test',
       })
 

@@ -218,7 +218,7 @@ async function createMockGitRepoWithFile(
       parents: [],
       message: 'Initial commit with old.txt',
       author: 'Alice',
-      email: 'alice@example.com',
+      email: 'alice@example.com.ai',
       timestamp: baseTimestamp
     })
 
@@ -231,7 +231,7 @@ async function createMockGitRepoWithFile(
       parents: [commit1Sha],
       message: 'Rename old.txt to new.txt',
       author: 'Bob',
-      email: 'bob@example.com',
+      email: 'bob@example.com.ai',
       timestamp: baseTimestamp + 3600
     })
 
@@ -251,7 +251,7 @@ async function createMockGitRepoWithFile(
       parents: [],
       message: 'Add binary file',
       author: 'Alice',
-      email: 'alice@example.com',
+      email: 'alice@example.com.ai',
       timestamp: baseTimestamp
     })
     await fs.writeFile(path.join(gitDir, 'refs', 'heads', 'main'), commitSha + '\n')
@@ -276,7 +276,7 @@ async function createMockGitRepoWithFile(
     parents: [],
     message: 'Initial commit',
     author: 'Alice',
-    email: 'alice@example.com',
+    email: 'alice@example.com.ai',
     timestamp: baseTimestamp
   })
   parentSha = commit1Sha
@@ -298,7 +298,7 @@ async function createMockGitRepoWithFile(
       parents: [parentSha],
       message: `Commit ${i + 1}: modify line ${lineToModify + 1}`,
       author: i % 2 === 0 ? 'Alice' : 'Bob',
-      email: i % 2 === 0 ? 'alice@example.com' : 'bob@example.com',
+      email: i % 2 === 0 ? 'alice@example.com.ai' : 'bob@example.com.ai',
       timestamp: baseTimestamp + (i * 3600)
     })
     parentSha = commitSha
@@ -468,7 +468,7 @@ describe('Git Blame Command (CLI)', () => {
         commitSha: 'a'.repeat(40),
         shortSha: 'aaaaaaaa',
         author: 'John Doe',
-        authorEmail: 'john@example.com',
+        authorEmail: 'john@example.com.ai',
         date: new Date('2024-01-15T10:00:00Z'),
         lineNumber: 1,
         originalLineNumber: 1,
@@ -733,7 +733,7 @@ describe('Git Blame Command (CLI)', () => {
         commitSha: 'a'.repeat(40),
         shortSha: 'aaaaaaaa',
         author: 'Test',
-        authorEmail: 'test@example.com',
+        authorEmail: 'test@example.com.ai',
         date: new Date(),
         lineNumber: 5,
         originalLineNumber: 3,

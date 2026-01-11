@@ -50,7 +50,7 @@ const sampleCommitRows: CommitAnalyticsRow[] = [
   {
     sha: 'a'.repeat(40),
     author_name: 'Alice',
-    author_email: 'alice@example.com',
+    author_email: 'alice@example.com.ai',
     timestamp: 1704067200,
     message_length: 50,
     file_count: 3,
@@ -61,7 +61,7 @@ const sampleCommitRows: CommitAnalyticsRow[] = [
   {
     sha: 'b'.repeat(40),
     author_name: 'Bob',
-    author_email: 'bob@example.com',
+    author_email: 'bob@example.com.ai',
     timestamp: 1704153600,
     message_length: 120,
     file_count: 1,
@@ -72,7 +72,7 @@ const sampleCommitRows: CommitAnalyticsRow[] = [
   {
     sha: 'c'.repeat(40),
     author_name: 'Charlie',
-    author_email: 'charlie@example.com',
+    author_email: 'charlie@example.com.ai',
     timestamp: 1704240000,
     message_length: 200,
     file_count: 15,

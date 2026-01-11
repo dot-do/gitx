@@ -36,7 +36,7 @@ const decoder = new TextDecoder()
  */
 export function parseIdentity(line: string): GitIdentity {
   // Format: author/committer/tagger Name <email> timestamp timezone
-  // Example: "author John Doe <john@example.com> 1704067200 +0530"
+  // Example: "author John Doe <john@example.com.ai> 1704067200 +0530"
 
   // Find email boundaries
   const emailStart = line.indexOf('<')

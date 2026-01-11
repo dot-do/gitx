@@ -41,7 +41,7 @@ function bytesToHex(bytes: Uint8Array): string {
 // Sample test data
 const sampleAuthor: Author = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
@@ -279,7 +279,7 @@ describe('Git Object Types', () => {
       const str = decoder.decode(serialized)
       expect(str).toContain('commit')
       expect(str).toContain(`tree ${sampleSha}`)
-      expect(str).toContain('author Test User <test@example.com>')
+      expect(str).toContain('author Test User <test@example.com.ai>')
       expect(str).toContain('Initial commit')
     })
 
@@ -316,7 +316,7 @@ describe('Git Object Types', () => {
     it('should serialize commit with different author and committer', () => {
       const differentCommitter: Author = {
         name: 'Committer',
-        email: 'committer@example.com',
+        email: 'committer@example.com.ai',
         timestamp: 1704153600,
         timezone: '-0500'
       }
@@ -329,8 +329,8 @@ describe('Git Object Types', () => {
       }
       const serialized = serializeCommit(commit)
       const str = decoder.decode(serialized)
-      expect(str).toContain('author Test User <test@example.com>')
-      expect(str).toContain('committer Committer <committer@example.com>')
+      expect(str).toContain('author Test User <test@example.com.ai>')
+      expect(str).toContain('committer Committer <committer@example.com.ai>')
     })
 
     it('should serialize commit with multiline message', () => {
@@ -352,8 +352,8 @@ describe('Git Object Types', () => {
     it('should parse a simple commit', () => {
       const commitContent = [
         `tree ${sampleSha}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Initial commit'
       ].join('\n')
@@ -364,7 +364,7 @@ describe('Git Object Types', () => {
       expect(commit.tree).toBe(sampleSha)
       expect(commit.parents).toEqual([])
       expect(commit.author.name).toBe('Test User')
-      expect(commit.author.email).toBe('test@example.com')
+      expect(commit.author.email).toBe('test@example.com.ai')
       expect(commit.message).toBe('Initial commit')
     })
 
@@ -373,8 +373,8 @@ describe('Git Object Types', () => {
       const commitContent = [
         `tree ${sampleSha}`,
         `parent ${parentSha}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Second commit'
       ].join('\n')
@@ -391,8 +391,8 @@ describe('Git Object Types', () => {
         `tree ${sampleSha}`,
         `parent ${parent1}`,
         `parent ${parent2}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Merge branch feature'
       ].join('\n')
@@ -418,7 +418,7 @@ describe('Git Object Types', () => {
       expect(str).toContain(`object ${sampleSha}`)
       expect(str).toContain('type commit')
       expect(str).toContain('tag v1.0.0')
-      expect(str).toContain('tagger Test User <test@example.com>')
+      expect(str).toContain('tagger Test User <test@example.com.ai>')
     })
   })
 
@@ -428,7 +428,7 @@ describe('Git Object Types', () => {
         `object ${sampleSha}`,
         'type commit',
         'tag v1.0.0',
-        `tagger Test User <test@example.com> 1704067200 +0000`,
+        `tagger Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Release v1.0.0'
       ].join('\n')
@@ -606,7 +606,7 @@ describe('Git Object Types', () => {
     it('should handle author with unicode characters', () => {
       const unicodeAuthor: Author = {
         name: 'Tester',
-        email: 'test@example.com',
+        email: 'test@example.com.ai',
         timestamp: 1704067200,
         timezone: '+0900'
       }

@@ -224,7 +224,7 @@ export interface MergeConflict {
  *   message: 'Merge feature/new-feature into main',
  *   author: {
  *     name: 'Developer',
- *     email: 'dev@example.com'
+ *     email: 'dev@example.com.ai'
  *   },
  *   detectRenames: true,
  *   renameThreshold: 60

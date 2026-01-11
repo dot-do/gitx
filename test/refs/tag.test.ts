@@ -48,7 +48,7 @@ const sampleTreeSha = 'd'.repeat(40)
 
 const sampleTagger: Author = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
@@ -127,7 +127,7 @@ function createMockGPGSigner(): GPGSigner {
       return {
         valid: true,
         keyId: 'ABCD1234',
-        signer: 'Test User <test@example.com>',
+        signer: 'Test User <test@example.com.ai>',
         trustLevel: 'full'
       }
     }
@@ -266,7 +266,7 @@ describe('TagManager.createTag', () => {
         message: 'Release',
         tagger: {
           name: 'Test User',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timezone: '+0000'
         } as Author
       }
@@ -1070,7 +1070,7 @@ describe('TagManager utility methods', () => {
 
       expect(result.valid).toBe(true)
       expect(result.keyId).toBe('ABCD1234')
-      expect(result.signer).toBe('Test User <test@example.com>')
+      expect(result.signer).toBe('Test User <test@example.com.ai>')
     })
 
     it('should return invalid for unsigned tag', async () => {

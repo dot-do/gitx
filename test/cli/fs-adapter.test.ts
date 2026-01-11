@@ -1085,7 +1085,7 @@ describe('FSAdapter - Local Filesystem Git Repository Adapter', () => {
         let configContent = await fs.readFile(configPath, 'utf8')
         configContent += `[user]
 \tname = "John Doe"
-\temail = john@example.com
+\temail = john@example.com.ai
 `
         await fs.writeFile(configPath, configContent)
 

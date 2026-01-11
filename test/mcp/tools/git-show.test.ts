@@ -32,13 +32,13 @@ describe('git_show MCP tool', () => {
               parents: ['parent1234567890123456789012345678901234'],
               author: {
                 name: 'Test Author',
-                email: 'author@example.com',
+                email: 'author@example.com.ai',
                 timestamp: 1672531200, // 2023-01-01 00:00:00 UTC
                 timezone: '+0000',
               },
               committer: {
                 name: 'Test Committer',
-                email: 'committer@example.com',
+                email: 'committer@example.com.ai',
                 timestamp: 1672531200,
                 timezone: '+0000',
               },
@@ -176,7 +176,7 @@ describe('git_show MCP tool', () => {
       const text = result.content[0].text || ''
       expect(text).toContain(testCommitSha)
       expect(text).toContain('Test Author')
-      expect(text).toContain('author@example.com')
+      expect(text).toContain('author@example.com.ai')
       expect(text).toContain('Initial commit')
     })
 
@@ -212,7 +212,7 @@ describe('git_show MCP tool', () => {
       const text = result.content[0].text || ''
       expect(text).toContain('Author:')
       expect(text).toContain('Test Author')
-      expect(text).toContain('author@example.com')
+      expect(text).toContain('author@example.com.ai')
     })
 
     it('should show commit committer information', async () => {
@@ -562,13 +562,13 @@ describe('git_show MCP tool', () => {
             parents: [], // No parents
             author: {
               name: 'Test Author',
-              email: 'author@example.com',
+              email: 'author@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
             committer: {
               name: 'Test Committer',
-              email: 'committer@example.com',
+              email: 'committer@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
@@ -601,13 +601,13 @@ describe('git_show MCP tool', () => {
             ],
             author: {
               name: 'Test Author',
-              email: 'author@example.com',
+              email: 'author@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
             committer: {
               name: 'Test Committer',
-              email: 'committer@example.com',
+              email: 'committer@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
@@ -658,13 +658,13 @@ describe('git_show MCP tool', () => {
             parents: ['parent1234567890123456789012345678901234'],
             author: {
               name: 'Test Author',
-              email: 'author@example.com',
+              email: 'author@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
             committer: {
               name: 'Test Committer',
-              email: 'committer@example.com',
+              email: 'committer@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
@@ -694,13 +694,13 @@ describe('git_show MCP tool', () => {
             parents: ['parent1234567890123456789012345678901234'],
             author: {
               name: 'Test Author',
-              email: 'author@example.com',
+              email: 'author@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
             committer: {
               name: 'Test Committer',
-              email: 'committer@example.com',
+              email: 'committer@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0000',
             },
@@ -739,13 +739,13 @@ describe('git_show MCP tool', () => {
             parents: ['parent1234567890123456789012345678901234'],
             author: {
               name: 'Test Author',
-              email: 'author@example.com',
+              email: 'author@example.com.ai',
               timestamp: 1672531200,
               timezone: '-0800', // PST
             },
             committer: {
               name: 'Test Committer',
-              email: 'committer@example.com',
+              email: 'committer@example.com.ai',
               timestamp: 1672531200,
               timezone: '+0530', // IST
             },

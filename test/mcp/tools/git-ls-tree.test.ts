@@ -68,13 +68,13 @@ describe('git_ls_tree MCP Tool', () => {
               parents: [],
               author: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567890,
                 timezone: '+0000',
               },
               committer: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567890,
                 timezone: '+0000',
               },
@@ -87,13 +87,13 @@ describe('git_ls_tree MCP Tool', () => {
               parents: [commitSha],
               author: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567891,
                 timezone: '+0000',
               },
               committer: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567891,
                 timezone: '+0000',
               },

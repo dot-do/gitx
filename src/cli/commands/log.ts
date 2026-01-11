@@ -394,7 +394,7 @@ export async function getLog(
  * // Full format
  * console.log(formatLogEntry(entry))
  * // commit abc1234def...
- * // Author: John Doe <john@example.com>
+ * // Author: John Doe <john@example.com.ai>
  * // Date:   Mon Jan 15 10:00:00 2024 +0000
  * //
  * //     Initial commit

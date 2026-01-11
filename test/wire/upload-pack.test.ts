@@ -86,8 +86,8 @@ function createCommitData(tree: string, parents: string[], message: string): Uin
   for (const parent of parents) {
     lines.push(`parent ${parent}`)
   }
-  lines.push('author Test <test@example.com> 1704067200 +0000')
-  lines.push('committer Test <test@example.com> 1704067200 +0000')
+  lines.push('author Test <test@example.com.ai> 1704067200 +0000')
+  lines.push('committer Test <test@example.com.ai> 1704067200 +0000')
   lines.push('')
   lines.push(message)
   return encoder.encode(lines.join('\n'))
@@ -104,7 +104,7 @@ describe('git-upload-pack', () => {
       [SHA1_COMMIT_3, { type: 'commit', data: createCommitData(SHA1_TREE_1, [], 'Initial commit') }],
       [SHA1_TREE_1, { type: 'tree', data: new Uint8Array([]) }],
       [SHA1_BLOB_1, { type: 'blob', data: encoder.encode('Hello, World!') }],
-      [SHA1_TAG_1, { type: 'tag', data: encoder.encode(`object ${SHA1_COMMIT_3}\ntype commit\ntag v1.0.0\ntagger Test <test@example.com> 1704067200 +0000\n\nVersion 1.0.0`) }]
+      [SHA1_TAG_1, { type: 'tag', data: encoder.encode(`object ${SHA1_COMMIT_3}\ntype commit\ntag v1.0.0\ntagger Test <test@example.com.ai> 1704067200 +0000\n\nVersion 1.0.0`) }]
     ])
     mockStore = createMockStore(objects)
   })

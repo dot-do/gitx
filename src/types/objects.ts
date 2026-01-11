@@ -160,7 +160,7 @@ export interface TreeObject extends GitObject {
  * ```typescript
  * const author: Author = {
  *   name: 'John Doe',
- *   email: 'john@example.com',
+ *   email: 'john@example.com.ai',
  *   timestamp: 1704067200,  // Unix seconds
  *   timezone: '-0800'       // PST
  * }
@@ -198,8 +198,8 @@ export interface Author {
  *   data: rawCommitData,
  *   tree: 'abc123...',
  *   parents: ['parent1sha...'],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit\n\nAdd project structure'
  * }
  * ```
@@ -245,7 +245,7 @@ export interface CommitObject extends GitObject {
  *   object: 'commitsha...',
  *   objectType: 'commit',
  *   name: 'v1.0.0',
- *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Bob', email: 'bob@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release version 1.0.0'
  * }
  * ```
@@ -413,7 +413,7 @@ export function validateTreeEntry(entry: TreeEntry): { isValid: boolean; error?:
  * ```typescript
  * const result = validateAuthor({
  *   name: 'Alice',
- *   email: 'alice@example.com',
+ *   email: 'alice@example.com.ai',
  *   timestamp: 1704067200,
  *   timezone: '+0000'
  * })
@@ -796,8 +796,8 @@ export function serializeTree(entries: TreeEntry[]): Uint8Array {
  * const commit = serializeCommit({
  *   tree: 'abc123...',
  *   parents: ['parent1...'],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit'
  * })
  * const sha = await sha1(commit)
@@ -844,7 +844,7 @@ export function serializeCommit(commit: Omit<CommitObject, 'type' | 'data'>): Ui
  *   object: 'commitsha...',
  *   objectType: 'commit',
  *   name: 'v1.0.0',
- *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Bob', email: 'bob@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release v1.0.0'
  * })
  * const sha = await sha1(tag)

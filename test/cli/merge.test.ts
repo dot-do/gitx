@@ -206,7 +206,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: mainSha },
           { name: 'feature', sha: featureSha }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature')
@@ -225,7 +225,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: mainSha },
           { name: 'feature', sha: featureSha }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await mergeBranches(tempDir, 'feature')
@@ -241,7 +241,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -265,7 +265,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha },
           { name: 'feature', sha }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature')
@@ -322,7 +322,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       // Mark branches as diverged
@@ -345,7 +345,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -365,7 +365,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -387,7 +387,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -411,7 +411,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -444,7 +444,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { noFastForward: true })
@@ -460,7 +460,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { noFastForward: true })
@@ -475,7 +475,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -498,7 +498,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', {
@@ -521,7 +521,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { squash: true })
@@ -539,7 +539,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: mainSha },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await mergeBranches(tempDir, 'feature', { squash: true })
@@ -558,7 +558,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -580,7 +580,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { squash: true })
@@ -595,7 +595,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40), commits: ['commit1', 'commit2', 'commit3'] }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { squash: true })
@@ -615,7 +615,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       // Mark branches as having conflicting changes
@@ -638,7 +638,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -659,7 +659,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -688,7 +688,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -712,7 +712,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -740,7 +740,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1102,7 +1102,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1124,7 +1124,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1217,7 +1217,7 @@ describe('gitx merge command', () => {
           origHead: 'a'.repeat(40),
           message: 'Merge branch feature'
         },
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       // Simulate resolved conflicts
@@ -1261,7 +1261,7 @@ describe('gitx merge command', () => {
           origHead: 'a'.repeat(40),
           message: 'Merge branch feature'
         },
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -1326,7 +1326,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: featureSha }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, featureSha)
@@ -1343,7 +1343,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: featureSha }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'bbbbbbb')
@@ -1367,7 +1367,7 @@ describe('gitx merge command', () => {
         ],
         detached: true,
         currentSha,
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature')
@@ -1385,7 +1385,7 @@ describe('gitx merge command', () => {
         ],
         detached: true,
         currentSha: 'a'.repeat(40),
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await mergeBranches(tempDir, 'feature')
@@ -1406,7 +1406,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature', { fastForwardOnly: true })
@@ -1439,7 +1439,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -1506,7 +1506,7 @@ describe('gitx merge command', () => {
         branches: [
           { name: 'main', sha: 'a'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       // Create remote tracking branch
@@ -1532,7 +1532,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature/new-auth', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, 'feature/new-auth')
@@ -1552,7 +1552,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1573,7 +1573,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -1600,7 +1600,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1620,7 +1620,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       await fs.writeFile(
@@ -1648,7 +1648,7 @@ describe('gitx merge command', () => {
           { name: 'feature1', sha: 'b'.repeat(40) },
           { name: 'feature2', sha: 'c'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const result = await mergeBranches(tempDir, ['feature1', 'feature2'])
@@ -1665,7 +1665,7 @@ describe('gitx merge command', () => {
           { name: 'feature1', sha: 'b'.repeat(40) },
           { name: 'feature2', sha: 'c'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()
@@ -1692,7 +1692,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userEmail: 'test@example.com' } // Missing userName
+        config: { userEmail: 'test@example.com.ai' } // Missing userName
       })
 
       await fs.writeFile(
@@ -1741,7 +1741,7 @@ describe('gitx merge command', () => {
           { name: 'main', sha: 'a'.repeat(40) },
           { name: 'feature', sha: 'b'.repeat(40) }
         ],
-        config: { userName: 'Test User', userEmail: 'test@example.com' }
+        config: { userName: 'Test User', userEmail: 'test@example.com.ai' }
       })
 
       const capture = createOutputCapture()

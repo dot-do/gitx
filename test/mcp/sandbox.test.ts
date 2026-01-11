@@ -553,7 +553,7 @@ describe('MCP Sandbox Execution', () => {
       const result = await sandbox.execute(async () => {
         const http = await import('http')
         return new Promise((resolve, reject) => {
-          http.get('http://example.com', resolve).on('error', reject)
+          http.get('http://example.com.ai', resolve).on('error', reject)
         })
       })
 

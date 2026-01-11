@@ -25,7 +25,7 @@
  * const tag = await manager.createTag('v1.0.0', commitSha, {
  *   annotated: true,
  *   message: 'Release 1.0.0',
- *   tagger: { name: 'Alice', email: 'alice@example.com', timestamp: Date.now()/1000, timezone: '+0000' }
+ *   tagger: { name: 'Alice', email: 'alice@example.com.ai', timestamp: Date.now()/1000, timezone: '+0000' }
  * })
  *
  * // List version tags
@@ -88,7 +88,7 @@ export type TagType = 'lightweight' | 'annotated'
  *   sha: 'tagobjectsha...',
  *   targetSha: 'commitsha...',
  *   targetType: 'commit',
- *   tagger: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release 1.0.0'
  * }
  * ```
@@ -396,7 +396,7 @@ export interface GPGSigner {
  * const tag = await manager.createTag('v1.0.0', commitSha, {
  *   annotated: true,
  *   message: 'Version 1.0.0 release',
- *   tagger: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' }
+ *   tagger: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' }
  * })
  *
  * // List version tags
@@ -456,7 +456,7 @@ export class TagManager {
    * const annotated = await manager.createTag('v1.0.0', commitSha, {
    *   annotated: true,
    *   message: 'Release 1.0.0',
-   *   tagger: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' }
+   *   tagger: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' }
    * })
    *
    * // Create signed tag
@@ -1177,7 +1177,7 @@ export async function createTag(
  *   'v1.0.0',
  *   commitSha,
  *   'Release 1.0.0',
- *   { name: 'Alice', email: 'alice@example.com', timestamp: Date.now()/1000, timezone: '+0000' }
+ *   { name: 'Alice', email: 'alice@example.com.ai', timestamp: Date.now()/1000, timezone: '+0000' }
  * )
  * ```
  */

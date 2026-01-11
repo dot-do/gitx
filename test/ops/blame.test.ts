@@ -46,7 +46,7 @@ function content(text: string): Uint8Array {
 function createAuthor(name: string = 'Test User', timestamp: number = 1704067200): Author {
   return {
     name,
-    email: `${name.toLowerCase().replace(' ', '.')}@example.com`,
+    email: `${name.toLowerCase().replace(' ', '.')}@example.com.ai`,
     timestamp,
     timezone: '+0000'
   }
@@ -1093,7 +1093,7 @@ describe('Blame Algorithm', () => {
         const result = await blame(storage, 'file.txt', commit1)
         const formatted = formatBlame(result, { showEmail: true })
 
-        expect(formatted).toContain('test.user@example.com')
+        expect(formatted).toContain('test.user@example.com.ai')
       })
     })
 
@@ -1101,11 +1101,11 @@ describe('Blame Algorithm', () => {
       it('should parse porcelain blame output', () => {
         const porcelainOutput = `${commit1} 1 1 1
 author Alice
-author-mail <alice@example.com>
+author-mail <alice@example.com.ai>
 author-time 1704067200
 author-tz +0000
 committer Alice
-committer-mail <alice@example.com>
+committer-mail <alice@example.com.ai>
 committer-time 1704067200
 committer-tz +0000
 filename file.txt

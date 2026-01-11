@@ -43,7 +43,7 @@
  *   tree: treeSha,
  *   parents: [parentSha],
  *   message: 'Add new feature',
- *   author: { name: 'Alice', email: 'alice@example.com' }
+ *   author: { name: 'Alice', email: 'alice@example.com.ai' }
  * })
  * ```
  */
@@ -506,7 +506,7 @@ export {
  * ```typescript
  * import { createCommit, createAuthor, formatTimestamp } from 'gitx.do'
  *
- * const author = createAuthor('Alice', 'alice@example.com')
+ * const author = createAuthor('Alice', 'alice@example.com.ai')
  * const commit = await createCommit(storage, {
  *   tree: treeSha,
  *   parents: [parentSha],

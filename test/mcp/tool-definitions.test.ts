@@ -434,7 +434,7 @@ describe('MCP Git Tool Definitions', () => {
         const invalidResult = validateToolInput(tool, { email: 'not-an-email' })
         expect(invalidResult.valid).toBe(false)
 
-        const validResult = validateToolInput(tool, { email: 'test@example.com' })
+        const validResult = validateToolInput(tool, { email: 'test@example.com.ai' })
         expect(validResult.valid).toBe(true)
       })
     })

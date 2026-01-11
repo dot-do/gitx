@@ -35,7 +35,7 @@ const sampleSecondCommitSha = 'd'.repeat(40)
 
 const sampleTagger = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
@@ -98,13 +98,13 @@ function createSampleCommitObject(): CommitObject {
     parents: [],
     author: {
       name: 'Original Author',
-      email: 'original@example.com',
+      email: 'original@example.com.ai',
       timestamp: 1704000000,
       timezone: '+0000'
     },
     committer: {
       name: 'Original Committer',
-      email: 'original@example.com',
+      email: 'original@example.com.ai',
       timestamp: 1704000000,
       timezone: '+0000'
     },
@@ -413,7 +413,7 @@ describe('Annotated Tags', () => {
           message: 'Release',
           tagger: {
             name: 'Test User',
-            email: 'test@example.com'
+            email: 'test@example.com.ai'
           }
         }
 
@@ -432,7 +432,7 @@ describe('Annotated Tags', () => {
           message: 'Release',
           tagger: {
             name: 'Test User',
-            email: 'test@example.com'
+            email: 'test@example.com.ai'
           }
         }
 
@@ -858,7 +858,7 @@ describe('Verifying Signed Tags', () => {
       const mockVerifier = vi.fn().mockResolvedValue({
         valid: true,
         keyId: 'ABCD1234',
-        signer: 'Test User <test@example.com>'
+        signer: 'Test User <test@example.com.ai>'
       })
 
       await createAnnotatedTag(store, {
@@ -881,7 +881,7 @@ describe('Verifying Signed Tags', () => {
       const mockVerifier = vi.fn().mockResolvedValue({
         valid: true,
         keyId: 'ABCD1234',
-        signer: 'Test User <test@example.com>'
+        signer: 'Test User <test@example.com.ai>'
       })
 
       await createAnnotatedTag(store, {
@@ -904,7 +904,7 @@ describe('Verifying Signed Tags', () => {
       const mockVerifier = vi.fn().mockResolvedValue({
         valid: true,
         keyId: 'ABCD1234',
-        signer: 'Test User <test@example.com>'
+        signer: 'Test User <test@example.com.ai>'
       })
 
       await createAnnotatedTag(store, {
@@ -920,7 +920,7 @@ describe('Verifying Signed Tags', () => {
 
       const result = await verifyTag(store, 'v1.0.0', { verifier: mockVerifier })
 
-      expect(result.signer).toBe('Test User <test@example.com>')
+      expect(result.signer).toBe('Test User <test@example.com.ai>')
     })
 
     it('should return invalid for bad signature', async () => {
@@ -1077,7 +1077,7 @@ describe('Tag Message Handling', () => {
       const rawTag = `object ${sampleCommitSha}
 type commit
 tag v1.0.0
-tagger Test User <test@example.com> 1704067200 +0000
+tagger Test User <test@example.com.ai> 1704067200 +0000
 
 Release version 1.0.0`
 
@@ -1087,7 +1087,7 @@ Release version 1.0.0`
       expect(tag.objectType).toBe('commit')
       expect(tag.tag).toBe('v1.0.0')
       expect(tag.tagger?.name).toBe('Test User')
-      expect(tag.tagger?.email).toBe('test@example.com')
+      expect(tag.tagger?.email).toBe('test@example.com.ai')
       expect(tag.message).toBe('Release version 1.0.0')
     })
 
@@ -1095,7 +1095,7 @@ Release version 1.0.0`
       const rawTag = `object ${sampleCommitSha}
 type commit
 tag v1.0.0
-tagger Test User <test@example.com> 1704067200 +0000
+tagger Test User <test@example.com.ai> 1704067200 +0000
 
 Release version 1.0.0
 
@@ -1124,7 +1124,7 @@ Release version 1.0.0`
       const rawTag = `object ${sampleCommitSha}
 type commit
 tag v1.0.0
-tagger Test User <test@example.com> 1704067200 +0000
+tagger Test User <test@example.com.ai> 1704067200 +0000
 
 Release version 1.0.0
 -----BEGIN PGP SIGNATURE-----
@@ -1491,7 +1491,7 @@ describe('Edge Cases and Error Handling', () => {
         message: 'Release',
         tagger: {
           name: 'Test\nUser',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -1505,7 +1505,7 @@ describe('Edge Cases and Error Handling', () => {
         message: 'Release',
         tagger: {
           name: 'Test <User>',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -1533,7 +1533,7 @@ describe('Edge Cases and Error Handling', () => {
         message: 'Release',
         tagger: {
           name: 'Test User',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: -1,
           timezone: '+0000'
         }

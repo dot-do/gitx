@@ -74,13 +74,13 @@ function createCommit(treeSha: string, parents: string[], message: string): Comm
     parents,
     author: {
       name: 'Test User',
-      email: 'test@example.com',
+      email: 'test@example.com.ai',
       timestamp: 1704067200,
       timezone: '+0000'
     },
     committer: {
       name: 'Test User',
-      email: 'test@example.com',
+      email: 'test@example.com.ai',
       timestamp: 1704067200,
       timezone: '+0000'
     },

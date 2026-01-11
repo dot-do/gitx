@@ -52,7 +52,7 @@ const sampleParentSha3 = 'd'.repeat(40)
 /** Sample author for testing */
 const sampleAuthor: Author = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
@@ -60,7 +60,7 @@ const sampleAuthor: Author = {
 /** Sample committer (different from author) for testing */
 const sampleCommitter: Author = {
   name: 'Another User',
-  email: 'another@example.com',
+  email: 'another@example.com.ai',
   timestamp: 1704153600, // 2024-01-02 00:00:00 UTC
   timezone: '-0500'
 }
@@ -507,7 +507,7 @@ describe('Commit Object Storage', () => {
       it('should parse author timestamp correctly on retrieval', async () => {
         const author: Author = {
           name: 'Test User',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0900'
         }
@@ -825,7 +825,7 @@ describe('Commit Object Storage', () => {
       it('should parse author name correctly', async () => {
         const author: Author = {
           name: 'John Doe',
-          email: 'john@example.com',
+          email: 'john@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -847,7 +847,7 @@ describe('Commit Object Storage', () => {
       it('should parse author email correctly', async () => {
         const author: Author = {
           name: 'Test User',
-          email: 'complex+tag@subdomain.example.com',
+          email: 'complex+tag@subdomain.example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -863,7 +863,7 @@ describe('Commit Object Storage', () => {
         const retrieved = await objectStore.getCommitObject(sha)
 
         expect(retrieved).not.toBeNull()
-        expect(retrieved!.author.email).toBe('complex+tag@subdomain.example.com')
+        expect(retrieved!.author.email).toBe('complex+tag@subdomain.example.com.ai')
       })
 
       it('should parse committer separately from author', async () => {
@@ -907,7 +907,7 @@ describe('Commit Object Storage', () => {
       it('should handle author name with spaces', async () => {
         const author: Author = {
           name: 'First Middle Last',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }

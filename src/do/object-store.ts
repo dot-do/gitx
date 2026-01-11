@@ -220,8 +220,8 @@ const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024 // 25MB
  * const commitSha = await store.putCommitObject({
  *   tree: treeSha,
  *   parents: [parentSha],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit'
  * })
  *
@@ -505,7 +505,7 @@ export class ObjectStore {
    * @example
    * ```typescript
    * const now = Math.floor(Date.now() / 1000)
-   * const author = { name: 'Alice', email: 'alice@example.com', timestamp: now, timezone: '+0000' }
+   * const author = { name: 'Alice', email: 'alice@example.com.ai', timestamp: now, timezone: '+0000' }
    *
    * const sha = await store.putCommitObject({
    *   tree: treeSha,
@@ -557,7 +557,7 @@ export class ObjectStore {
    * @example
    * ```typescript
    * const now = Math.floor(Date.now() / 1000)
-   * const tagger = { name: 'Bob', email: 'bob@example.com', timestamp: now, timezone: '+0000' }
+   * const tagger = { name: 'Bob', email: 'bob@example.com.ai', timestamp: now, timezone: '+0000' }
    *
    * const sha = await store.putTagObject({
    *   object: commitSha,

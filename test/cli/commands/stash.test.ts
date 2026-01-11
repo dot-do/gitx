@@ -218,7 +218,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -235,7 +235,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -252,7 +252,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -268,7 +268,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -286,7 +286,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -305,7 +305,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -323,7 +323,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -347,7 +347,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -796,7 +796,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -812,7 +812,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -835,7 +835,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -870,7 +870,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -887,7 +887,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -906,7 +906,7 @@ describe('gitx stash command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -917,7 +917,7 @@ describe('gitx stash command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -938,7 +938,7 @@ describe('gitx stash command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1345,7 +1345,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1361,7 +1361,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1377,7 +1377,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1400,7 +1400,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1418,7 +1418,7 @@ describe('gitx stash command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 

@@ -39,7 +39,7 @@ const tree = createTree([
 const commit = createCommit({
   tree: treeHash,
   parents: [parentHash],
-  author: { name: 'Dev', email: 'dev@example.com', timestamp: Date.now() },
+  author: { name: 'Dev', email: 'dev@example.com.ai', timestamp: Date.now() },
   message: 'Initial commit'
 })
 

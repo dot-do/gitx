@@ -162,7 +162,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -182,7 +182,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -206,7 +206,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -223,7 +223,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -352,7 +352,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -364,7 +364,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -385,7 +385,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -415,14 +415,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: lastCommitSha,
           message: 'Original message',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'g'.repeat(40),
           parents: []
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -440,14 +440,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: 'h'.repeat(40),
           message: 'Original message',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'i'.repeat(40),
           parents: []
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -464,14 +464,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: 'k'.repeat(40),
           message: 'Original',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'l'.repeat(40),
           parents: [parentSha]
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -491,14 +491,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: 'n'.repeat(40),
           message: 'Original',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'o'.repeat(40),
           parents: []
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -521,7 +521,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -540,7 +540,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
       // Create a tracked file in working directory that's modified
@@ -565,7 +565,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
       // Create an untracked file
@@ -581,7 +581,7 @@ describe('gitx commit command', () => {
       await createMockGitRepo(tempDir, {
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
       await fs.writeFile(path.join(tempDir, 'tracked.txt'), 'modified')
@@ -607,14 +607,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: 'q'.repeat(40),
           message: 'Original',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'r'.repeat(40),
           parents: []
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
       await fs.writeFile(path.join(tempDir, 'tracked.txt'), 'modified')
@@ -644,7 +644,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'John Doe',
-          userEmail: 'john@example.com'
+          userEmail: 'john@example.com.ai'
         }
       })
 
@@ -653,7 +653,7 @@ describe('gitx commit command', () => {
       })
 
       expect(result.author).toContain('John Doe')
-      expect(result.author).toContain('john@example.com')
+      expect(result.author).toContain('john@example.com.ai')
     })
 
     it('should include commit date', async () => {
@@ -663,7 +663,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -685,7 +685,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -707,14 +707,14 @@ describe('gitx commit command', () => {
         lastCommit: {
           sha: parentSha,
           message: 'Parent commit',
-          author: 'Test User <test@example.com>',
+          author: 'Test User <test@example.com.ai>',
           date: new Date('2024-01-01'),
           tree: 'x'.repeat(40),
           parents: []
         },
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -732,7 +732,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -750,7 +750,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -775,7 +775,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -799,7 +799,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
       // Make HEAD detached
@@ -827,7 +827,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -850,7 +850,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -868,7 +868,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -893,7 +893,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -920,7 +920,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1006,7 +1006,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 
@@ -1023,7 +1023,7 @@ describe('gitx commit command', () => {
         ],
         config: {
           userName: 'Test User',
-          userEmail: 'test@example.com'
+          userEmail: 'test@example.com.ai'
         }
       })
 

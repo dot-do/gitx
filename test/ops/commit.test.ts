@@ -36,14 +36,14 @@ const sampleParentSha2 = 'c'.repeat(40)
 
 const sampleAuthor: CommitAuthor = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
 
 const sampleCommitter: CommitAuthor = {
   name: 'Another User',
-  email: 'another@example.com',
+  email: 'another@example.com.ai',
   timestamp: 1704153600, // 2024-01-02 00:00:00 UTC
   timezone: '-0500'
 }
@@ -82,13 +82,13 @@ function createSampleCommitObject(): CommitObject {
     parents: [sampleParentSha],
     author: {
       name: 'Original Author',
-      email: 'original@example.com',
+      email: 'original@example.com.ai',
       timestamp: 1704000000,
       timezone: '+0000'
     },
     committer: {
       name: 'Original Committer',
-      email: 'original@example.com',
+      email: 'original@example.com.ai',
       timestamp: 1704000000,
       timezone: '+0000'
     },
@@ -254,7 +254,7 @@ describe('Commit Creation', () => {
           tree: sampleTreeSha,
           author: {
             name: 'Test User',
-            email: 'test@example.com'
+            email: 'test@example.com.ai'
             // timestamp not specified
           }
         }
@@ -272,7 +272,7 @@ describe('Commit Creation', () => {
           tree: sampleTreeSha,
           author: {
             name: 'Test User',
-            email: 'test@example.com'
+            email: 'test@example.com.ai'
             // timezone not specified
           }
         }
@@ -626,23 +626,23 @@ describe('Commit Timestamp Handling', () => {
   describe('createAuthor', () => {
     it('should create an author with current timestamp', () => {
       const nowBefore = Math.floor(Date.now() / 1000)
-      const author = createAuthor('Test User', 'test@example.com')
+      const author = createAuthor('Test User', 'test@example.com.ai')
       const nowAfter = Math.floor(Date.now() / 1000)
 
       expect(author.name).toBe('Test User')
-      expect(author.email).toBe('test@example.com')
+      expect(author.email).toBe('test@example.com.ai')
       expect(author.timestamp).toBeGreaterThanOrEqual(nowBefore)
       expect(author.timestamp).toBeLessThanOrEqual(nowAfter)
     })
 
     it('should use specified timezone', () => {
-      const author = createAuthor('Test User', 'test@example.com', '+0900')
+      const author = createAuthor('Test User', 'test@example.com.ai', '+0900')
 
       expect(author.timezone).toBe('+0900')
     })
 
     it('should use local timezone when not specified', () => {
-      const author = createAuthor('Test User', 'test@example.com')
+      const author = createAuthor('Test User', 'test@example.com.ai')
 
       expect(author.timezone).toMatch(/^[+-]\d{4}$/)
     })
@@ -976,7 +976,7 @@ describe('Amending Commits', () => {
     it('should amend author information', async () => {
       const newAuthor: CommitAuthor = {
         name: 'New Author',
-        email: 'new@example.com',
+        email: 'new@example.com.ai',
         timestamp: 1705000000,
         timezone: '+0100'
       }
@@ -987,7 +987,7 @@ describe('Amending Commits', () => {
       const result = await amendCommit(store, originalCommitSha, options)
 
       expect(result.commit.author.name).toBe('New Author')
-      expect(result.commit.author.email).toBe('new@example.com')
+      expect(result.commit.author.email).toBe('new@example.com.ai')
     })
 
     it('should update committer to current user/time by default', async () => {
@@ -1006,7 +1006,7 @@ describe('Amending Commits', () => {
     it('should use specified committer when provided', async () => {
       const newCommitter: CommitAuthor = {
         name: 'New Committer',
-        email: 'committer@example.com',
+        email: 'committer@example.com.ai',
         timestamp: 1705000000,
         timezone: '-0800'
       }
@@ -1135,7 +1135,7 @@ describe('Edge Cases and Error Handling', () => {
         tree: sampleTreeSha,
         author: {
           name: 'Test <User>',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -1152,7 +1152,7 @@ describe('Edge Cases and Error Handling', () => {
         tree: sampleTreeSha,
         author: {
           name: 'Test\nUser',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }

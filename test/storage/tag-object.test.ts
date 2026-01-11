@@ -55,7 +55,7 @@ const sampleTagSha = 'd'.repeat(40)
 /** Sample tagger for testing */
 const sampleTagger: Author = {
   name: 'Test Tagger',
-  email: 'tagger@example.com',
+  email: 'tagger@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }
@@ -63,7 +63,7 @@ const sampleTagger: Author = {
 /** Sample tagger with different timezone */
 const sampleTagger2: Author = {
   name: 'Another Tagger',
-  email: 'another@example.com',
+  email: 'another@example.com.ai',
   timestamp: 1704153600, // 2024-01-02 00:00:00 UTC
   timezone: '-0500'
 }
@@ -517,7 +517,7 @@ describe('Tag Object Storage', () => {
       it('should parse tagger timestamp correctly on retrieval', async () => {
         const tagger: Author = {
           name: 'Test User',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0900'
         }
@@ -585,7 +585,7 @@ describe('Tag Object Storage', () => {
       it('should parse tagger name with spaces correctly', async () => {
         const tagger: Author = {
           name: 'First Middle Last',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -608,7 +608,7 @@ describe('Tag Object Storage', () => {
       it('should parse tagger email correctly', async () => {
         const tagger: Author = {
           name: 'Test User',
-          email: 'complex+tag@subdomain.example.com',
+          email: 'complex+tag@subdomain.example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }
@@ -624,7 +624,7 @@ describe('Tag Object Storage', () => {
         const retrieved = await objectStore.getTagObject(sha)
 
         expect(retrieved).not.toBeNull()
-        expect(retrieved!.tagger!.email).toBe('complex+tag@subdomain.example.com')
+        expect(retrieved!.tagger!.email).toBe('complex+tag@subdomain.example.com.ai')
       })
 
       it('should handle tagger with unicode name', async () => {
@@ -1054,7 +1054,7 @@ describe('Tag Object Storage', () => {
       it('should parse tagger name correctly', async () => {
         const tagger: Author = {
           name: 'John Doe',
-          email: 'john@example.com',
+          email: 'john@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         }

@@ -100,8 +100,8 @@ function serializeCommitData(treeSha: string, parents: string[], message: string
   for (const parent of parents) {
     lines.push(`parent ${parent}`)
   }
-  lines.push('author Test User <test@example.com> 1704067200 +0000')
-  lines.push('committer Test User <test@example.com> 1704067200 +0000')
+  lines.push('author Test User <test@example.com.ai> 1704067200 +0000')
+  lines.push('committer Test User <test@example.com.ai> 1704067200 +0000')
   lines.push('')
   lines.push(message)
   return encoder.encode(lines.join('\n'))
@@ -118,13 +118,13 @@ function createCommit(treeSha: string, parents: string[], message: string): Comm
     parents,
     author: {
       name: 'Test User',
-      email: 'test@example.com',
+      email: 'test@example.com.ai',
       timestamp: 1704067200,
       timezone: '+0000'
     },
     committer: {
       name: 'Test User',
-      email: 'test@example.com',
+      email: 'test@example.com.ai',
       timestamp: 1704067200,
       timezone: '+0000'
     },

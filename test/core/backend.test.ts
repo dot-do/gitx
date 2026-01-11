@@ -75,13 +75,13 @@ function createTestBlob(content: string): BlobObject {
 function createTestCommit(treeSha: string, message: string, parents: string[] = []): CommitObject {
   const author = {
     name: 'Test User',
-    email: 'test@example.com',
+    email: 'test@example.com.ai',
     timestamp: 1704067200,
     timezone: '+0000',
   }
   return {
     type: 'commit',
-    data: textToBytes(`tree ${treeSha}\nauthor Test User <test@example.com> 1704067200 +0000\ncommitter Test User <test@example.com> 1704067200 +0000\n\n${message}`),
+    data: textToBytes(`tree ${treeSha}\nauthor Test User <test@example.com.ai> 1704067200 +0000\ncommitter Test User <test@example.com.ai> 1704067200 +0000\n\n${message}`),
     tree: treeSha,
     parents,
     author,
@@ -285,13 +285,13 @@ describe('GitBackend Interface', () => {
 
       const tag: TagObject = {
         type: 'tag',
-        data: textToBytes(`object ${commitSha}\ntype commit\ntag v1.0.0\ntagger Test <test@example.com> 1704067200 +0000\n\nRelease`),
+        data: textToBytes(`object ${commitSha}\ntype commit\ntag v1.0.0\ntagger Test <test@example.com.ai> 1704067200 +0000\n\nRelease`),
         object: commitSha,
         objectType: 'commit',
         name: 'v1.0.0',
         tagger: {
           name: 'Test',
-          email: 'test@example.com',
+          email: 'test@example.com.ai',
           timestamp: 1704067200,
           timezone: '+0000'
         },

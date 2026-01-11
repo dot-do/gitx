@@ -33,7 +33,7 @@ describe('git_cat_file MCP Tool', () => {
           if (sha === 'ghi789commit') {
             // Mock commit object data
             const commitData = new TextEncoder().encode(
-              'tree abc123\nparent parent123\nauthor Test Author <test@example.com> 1234567890 +0000\ncommitter Test Author <test@example.com> 1234567890 +0000\n\nTest commit message\n'
+              'tree abc123\nparent parent123\nauthor Test Author <test@example.com.ai> 1234567890 +0000\ncommitter Test Author <test@example.com.ai> 1234567890 +0000\n\nTest commit message\n'
             )
             return {
               type: 'commit',
@@ -49,13 +49,13 @@ describe('git_cat_file MCP Tool', () => {
               parents: ['parent123'],
               author: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567890,
                 timezone: '+0000',
               },
               committer: {
                 name: 'Test Author',
-                email: 'test@example.com',
+                email: 'test@example.com.ai',
                 timestamp: 1234567890,
                 timezone: '+0000',
               },
@@ -284,8 +284,8 @@ describe('git_cat_file MCP Tool', () => {
       const text = result.content[0].text || ''
       expect(text).toContain('tree abc123tree')
       expect(text).toContain('parent parent123')
-      expect(text).toContain('author Test Author <test@example.com>')
-      expect(text).toContain('committer Test Author <test@example.com>')
+      expect(text).toContain('author Test Author <test@example.com.ai>')
+      expect(text).toContain('committer Test Author <test@example.com.ai>')
     })
   })
 

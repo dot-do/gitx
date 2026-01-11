@@ -25,7 +25,7 @@ const decoder = new TextDecoder()
 // Sample test data
 const sampleAuthor: Author = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000'
 }

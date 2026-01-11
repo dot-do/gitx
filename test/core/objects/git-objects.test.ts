@@ -105,7 +105,7 @@ const SAMPLE_SHA_3 = 'c'.repeat(40)
 // Sample author/committer
 const sampleIdentity: GitIdentity = {
   name: 'Test User',
-  email: 'test@example.com',
+  email: 'test@example.com.ai',
   timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
   timezone: '+0000',
 }
@@ -707,8 +707,8 @@ describe('GitCommit', () => {
   describe('GPG signatures', () => {
     const signedCommitContent = `tree ${SAMPLE_SHA}
 parent ${SAMPLE_SHA_2}
-author Test User <test@example.com> 1704067200 +0000
-committer Test User <test@example.com> 1704067200 +0000
+author Test User <test@example.com.ai> 1704067200 +0000
+committer Test User <test@example.com.ai> 1704067200 +0000
 gpgsig -----BEGIN PGP SIGNATURE-----
 
  iQEzBAABCAAdFiEE...signature...
@@ -814,7 +814,7 @@ Signed commit message`
       const serialized = commit.serialize()
 
       const content = decoder.decode(serialized)
-      expect(content).toContain('author Test User <test@example.com> 1704067200 +0000')
+      expect(content).toContain('author Test User <test@example.com.ai> 1704067200 +0000')
     })
 
     it('should serialize committer line correctly', () => {
@@ -827,7 +827,7 @@ Signed commit message`
       const serialized = commit.serialize()
 
       const content = decoder.decode(serialized)
-      expect(content).toContain('committer Test User <test@example.com> 1704067200 +0000')
+      expect(content).toContain('committer Test User <test@example.com.ai> 1704067200 +0000')
     })
 
     it('should separate message with blank line', () => {
@@ -865,8 +865,8 @@ Signed commit message`
     it('should parse simple commit', () => {
       const commitContent = [
         `tree ${SAMPLE_SHA}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Initial commit',
       ].join('\n')
@@ -885,8 +885,8 @@ Signed commit message`
         `tree ${SAMPLE_SHA}`,
         `parent ${SAMPLE_SHA_2}`,
         `parent ${SAMPLE_SHA_3}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Merge commit',
       ].join('\n')
@@ -899,8 +899,8 @@ Signed commit message`
 
     it('should throw on missing tree', () => {
       const commitContent = [
-        `author Test User <test@example.com> 1704067200 +0000`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'No tree',
       ].join('\n')
@@ -912,7 +912,7 @@ Signed commit message`
     it('should throw on missing author', () => {
       const commitContent = [
         `tree ${SAMPLE_SHA}`,
-        `committer Test User <test@example.com> 1704067200 +0000`,
+        `committer Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'No author',
       ].join('\n')
@@ -924,7 +924,7 @@ Signed commit message`
     it('should throw on missing committer', () => {
       const commitContent = [
         `tree ${SAMPLE_SHA}`,
-        `author Test User <test@example.com> 1704067200 +0000`,
+        `author Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'No committer',
       ].join('\n')
@@ -936,11 +936,11 @@ Signed commit message`
 
   describe('identity parsing', () => {
     it('should parse identity with parseIdentity helper', () => {
-      const line = 'author John Doe <john@example.com> 1704067200 +0530'
+      const line = 'author John Doe <john@example.com.ai> 1704067200 +0530'
       const identity = parseIdentity(line)
 
       expect(identity.name).toBe('John Doe')
-      expect(identity.email).toBe('john@example.com')
+      expect(identity.email).toBe('john@example.com.ai')
       expect(identity.timestamp).toBe(1704067200)
       expect(identity.timezone).toBe('+0530')
     })
@@ -948,17 +948,17 @@ Signed commit message`
     it('should format identity with formatIdentity helper', () => {
       const identity: GitIdentity = {
         name: 'Jane Doe',
-        email: 'jane@example.com',
+        email: 'jane@example.com.ai',
         timestamp: 1704153600,
         timezone: '-0800',
       }
       const formatted = formatIdentity('author', identity)
 
-      expect(formatted).toBe('author Jane Doe <jane@example.com> 1704153600 -0800')
+      expect(formatted).toBe('author Jane Doe <jane@example.com.ai> 1704153600 -0800')
     })
 
     it('should handle complex names with spaces', () => {
-      const line = 'author Dr. John Q. Public III <john@example.com> 1704067200 +0000'
+      const line = 'author Dr. John Q. Public III <john@example.com.ai> 1704067200 +0000'
       const identity = parseIdentity(line)
 
       expect(identity.name).toBe('Dr. John Q. Public III')
@@ -1230,7 +1230,7 @@ describe('GitTag', () => {
       const serialized = tag.serialize()
 
       const content = decoder.decode(serialized)
-      expect(content).toContain('tagger Test User <test@example.com> 1704067200 +0000')
+      expect(content).toContain('tagger Test User <test@example.com.ai> 1704067200 +0000')
     })
 
     it('should omit tagger line if not present', () => {
@@ -1269,7 +1269,7 @@ describe('GitTag', () => {
         `object ${SAMPLE_SHA}`,
         'type commit',
         'tag v1.0.0',
-        `tagger Test User <test@example.com> 1704067200 +0000`,
+        `tagger Test User <test@example.com.ai> 1704067200 +0000`,
         '',
         'Release v1.0.0',
       ].join('\n')
@@ -1342,7 +1342,7 @@ describe('GitTag', () => {
     const signedTagContent = `object ${SAMPLE_SHA}
 type commit
 tag v1.0.0
-tagger Test User <test@example.com> 1704067200 +0000
+tagger Test User <test@example.com.ai> 1704067200 +0000
 
 Release v1.0.0
 -----BEGIN PGP SIGNATURE-----

@@ -121,7 +121,7 @@ describe('withGit mixin', () => {
       const DOWithGit = withGit(BaseDO, { repo: 'org/repo' })
       const instance = new DOWithGit()
 
-      const response = await instance.fetch(new Request('https://example.com'))
+      const response = await instance.fetch(new Request('https://example.com.ai'))
       expect(response).toBeInstanceOf(Response)
       expect(await response.text()).toBe('OK')
     })

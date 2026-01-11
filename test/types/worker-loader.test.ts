@@ -62,7 +62,7 @@ describe('WorkerLoader Types', () => {
   describe('Interface Contracts', () => {
     it('WorkerStub.fetch should return Promise<Response>', async () => {
       const stub: WorkerStub = { fetch: async () => new Response('OK') }
-      const response = await stub.fetch!(new Request('https://example.com'))
+      const response = await stub.fetch!(new Request('https://example.com.ai'))
       expect(response).toBeInstanceOf(Response)
     })
   })

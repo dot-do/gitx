@@ -27,7 +27,7 @@ import { CommitObject, Author } from '../../src/types/objects'
 function createAuthor(name: string = 'Test User', timestamp: number = 1704067200): Author {
   return {
     name,
-    email: `${name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+    email: `${name.toLowerCase().replace(/\s+/g, '.')}@example.com.ai`,
     timestamp,
     timezone: '+0000'
   }

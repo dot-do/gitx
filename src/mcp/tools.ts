@@ -1452,7 +1452,7 @@ export const gitTools: MCPTool[] = [
 
         const commitAuthor: CommitAuthor = {
           name: author || 'Unknown',
-          email: email || 'unknown@example.com',
+          email: email || 'unknown@example.com.ai',
           timestamp: now,
           timezone
         }

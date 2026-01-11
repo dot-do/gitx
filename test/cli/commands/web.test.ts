@@ -875,7 +875,7 @@ describe('gitx web command', () => {
       let receivedContext: CommandContext | null = null
       cli.registerCommand('web', (ctx) => {
         receivedContext = ctx
-        return Promise.resolve({ url: 'https://example.com', expiresAt: new Date() })
+        return Promise.resolve({ url: 'https://example.com.ai', expiresAt: new Date() })
       })
 
       await cli.run(['web', '--expires', '24h'])
@@ -895,7 +895,7 @@ describe('gitx web command', () => {
       let receivedContext: CommandContext | null = null
       cli.registerCommand('web', (ctx) => {
         receivedContext = ctx
-        return Promise.resolve({ url: 'https://example.com', expiresAt: new Date() })
+        return Promise.resolve({ url: 'https://example.com.ai', expiresAt: new Date() })
       })
 
       await cli.run(['web', '--open'])
@@ -912,7 +912,7 @@ describe('gitx web command', () => {
       })
 
       cli.registerCommand('web', async () => {
-        return { url: 'https://example.com', expiresAt: new Date() }
+        return { url: 'https://example.com.ai', expiresAt: new Date() }
       })
 
       const result = await cli.run(['web'])
@@ -978,7 +978,7 @@ describe('gitx web command', () => {
     it('should export WebResult type', async () => {
       // Type check
       const result: WebResult = {
-        url: 'https://example.com',
+        url: 'https://example.com.ai',
         expiresAt: new Date()
       }
       expect(result.url).toBeDefined()
@@ -987,7 +987,7 @@ describe('gitx web command', () => {
     it('should export UploadResult type', async () => {
       // Type check
       const result: UploadResult = {
-        url: 'https://example.com',
+        url: 'https://example.com.ai',
         expiresAt: new Date(),
         id: 'abc123'
       }

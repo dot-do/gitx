@@ -617,7 +617,7 @@ export interface AddOptions {
  *   message: 'feat: add new feature\n\nDetailed description here.',
  *   author: {
  *     name: 'Alice',
- *     email: 'alice@example.com',
+ *     email: 'alice@example.com.ai',
  *     timestamp: Date.now() / 1000,
  *     timezone: '+0000'
  *   }

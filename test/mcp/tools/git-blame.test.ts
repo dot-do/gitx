@@ -25,13 +25,13 @@ describe('git_blame MCP Tool', () => {
     parents: [],
     author: {
       name: 'Alice Author',
-      email: 'alice@example.com',
+      email: 'alice@example.com.ai',
       timestamp: 1672531200, // 2023-01-01 00:00:00 UTC
       timezone: '+0000',
     },
     committer: {
       name: 'Alice Author',
-      email: 'alice@example.com',
+      email: 'alice@example.com.ai',
       timestamp: 1672531200,
       timezone: '+0000',
     },
@@ -45,13 +45,13 @@ describe('git_blame MCP Tool', () => {
     parents: [testCommitSha1],
     author: {
       name: 'Bob Builder',
-      email: 'bob@example.com',
+      email: 'bob@example.com.ai',
       timestamp: 1672617600, // 2023-01-02 00:00:00 UTC
       timezone: '-0500',
     },
     committer: {
       name: 'Bob Builder',
-      email: 'bob@example.com',
+      email: 'bob@example.com.ai',
       timestamp: 1672617600,
       timezone: '-0500',
     },
@@ -65,13 +65,13 @@ describe('git_blame MCP Tool', () => {
     parents: [testCommitSha2],
     author: {
       name: 'Carol Coder',
-      email: 'carol@example.com',
+      email: 'carol@example.com.ai',
       timestamp: 1672704000, // 2023-01-03 00:00:00 UTC
       timezone: '+0530',
     },
     committer: {
       name: 'Carol Coder',
-      email: 'carol@example.com',
+      email: 'carol@example.com.ai',
       timestamp: 1672704000,
       timezone: '+0530',
     },

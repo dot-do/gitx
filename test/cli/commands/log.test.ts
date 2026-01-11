@@ -133,12 +133,12 @@ function createMockLogEntry(
     shortSha: sha.substring(0, 7),
     author: {
       name: options.author ?? 'Test User',
-      email: options.email ?? 'test@example.com',
+      email: options.email ?? 'test@example.com.ai',
       date
     },
     committer: {
       name: options.author ?? 'Test User',
-      email: options.email ?? 'test@example.com',
+      email: options.email ?? 'test@example.com.ai',
       date
     },
     message: options.message ?? 'Test commit message',
@@ -221,7 +221,7 @@ async function createMockGitRepoWithHistory(
       parents,
       message: `Commit ${i + 1}`,
       author: 'John Doe',
-      email: 'john@example.com',
+      email: 'john@example.com.ai',
       timestamp
     })
     commitShas.push(sha)
@@ -239,7 +239,7 @@ async function createMockGitRepoWithHistory(
       parents: commitShas.length > 0 ? [commitShas[0]] : [],
       message: 'Develop branch commit',
       author: 'Jane Doe',
-      email: 'jane@example.com',
+      email: 'jane@example.com.ai',
       timestamp: baseTimestamp + 1000
     })
     await fs.writeFile(path.join(gitDir, 'refs', 'heads', 'develop'), developSha + '\n')
@@ -249,7 +249,7 @@ async function createMockGitRepoWithHistory(
       parents: commitShas.length > 0 ? [commitShas[0]] : [],
       message: 'Feature branch commit',
       author: 'Bob Smith',
-      email: 'bob@example.com',
+      email: 'bob@example.com.ai',
       timestamp: baseTimestamp + 2000
     })
     await fs.writeFile(path.join(gitDir, 'refs', 'heads', 'feature'), featureSha + '\n')
@@ -263,7 +263,7 @@ async function createMockGitRepoWithHistory(
       parents: [headSha],
       message: 'Branch 1 commit',
       author: 'John Doe',
-      email: 'john@example.com',
+      email: 'john@example.com.ai',
       timestamp: baseTimestamp + 5000
     })
     const branch2Sha = await writeCommit(gitDir, {
@@ -271,7 +271,7 @@ async function createMockGitRepoWithHistory(
       parents: [headSha],
       message: 'Branch 2 commit',
       author: 'Jane Doe',
-      email: 'jane@example.com',
+      email: 'jane@example.com.ai',
       timestamp: baseTimestamp + 5500
     })
     // Now create merge commit
@@ -280,7 +280,7 @@ async function createMockGitRepoWithHistory(
       parents: [branch1Sha, branch2Sha],
       message: 'Merge branch2 into branch1',
       author: 'John Doe',
-      email: 'john@example.com',
+      email: 'john@example.com.ai',
       timestamp: baseTimestamp + 6000
     })
     await fs.writeFile(path.join(gitDir, 'refs', 'heads', 'main'), mergeSha + '\n')
@@ -469,7 +469,7 @@ describe('Git Log Command', () => {
       const entry = createMockLogEntry(sampleSha, {
         message: 'Initial commit',
         author: 'John Doe',
-        email: 'john@example.com',
+        email: 'john@example.com.ai',
         date: new Date('2024-01-15T10:00:00Z')
       })
 
@@ -477,7 +477,7 @@ describe('Git Log Command', () => {
 
       expect(formatted).toContain(sampleSha)
       expect(formatted).toContain('John Doe')
-      expect(formatted).toContain('john@example.com')
+      expect(formatted).toContain('john@example.com.ai')
       expect(formatted).toContain('Initial commit')
       // Should contain date in some format
       expect(formatted).toMatch(/2024|Jan|15/)
@@ -641,12 +641,12 @@ describe('Git Log Command', () => {
     it('should support %ae placeholder for author email', async () => {
       const entry = createMockLogEntry(sampleSha, {
         message: 'Test',
-        email: 'jane@example.com'
+        email: 'jane@example.com.ai'
       })
 
       const formatted = formatWithString(entry, '%ae')
 
-      expect(formatted).toBe('jane@example.com')
+      expect(formatted).toBe('jane@example.com.ai')
     })
 
     it('should support %ad placeholder for author date', async () => {
@@ -972,10 +972,10 @@ describe('Git Log Command', () => {
       await createMockGitRepoWithHistory(tempDir, { commitCount: 5 })
       const adapter = await createFSAdapter(tempDir)
 
-      const result = await getLog(adapter, { author: 'john@example.com' })
+      const result = await getLog(adapter, { author: 'john@example.com.ai' })
 
       for (const entry of result.entries) {
-        expect(entry.author.email).toBe('john@example.com')
+        expect(entry.author.email).toBe('john@example.com.ai')
       }
     })
 
