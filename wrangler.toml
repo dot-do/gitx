@@ -28,13 +28,12 @@ bucket_name = "gitx-objects"
 binding = "PACK_STORAGE"
 bucket_name = "gitx-packs"
 
-# Service binding to fsx for filesystem operations
+# Service bindings
 [[services]]
 binding = "FSX"
 service = "fsx-do"
 environment = "production"
 
-# Service binding to bashx for container execution
 [[services]]
 binding = "BASHX"
 service = "bashx-do"
