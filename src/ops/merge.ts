@@ -1415,7 +1415,7 @@ export async function resolveConflict(
     }
   }
 
-  const conflict = mergeState.unresolvedConflicts[conflictIndex]
+  const conflict = mergeState.unresolvedConflicts[conflictIndex]!
 
   // Determine the content to use based on resolution strategy
   let resolvedSha: string
@@ -2070,8 +2070,8 @@ export function mergeContent(
   let theirsIdx = 0
 
   while (basePos < baseLines.length || oursIdx < oursHunks.length || theirsIdx < theirsHunks.length) {
-    const oursHunk = oursIdx < oursHunks.length ? oursHunks[oursIdx] : null
-    const theirsHunk = theirsIdx < theirsHunks.length ? theirsHunks[theirsIdx] : null
+    const oursHunk: DiffHunk | null = oursIdx < oursHunks.length ? oursHunks[oursIdx]! : null
+    const theirsHunk: DiffHunk | null = theirsIdx < theirsHunks.length ? theirsHunks[theirsIdx]! : null
 
     // Find the next position to process
     const oursStart = oursHunk?.baseStart ?? Infinity
@@ -2093,14 +2093,17 @@ export function mergeContent(
     if (oursHunk !== null && theirsHunk !== null &&
         (oursHunk.baseStart === theirsHunk.baseStart ||
          hunksOverlap(oursHunk, theirsHunk))) {
+      // Capture narrowed types for TypeScript
+      const oh = oursHunk
+      const th = theirsHunk
       // Potential conflict - check if changes are identical
-      if (hunksSameChange(oursHunk, theirsHunk)) {
+      if (hunksSameChange(oh, th)) {
         // Same change on both sides - no conflict
-        for (const line of oursHunk.newLines) {
+        for (const line of oh.newLines) {
           mergedLines.push(line)
           outputLine++
         }
-        basePos = oursHunk.baseStart + oursHunk.baseCount
+        basePos = oh.baseStart + oh.baseCount
         oursIdx++
         theirsIdx++
       } else {
@@ -2109,17 +2112,17 @@ export function mergeContent(
         const startLine = outputLine
 
         // Determine the affected base range
-        const conflictBaseStart = Math.min(oursHunk.baseStart, theirsHunk.baseStart)
+        const conflictBaseStart = Math.min(oh.baseStart, th.baseStart)
         const conflictBaseEnd = Math.max(
-          oursHunk.baseStart + oursHunk.baseCount,
-          theirsHunk.baseStart + theirsHunk.baseCount
+          oh.baseStart + oh.baseCount,
+          th.baseStart + th.baseCount
         )
         const baseContent = baseLines.slice(conflictBaseStart, conflictBaseEnd)
 
         mergedLines.push('<<<<<<< ours')
         outputLine++
 
-        for (const line of oursHunk.newLines) {
+        for (const line of oh.newLines) {
           mergedLines.push(line)
           outputLine++
         }
@@ -2127,7 +2130,7 @@ export function mergeContent(
         mergedLines.push('=======')
         outputLine++
 
-        for (const line of theirsHunk.newLines) {
+        for (const line of th.newLines) {
           mergedLines.push(line)
           outputLine++
         }
@@ -2139,8 +2142,8 @@ export function mergeContent(
           startLine,
           endLine: outputLine - 1,
           baseContent: baseContent.join('\n'),
-          oursContent: oursHunk.newLines.join('\n'),
-          theirsContent: theirsHunk.newLines.join('\n')
+          oursContent: oh.newLines.join('\n'),
+          theirsContent: th.newLines.join('\n')
         })
 
         basePos = conflictBaseEnd
@@ -2148,20 +2151,24 @@ export function mergeContent(
         theirsIdx++
       }
     } else if (oursHunk !== null && (theirsHunk === null || oursHunk.baseStart < theirsHunk.baseStart)) {
+      // Capture narrowed type for TypeScript
+      const oh = oursHunk
       // Apply ours hunk
-      for (const line of oursHunk.newLines) {
+      for (const line of oh.newLines) {
         mergedLines.push(line)
         outputLine++
       }
-      basePos = oursHunk.baseStart + oursHunk.baseCount
+      basePos = oh.baseStart + oh.baseCount
       oursIdx++
     } else if (theirsHunk !== null) {
+      // Capture narrowed type for TypeScript
+      const th = theirsHunk
       // Apply theirs hunk
-      for (const line of theirsHunk.newLines) {
+      for (const line of th.newLines) {
         mergedLines.push(line)
         outputLine++
       }
-      basePos = theirsHunk.baseStart + theirsHunk.baseCount
+      basePos = th.baseStart + th.baseCount
       theirsIdx++
     }
   }
