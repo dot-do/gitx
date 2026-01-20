@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS objects (sha TEXT PRIMARY KEY, type TEXT NOT NULL, si
 -- Object location index for tiered storage
 -- Tracks object locations across storage tiers (hot/r2/parquet)
 -- pack_id and offset are used for R2 and Parquet tiers where objects are stored in packfiles
-CREATE TABLE IF NOT EXISTS object_index (sha TEXT PRIMARY KEY, tier TEXT NOT NULL DEFAULT 'hot', pack_id TEXT, offset INTEGER, size INTEGER, type TEXT, updated_at INTEGER);
+-- chunked and chunk_count are used for large blobs (>=2MB) stored in 2MB chunks for DO SQLite cost optimization
+CREATE TABLE IF NOT EXISTS object_index (sha TEXT PRIMARY KEY, tier TEXT NOT NULL DEFAULT 'hot', pack_id TEXT, offset INTEGER, size INTEGER, type TEXT, updated_at INTEGER, chunked INTEGER DEFAULT 0, chunk_count INTEGER DEFAULT 0);
 
 -- Hot objects cache
 CREATE TABLE IF NOT EXISTS hot_objects (sha TEXT PRIMARY KEY, type TEXT NOT NULL, data BLOB NOT NULL, accessed_at INTEGER, created_at INTEGER);

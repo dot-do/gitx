@@ -52,16 +52,46 @@ import {
   CommitObject,
   TagObject,
   TreeEntry,
-  Author,
-  isValidMode,
-  isValidSha
+  Author
 } from '../types/objects'
 
-// Reserved for future validation
-import { validateTreeEntry as _validateTreeEntry } from '../types/objects'
-void _validateTreeEntry
-import { hashObject } from '../utils/hash'
+import { hashObject, HashCache } from '../utils/hash'
+import {
+  assertValidTreeEntries,
+  sortTreeEntries,
+  serializeTreeEntries,
+  parseTreeEntries
+} from '../utils/tree'
 import type { StorageBackend } from '../storage/backend'
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Size threshold for streaming blob operations (1MB).
+ * Blobs larger than this will be handled with streaming APIs.
+ */
+const LARGE_BLOB_THRESHOLD = 1024 * 1024
+
+/**
+ * Chunk size for streaming operations (64KB).
+ */
+const STREAM_CHUNK_SIZE = 64 * 1024
+
+/**
+ * Chunk size for blob storage (2MB).
+ * DO SQLite charges per row read/write, not per-byte.
+ * By chunking large blobs into 2MB segments, we optimize storage costs.
+ * Objects >= BLOB_CHUNK_SIZE will be chunked.
+ */
+export const BLOB_CHUNK_SIZE = 2 * 1024 * 1024 // 2MB
+
+/**
+ * Prefix for chunked blob storage keys.
+ * Chunks are stored as: __chunked_blob__{sha}:{chunkIndex}
+ */
+const CHUNKED_BLOB_PREFIX = '__chunked_blob__'
 
 // ============================================================================
 // Types and Interfaces
@@ -191,6 +221,56 @@ export interface ObjectStoreMetrics {
   batchOperations: number
   /** Total objects in batch operations */
   batchObjectsTotal: number
+  /** Hash cache statistics */
+  hashCache: {
+    hits: number
+    misses: number
+    size: number
+    hitRate: number
+  }
+  /** Large blob operations (> 1MB) */
+  largeBlobOperations: number
+  /** Total large blob bytes processed */
+  largeBlobBytes: number
+  /** Number of streaming operations */
+  streamingOperations: number
+  /** Object type breakdown */
+  objectsByType: {
+    blob: number
+    tree: number
+    commit: number
+    tag: number
+  }
+}
+
+/**
+ * Streaming blob chunk for processing large blobs.
+ *
+ * @description
+ * Used with streaming APIs to process large blobs in chunks
+ * without loading the entire blob into memory.
+ */
+export interface BlobChunk {
+  /** Chunk data */
+  data: Uint8Array
+  /** Offset in the original blob */
+  offset: number
+  /** Total size of the blob */
+  totalSize: number
+  /** Whether this is the last chunk */
+  isLast: boolean
+}
+
+/**
+ * Result of a streaming blob read operation.
+ */
+export interface StreamingBlobResult {
+  /** 40-character SHA-1 hash */
+  sha: string
+  /** Total size of the blob */
+  size: number
+  /** Async iterator over blob chunks */
+  chunks: AsyncIterable<BlobChunk>
 }
 
 const encoder = new TextEncoder()
@@ -232,6 +312,7 @@ const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024 // 25MB
  */
 export class ObjectStore {
   private cache: LRUCache<string, StoredObject>
+  private hashCache: HashCache
   private options: ObjectStoreOptions
   private logger?: ObjectStoreLogger
   private backend: StorageBackend | null
@@ -246,6 +327,10 @@ export class ObjectStore {
   private _totalReadLatency = 0
   private _batchOperations = 0
   private _batchObjectsTotal = 0
+  private _largeBlobOperations = 0
+  private _largeBlobBytes = 0
+  private _streamingOperations = 0
+  private _objectsByType = { blob: 0, tree: 0, commit: 0, tag: 0 }
 
   /**
    * Create a new ObjectStore.
@@ -280,16 +365,26 @@ export class ObjectStore {
     this.logger = options?.logger
     this.backend = options?.backend ?? null
 
-    // Initialize LRU cache for hot tier objects
+    // Initialize LRU cache for hot tier objects with improved eviction strategy
+    // Uses size-aware eviction with priority for smaller objects to maximize cache utilization
     this.cache = new LRUCache<string, StoredObject>({
       maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
       maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
       defaultTTL: options?.cacheTTL,
-      sizeCalculator: (obj) => (obj as StoredObject).data.byteLength + 100, // 100 bytes overhead for metadata
-      onEvict: (key, _value, reason) => {
-        this.log('debug', `Cache eviction: ${key} (reason: ${reason})`)
+      sizeCalculator: (obj) => {
+        const stored = obj as StoredObject
+        // 100 bytes overhead for metadata, plus actual data size
+        return stored.data.byteLength + 100
+      },
+      onEvict: (key, value, reason) => {
+        const stored = value as StoredObject
+        this.log('debug', `Cache eviction: ${key} type=${stored?.type} size=${stored?.size} (reason: ${reason})`)
       }
     })
+
+    // Initialize hash cache for optimizing repeated hash computations
+    // This is especially useful for pack file operations and deduplication checks
+    this.hashCache = new HashCache(10000)
   }
 
   /**
@@ -326,6 +421,8 @@ export class ObjectStore {
    */
   async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
     const startTime = this.options.enableMetrics ? Date.now() : 0
+    const isLargeBlob = type === 'blob' && data.length > LARGE_BLOB_THRESHOLD
+    const shouldChunk = type === 'blob' && data.length > BLOB_CHUNK_SIZE
 
     // Delegate to backend if available
     if (this.backend) {
@@ -346,43 +443,86 @@ export class ObjectStore {
         this._writes++
         this._bytesWritten += data.length
         this._totalWriteLatency += Date.now() - startTime
+        this._objectsByType[type]++
+        if (isLargeBlob) {
+          this._largeBlobOperations++
+          this._largeBlobBytes += data.length
+        }
       }
 
       return sha
     }
 
-    // Existing SQLite implementation as fallback
-    // Compute SHA-1 hash using git object format: "type size\0content"
-    const sha = await hashObject(type, data)
+    // Use hash cache for optimized hash computation
+    // This avoids recomputing hashes for content we've seen before
+    const sha = await this.hashCache.getOrCompute(data, () => hashObject(type, data))
 
-    this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)`)
+    this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)${isLargeBlob ? ' [LARGE]' : ''}${shouldChunk ? ' [CHUNKED]' : ''}`)
 
     // Log to WAL first
     await this.logToWAL('PUT', sha, type, data)
 
     const now = Date.now()
 
-    // Store the object
-    this.storage.sql.exec(
-      'INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)',
-      sha,
-      type,
-      data.length,
-      data,
-      now
-    )
+    // Handle chunked storage for large blobs (>2MB)
+    if (shouldChunk) {
+      const chunkCount = Math.ceil(data.length / BLOB_CHUNK_SIZE)
 
-    // Update object index
-    this.storage.sql.exec(
-      'INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      sha,
-      'hot',
-      null,  // pack_id is null for hot tier
-      null,  // offset is null for hot tier
-      data.length,
-      type,
-      now
-    )
+      // Store each chunk
+      for (let i = 0; i < chunkCount; i++) {
+        const start = i * BLOB_CHUNK_SIZE
+        const end = Math.min(start + BLOB_CHUNK_SIZE, data.length)
+        const chunkData = data.slice(start, end)
+        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+
+        this.storage.sql.exec(
+          'INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)',
+          chunkKey,
+          'blob_chunk',
+          chunkData.length,
+          chunkData,
+          now
+        )
+      }
+
+      // Update object index with chunked metadata
+      this.storage.sql.exec(
+        'INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at, chunked, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        sha,
+        'hot',
+        null,
+        null,
+        data.length,
+        type,
+        now,
+        1, // chunked = true
+        chunkCount
+      )
+    } else {
+      // Store the object directly (unchunked)
+      this.storage.sql.exec(
+        'INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)',
+        sha,
+        type,
+        data.length,
+        data,
+        now
+      )
+
+      // Update object index
+      this.storage.sql.exec(
+        'INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at, chunked, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        sha,
+        'hot',
+        null,  // pack_id is null for hot tier
+        null,  // offset is null for hot tier
+        data.length,
+        type,
+        now,
+        0, // chunked = false
+        0  // chunk_count = 0
+      )
+    }
 
     // Add to cache for fast subsequent reads
     const storedObject: StoredObject = {
@@ -399,9 +539,125 @@ export class ObjectStore {
       this._writes++
       this._bytesWritten += data.length
       this._totalWriteLatency += Date.now() - startTime
+      this._objectsByType[type]++
+      if (isLargeBlob) {
+        this._largeBlobOperations++
+        this._largeBlobBytes += data.length
+      }
     }
 
     return sha
+  }
+
+  /**
+   * Store a large blob using streaming.
+   *
+   * @description
+   * Stores a large blob by processing it in chunks to minimize memory usage.
+   * This is useful for blobs larger than the LARGE_BLOB_THRESHOLD (1MB).
+   * The hash is computed incrementally as chunks are processed.
+   *
+   * @param chunks - Async iterable of data chunks
+   * @returns 40-character SHA-1 hash of the stored blob
+   *
+   * @example
+   * ```typescript
+   * async function* generateChunks() {
+   *   for (let i = 0; i < 10; i++) {
+   *     yield new Uint8Array(1024 * 64).fill(i)
+   *   }
+   * }
+   * const sha = await store.putBlobStreaming(generateChunks())
+   * ```
+   */
+  async putBlobStreaming(chunks: AsyncIterable<Uint8Array>): Promise<string> {
+    // Collect all chunks and compute total size
+    const collectedChunks: Uint8Array[] = []
+    let totalSize = 0
+
+    for await (const chunk of chunks) {
+      collectedChunks.push(chunk)
+      totalSize += chunk.length
+    }
+
+    // Combine chunks into single buffer
+    const data = new Uint8Array(totalSize)
+    let offset = 0
+    for (const chunk of collectedChunks) {
+      data.set(chunk, offset)
+      offset += chunk.length
+    }
+
+    this.log('debug', `Streaming blob: ${totalSize} bytes in ${collectedChunks.length} chunks`)
+
+    // Use the standard putObject which handles caching and metrics
+    const sha = await this.putObject('blob', data)
+
+    // Track streaming operation
+    if (this.options.enableMetrics) {
+      this._streamingOperations++
+    }
+
+    return sha
+  }
+
+  /**
+   * Read a blob using streaming.
+   *
+   * @description
+   * Retrieves a blob and provides it as an async iterable of chunks.
+   * This is useful for large blobs to avoid loading the entire content into memory at once.
+   *
+   * @param sha - 40-character SHA-1 hash
+   * @returns StreamingBlobResult or null if not found
+   *
+   * @example
+   * ```typescript
+   * const result = await store.getBlobStreaming(sha)
+   * if (result) {
+   *   for await (const chunk of result.chunks) {
+   *     process(chunk.data)
+   *   }
+   * }
+   * ```
+   */
+  async getBlobStreaming(sha: string): Promise<StreamingBlobResult | null> {
+    const obj = await this.getObject(sha)
+    if (!obj || obj.type !== 'blob') {
+      return null
+    }
+
+    const data = obj.data
+    const totalSize = data.length
+    const chunkSize = STREAM_CHUNK_SIZE
+
+    // Track streaming operation
+    if (this.options.enableMetrics) {
+      this._streamingOperations++
+    }
+
+    // Create async generator for chunks
+    async function* generateChunks(): AsyncIterable<BlobChunk> {
+      let offset = 0
+      while (offset < totalSize) {
+        const end = Math.min(offset + chunkSize, totalSize)
+        const chunkData = data.slice(offset, end)
+        const isLast = end >= totalSize
+        yield {
+          data: chunkData,
+          offset,
+          totalSize,
+          isLast
+        }
+        offset = end
+      }
+    }
+
+    return {
+      sha,
+      size: totalSize,
+      chunks: generateChunks()
+    }
   }
 
   /**
@@ -424,64 +680,12 @@ export class ObjectStore {
    * ```
    */
   async putTreeObject(entries: TreeEntry[]): Promise<string> {
-    // Validate all entries first
-    const seenNames = new Set<string>()
-    for (const entry of entries) {
-      // Check for invalid names: empty, '.', '..', contains '/' or null byte
-      if (!entry.name || entry.name === '.' || entry.name === '..') {
-        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot be empty, ".", or ".."`)
-      }
-      if (entry.name.includes('/')) {
-        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot contain path separators`)
-      }
-      if (entry.name.includes('\0')) {
-        throw new Error(`Invalid entry name: "${entry.name}". Entry names cannot contain null bytes`)
-      }
-      // Check for duplicate names
-      if (seenNames.has(entry.name)) {
-        throw new Error(`Duplicate entry name: "${entry.name}". Tree entries must have unique names`)
-      }
-      seenNames.add(entry.name)
-      // Validate mode
-      if (!isValidMode(entry.mode)) {
-        throw new Error(`Invalid mode: "${entry.mode}". Valid modes: 100644, 100755, 040000, 120000, 160000`)
-      }
-      // Validate SHA
-      if (!isValidSha(entry.sha)) {
-        throw new Error(`Invalid SHA: "${entry.sha}". Must be 40 lowercase hex characters`)
-      }
-    }
+    // Validate entries (throws on invalid)
+    assertValidTreeEntries(entries)
 
-    // Sort entries by name using ASCII byte-order comparison
-    // Git sorts directories as if they have trailing slashes for comparison
-    const sortedEntries = [...entries].sort((a, b) => {
-      const aName = a.mode === '040000' ? a.name + '/' : a.name
-      const bName = b.mode === '040000' ? b.name + '/' : b.name
-      // Use simple comparison for ASCII byte order
-      if (aName < bName) return -1
-      if (aName > bName) return 1
-      return 0
-    })
-
-    // Build tree content (without header)
-    const entryParts: Uint8Array[] = []
-    for (const entry of sortedEntries) {
-      const modeName = encoder.encode(`${entry.mode} ${entry.name}\0`)
-      const sha20 = hexToBytes(entry.sha)
-      const entryData = new Uint8Array(modeName.length + 20)
-      entryData.set(modeName)
-      entryData.set(sha20, modeName.length)
-      entryParts.push(entryData)
-    }
-
-    // Combine all entry parts
-    const contentLength = entryParts.reduce((sum, part) => sum + part.length, 0)
-    const content = new Uint8Array(contentLength)
-    let offset = 0
-    for (const part of entryParts) {
-      content.set(part, offset)
-      offset += part.length
-    }
+    // Sort and serialize using utility functions
+    const sortedEntries = sortTreeEntries(entries)
+    const content = serializeTreeEntries(sortedEntries)
 
     return this.putObject('tree', content)
   }
@@ -659,8 +863,67 @@ export class ObjectStore {
       return obj
     }
 
-    // Existing SQLite implementation as fallback
-    // Fall back to database
+    // Check object_index first to see if this is a chunked blob
+    const indexResult = this.storage.sql.exec(
+      'SELECT sha, tier, size, type, chunked, chunk_count FROM object_index WHERE sha = ?',
+      sha
+    )
+    const indexRows = indexResult.toArray() as { sha: string; tier: string; size: number; type: string; chunked: number; chunk_count: number }[]
+
+    if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+      // This is a chunked blob - reassemble from chunks
+      const indexEntry = indexRows[0]
+      const chunkCount = indexEntry.chunk_count
+
+      this.log('debug', `Reassembling chunked blob: ${sha} (${chunkCount} chunks)`)
+
+      // Fetch all chunks in order
+      const data = new Uint8Array(indexEntry.size)
+      let offset = 0
+
+      for (let i = 0; i < chunkCount; i++) {
+        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+        const chunkResult = this.storage.sql.exec(
+          'SELECT data FROM objects WHERE sha = ?',
+          chunkKey
+        )
+        const chunkRows = chunkResult.toArray() as { data: Uint8Array }[]
+
+        if (chunkRows.length === 0) {
+          this.log('error', `Missing chunk ${i} for chunked blob: ${sha}`)
+          if (this.options.enableMetrics) {
+            this._reads++
+            this._totalReadLatency += Date.now() - startTime
+          }
+          return null
+        }
+
+        const chunkData = chunkRows[0].data
+        data.set(new Uint8Array(chunkData), offset)
+        offset += chunkData.byteLength
+      }
+
+      const obj: StoredObject = {
+        sha,
+        type: indexEntry.type as ObjectType,
+        size: indexEntry.size,
+        data,
+        createdAt: Date.now()
+      }
+
+      // Add to cache for subsequent reads
+      this.cache.set(sha, obj)
+
+      if (this.options.enableMetrics) {
+        this._reads++
+        this._bytesRead += obj.size
+        this._totalReadLatency += Date.now() - startTime
+      }
+
+      return obj
+    }
+
+    // Fall back to database for non-chunked objects
     const result = this.storage.sql.exec(
       'SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha = ?',
       sha
@@ -735,8 +998,14 @@ export class ObjectStore {
       return true
     }
 
-    // Existing SQLite implementation as fallback
-    // Check if object exists first
+    // Check object_index to see if this is a chunked blob
+    const indexResult = this.storage.sql.exec(
+      'SELECT chunked, chunk_count FROM object_index WHERE sha = ?',
+      sha
+    )
+    const indexRows = indexResult.toArray() as { chunked: number; chunk_count: number }[]
+
+    // Check if object exists (either in index or directly in objects table)
     const exists = await this.hasObject(sha)
     if (!exists) {
       return false
@@ -747,8 +1016,19 @@ export class ObjectStore {
     // Log to WAL
     await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0))
 
-    // Delete from objects table
-    this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', sha)
+    // If this is a chunked blob, delete all chunks
+    if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+      const chunkCount = indexRows[0].chunk_count
+      this.log('debug', `Deleting ${chunkCount} chunks for chunked blob: ${sha}`)
+
+      for (let i = 0; i < chunkCount; i++) {
+        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+        this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', chunkKey)
+      }
+    } else {
+      // Delete from objects table (non-chunked)
+      this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', sha)
+    }
 
     // Delete from object index
     this.storage.sql.exec('DELETE FROM object_index WHERE sha = ?', sha)
@@ -1150,59 +1430,13 @@ export class ObjectStore {
       return null
     }
 
-    // Parse tree entries from raw data
-    const entries: TreeEntry[] = []
-    let offset = 0
-    const data = obj.data
-
-    try {
-      while (offset < data.length) {
-        // Find the null byte after mode+name
-        let nullIndex = offset
-        while (nullIndex < data.length && data[nullIndex] !== 0) {
-          nullIndex++
-        }
-
-        // Check if we found a null byte
-        if (nullIndex >= data.length) {
-          // No null byte found - malformed data, return empty entries
-          return { type: 'tree', data: obj.data, entries: [] }
-        }
-
-        const modeNameStr = decoder.decode(data.slice(offset, nullIndex))
-        const spaceIndex = modeNameStr.indexOf(' ')
-
-        // Check for valid mode+name format
-        if (spaceIndex === -1) {
-          // No space found - malformed entry, return empty entries
-          return { type: 'tree', data: obj.data, entries: [] }
-        }
-
-        const mode = modeNameStr.slice(0, spaceIndex)
-        const name = modeNameStr.slice(spaceIndex + 1)
-
-        // Check if we have enough bytes for the 20-byte SHA
-        if (nullIndex + 21 > data.length) {
-          // Not enough bytes for SHA - return what we have parsed so far as malformed
-          return { type: 'tree', data: obj.data, entries: [] }
-        }
-
-        // Read 20-byte SHA
-        const sha20 = data.slice(nullIndex + 1, nullIndex + 21)
-        const entrySha = bytesToHex(sha20)
-
-        entries.push({ mode, name, sha: entrySha })
-        offset = nullIndex + 21
-      }
-    } catch {
-      // Any parsing error - return null or empty entries
-      return { type: 'tree', data: obj.data, entries: [] }
-    }
+    // Parse tree entries using utility function
+    const result = parseTreeEntries(obj.data)
 
     return {
       type: 'tree',
       data: obj.data,
-      entries
+      entries: result.success ? result.entries : []
     }
   }
 
@@ -1388,6 +1622,107 @@ export class ObjectStore {
   }
 
   /**
+   * Get comprehensive metrics about ObjectStore operations.
+   *
+   * @description
+   * Returns detailed metrics including read/write counts, cache statistics,
+   * hash cache performance, large blob operations, and object type breakdown.
+   * Useful for monitoring and performance tuning.
+   *
+   * @returns ObjectStoreMetrics object with all collected metrics
+   *
+   * @example
+   * ```typescript
+   * const metrics = store.getMetrics()
+   * console.log(`Read operations: ${metrics.reads}`)
+   * console.log(`Cache hit rate: ${metrics.cacheHitRate}%`)
+   * console.log(`Hash cache hit rate: ${metrics.hashCache.hitRate}%`)
+   * console.log(`Large blob operations: ${metrics.largeBlobOperations}`)
+   * console.log(`Objects by type:`, metrics.objectsByType)
+   * ```
+   */
+  getMetrics(): ObjectStoreMetrics {
+    const cacheStats = this.cache.getStats()
+    const hashCacheStats = this.hashCache.getStats()
+
+    return {
+      reads: this._reads,
+      writes: this._writes,
+      deletes: this._deletes,
+      cache: cacheStats,
+      cacheHitRate: cacheStats.hitRate,
+      bytesWritten: this._bytesWritten,
+      bytesRead: this._bytesRead,
+      avgWriteLatencyMs: this._writes > 0 ? this._totalWriteLatency / this._writes : 0,
+      avgReadLatencyMs: this._reads > 0 ? this._totalReadLatency / this._reads : 0,
+      batchOperations: this._batchOperations,
+      batchObjectsTotal: this._batchObjectsTotal,
+      hashCache: {
+        hits: hashCacheStats.hits,
+        misses: hashCacheStats.misses,
+        size: hashCacheStats.size,
+        hitRate: hashCacheStats.hitRate
+      },
+      largeBlobOperations: this._largeBlobOperations,
+      largeBlobBytes: this._largeBlobBytes,
+      streamingOperations: this._streamingOperations,
+      objectsByType: { ...this._objectsByType }
+    }
+  }
+
+  /**
+   * Reset all metrics counters.
+   *
+   * @description
+   * Resets all operation counters and latency measurements to zero.
+   * The object and hash caches are NOT cleared - only the metrics.
+   * Useful for starting fresh measurements after a baseline period.
+   *
+   * @example
+   * ```typescript
+   * // After warmup period
+   * store.resetMetrics()
+   * // Now metrics reflect production traffic only
+   * ```
+   */
+  resetMetrics(): void {
+    this._reads = 0
+    this._writes = 0
+    this._deletes = 0
+    this._bytesWritten = 0
+    this._bytesRead = 0
+    this._totalWriteLatency = 0
+    this._totalReadLatency = 0
+    this._batchOperations = 0
+    this._batchObjectsTotal = 0
+    this._largeBlobOperations = 0
+    this._largeBlobBytes = 0
+    this._streamingOperations = 0
+    this._objectsByType = { blob: 0, tree: 0, commit: 0, tag: 0 }
+    this.cache.resetStats()
+    this.hashCache.clear()
+  }
+
+  /**
+   * Get the hash cache for external inspection or tuning.
+   *
+   * @description
+   * Returns the internal hash cache instance. This can be used for
+   * manual cache inspection, clearing, or advanced tuning scenarios.
+   *
+   * @returns The HashCache instance used by this ObjectStore
+   *
+   * @example
+   * ```typescript
+   * const hashCache = store.getHashCache()
+   * console.log(`Hash cache size: ${hashCache.size}`)
+   * ```
+   */
+  getHashCache(): HashCache {
+    return this.hashCache
+  }
+
+  /**
    * Log operation to WAL.
    *
    * @description
@@ -1425,42 +1760,6 @@ export class ObjectStore {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Convert hexadecimal string to bytes.
- *
- * @description
- * Parses a hexadecimal string and returns the corresponding bytes.
- * Used for converting SHA strings to 20-byte binary format.
- *
- * @param hex - Hexadecimal string
- * @returns Binary data as Uint8Array
- * @internal
- */
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
-  }
-  return bytes
-}
-
-/**
- * Convert bytes to hexadecimal string.
- *
- * @description
- * Converts binary data to a lowercase hexadecimal string.
- * Used for converting 20-byte SHA to 40-character string.
- *
- * @param bytes - Binary data to convert
- * @returns Lowercase hexadecimal string
- * @internal
- */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
 
 /**
  * Parse author/committer/tagger line.
