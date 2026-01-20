@@ -109,15 +109,27 @@ export interface FSxStorageAdapterOptions {
 }
 
 /**
- * Internal storage interface for file operations
- * This abstracts over different fsx storage backends (R2, SQLite, etc.)
+ * Storage interface for file operations.
+ *
+ * @description
+ * This interface abstracts over different fsx storage backends (R2, SQLite, etc.).
+ * Implementations must provide basic file system operations for the FSxStorageAdapter.
+ *
+ * In production, this should be backed by persistent storage (e.g., R2, SQLite).
+ * The InMemoryStorage class is exported for testing purposes only.
  */
-interface FSxFileStorage {
+export interface FSxFileStorage {
+  /** Read a file, returns null if not found */
   read(path: string): Promise<Uint8Array | null>
+  /** Write data to a file */
   write(path: string, data: Uint8Array): Promise<void>
+  /** Delete a file */
   delete(path: string): Promise<void>
+  /** Check if a file or directory exists */
   exists(path: string): Promise<boolean>
+  /** List contents of a directory */
   readdir(path: string): Promise<string[]>
+  /** Create a directory */
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
 }
 
@@ -126,10 +138,21 @@ interface FSxFileStorage {
 // ============================================================================
 
 /**
- * Simple in-memory storage for development and testing
- * In production, this would be backed by fsx's R2 or SQLite storage
+ * Simple in-memory storage for development and testing.
+ *
+ * @description
+ * **WARNING**: This storage is NOT persistent. All data is lost when the process restarts.
+ * Use this only for testing. In production, inject a persistent storage implementation
+ * (e.g., R2Storage, SQLiteStorage) via the FSxStorageAdapter constructor.
+ *
+ * @example
+ * ```typescript
+ * // For testing only
+ * const testStorage = new InMemoryStorage()
+ * const adapter = new FSxStorageAdapter('/test/.git', testStorage)
+ * ```
  */
-class InMemoryStorage implements FSxFileStorage {
+export class InMemoryStorage implements FSxFileStorage {
   private files = new Map<string, Uint8Array>()
   private directories = new Set<string>()
 
@@ -231,13 +254,29 @@ export class FSxStorageAdapter implements StorageBackend {
   /**
    * Create a new FSxStorageAdapter
    *
+   * @description
+   * The storage backend must be injected - this ensures that production code
+   * uses persistent storage (R2, SQLite, etc.) rather than the in-memory
+   * implementation which loses data on restart.
+   *
    * @param rootPath - The root path for the Git repository (typically .git directory)
+   * @param storage - The storage backend implementation (must be persistent in production)
+   *
+   * @example
+   * ```typescript
+   * // Production usage with R2
+   * const r2Storage = new R2FileStorage(env.R2_BUCKET)
+   * const adapter = new FSxStorageAdapter('/repos/my-repo/.git', r2Storage)
+   *
+   * // Testing with in-memory storage
+   * const testStorage = new InMemoryStorage()
+   * const adapter = new FSxStorageAdapter('/test/.git', testStorage)
+   * ```
    */
-  constructor(rootPath: string) {
+  constructor(rootPath: string, storage: FSxFileStorage) {
     // Normalize root path - remove trailing slash
     this.rootPath = rootPath.endsWith('/') ? rootPath.slice(0, -1) : rootPath
-    // Use in-memory storage for now - in production this would be injected
-    this.storage = new InMemoryStorage()
+    this.storage = storage
   }
 
   // ==========================================================================
@@ -600,19 +639,27 @@ export class FSxStorageAdapter implements StorageBackend {
  *
  * @description
  * Factory function for creating an FSxStorageAdapter instance.
+ * The storage backend must be provided to ensure proper persistence in production.
  *
  * @param rootPath - The root path for the Git repository (typically .git directory)
- * @returns A StorageBackend instance backed by fsx
+ * @param storage - The storage backend implementation (R2, SQLite, etc.)
+ * @returns A StorageBackend instance backed by the provided storage
  *
  * @example
  * ```typescript
- * const storage = createFSxAdapter('/repos/my-project/.git')
+ * // Production usage with persistent storage
+ * const r2Storage = new R2FileStorage(env.R2_BUCKET)
+ * const adapter = createFSxAdapter('/repos/my-project/.git', r2Storage)
  *
  * // Use the storage backend
- * const sha = await storage.putObject('blob', content)
- * const ref = await storage.getRef('HEAD')
+ * const sha = await adapter.putObject('blob', content)
+ * const ref = await adapter.getRef('HEAD')
+ *
+ * // Testing with in-memory storage
+ * const testStorage = new InMemoryStorage()
+ * const testAdapter = createFSxAdapter('/test/.git', testStorage)
  * ```
  */
-export function createFSxAdapter(rootPath: string): StorageBackend {
-  return new FSxStorageAdapter(rootPath)
+export function createFSxAdapter(rootPath: string, storage: FSxFileStorage): StorageBackend {
+  return new FSxStorageAdapter(rootPath, storage)
 }

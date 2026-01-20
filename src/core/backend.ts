@@ -28,7 +28,7 @@
  */
 
 import type { GitObject, ObjectType } from '../types/objects'
-import { isValidObjectType } from '../types/objects'
+import { isValidObjectType, isValidShortSha, MIN_SHORT_SHA_LENGTH } from '../types/objects'
 
 // Re-export types from objects for convenience
 export type { GitObject, ObjectType, BlobObject, TreeObject, CommitObject, TagObject } from '../types/objects'
@@ -285,6 +285,10 @@ export interface MemoryBackend extends GitBackend {
 // SHA-1 Computation
 // ============================================================================
 
+// Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /**
  * Compute SHA-1 hash of data using Git's object format.
  *
@@ -296,7 +300,7 @@ export interface MemoryBackend extends GitBackend {
  * @returns 40-character lowercase hex SHA-1 hash
  */
 async function computeGitSha(type: ObjectType, data: Uint8Array): Promise<string> {
-  const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+  const header = encoder.encode(`${type} ${data.length}\0`)
   const fullData = new Uint8Array(header.length + data.length)
   fullData.set(header)
   fullData.set(data, header.length)
@@ -356,7 +360,7 @@ async function parsePackfile(pack: Uint8Array): Promise<GitObject[]> {
     return objects // Too short, return empty
   }
 
-  const signature = new TextDecoder().decode(pack.slice(0, 4))
+  const signature = decoder.decode(pack.slice(0, 4))
   if (signature !== 'PACK') {
     return objects // Invalid signature
   }

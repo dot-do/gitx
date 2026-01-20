@@ -36,7 +36,7 @@
  * ```
  */
 
-import { encodePktLine, pktLineStream, FLUSH_PKT } from './pkt-line'
+import { encodePktLine, pktLineStream, FLUSH_PKT, MAX_PKT_LINE_DATA } from './pkt-line'
 
 /**
  * Supported Git Smart HTTP services.
@@ -1303,55 +1303,70 @@ export function formatUploadPackResponse(
   hasCommonObjects?: boolean,
   haves?: string[]
 ): Uint8Array {
-  let output = ''
+  // Collect all output parts
+  const parts: Uint8Array[] = []
 
   // Send ACK or NAK
   if (hasCommonObjects && haves && haves.length > 0) {
     // ACK the first have
-    output += encodePktLine(`ACK ${haves[0]}\n`) as string
+    parts.push(encoder.encode(encodePktLine(`ACK ${haves[0]}\n`) as string))
   } else {
-    output += encodePktLine('NAK\n') as string
+    parts.push(encoder.encode(encodePktLine('NAK\n') as string))
   }
 
   if (useSideBand) {
     // Side-band format: data on channel 1, progress on channel 2, error on channel 3
     // Each sideband packet: length (4 hex) + channel byte + data
-    const channel1 = new Uint8Array(1 + packData.length)
-    channel1[0] = 1 // Channel 1 for pack data
-    channel1.set(packData, 1)
+    // For large pack data, we need to split into multiple pkt-line packets
+    // Maximum data per sideband packet: MAX_PKT_LINE_DATA - 1 (for channel byte)
+    const maxChunkSize = MAX_PKT_LINE_DATA - 1
 
-    // Encode as pkt-line
-    const pktLine = encodePktLine(channel1)
-    if (typeof pktLine === 'string') {
-      output += pktLine
-    } else {
-      // Binary data - need to handle differently
-      const headerBytes = encoder.encode(output)
-      const result = new Uint8Array(headerBytes.length + pktLine.length + 4)
-      result.set(headerBytes, 0)
-      result.set(pktLine, headerBytes.length)
-      result.set(encoder.encode(FLUSH_PKT), headerBytes.length + pktLine.length)
-      return result
+    let offset = 0
+    while (offset < packData.length) {
+      const chunkSize = Math.min(maxChunkSize, packData.length - offset)
+      const chunk = new Uint8Array(1 + chunkSize)
+      chunk[0] = 1 // Channel 1 for pack data
+      chunk.set(packData.subarray(offset, offset + chunkSize), 1)
+
+      const pktLine = encodePktLine(chunk)
+      if (typeof pktLine === 'string') {
+        parts.push(encoder.encode(pktLine))
+      } else {
+        parts.push(pktLine)
+      }
+      offset += chunkSize
     }
   } else {
     // No side-band - include pack data directly
-    // Pack data is binary, so encode it as pkt-line
-    const pktLine = encodePktLine(packData)
-    if (typeof pktLine === 'string') {
-      output += pktLine
-    } else {
-      const headerBytes = encoder.encode(output)
-      const result = new Uint8Array(headerBytes.length + pktLine.length + 4)
-      result.set(headerBytes, 0)
-      result.set(pktLine, headerBytes.length)
-      result.set(encoder.encode(FLUSH_PKT), headerBytes.length + pktLine.length)
-      return result
+    // For large pack data, we need to split into multiple pkt-line packets
+    let offset = 0
+    while (offset < packData.length) {
+      const chunkSize = Math.min(MAX_PKT_LINE_DATA, packData.length - offset)
+      const chunk = packData.subarray(offset, offset + chunkSize)
+
+      const pktLine = encodePktLine(chunk)
+      if (typeof pktLine === 'string') {
+        parts.push(encoder.encode(pktLine))
+      } else {
+        parts.push(pktLine)
+      }
+      offset += chunkSize
     }
   }
 
-  output += FLUSH_PKT
+  // Add flush packet
+  parts.push(encoder.encode(FLUSH_PKT))
 
-  return encoder.encode(output)
+  // Combine all parts into single Uint8Array
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0)
+  const result = new Uint8Array(totalLength)
+  let resultOffset = 0
+  for (const part of parts) {
+    result.set(part, resultOffset)
+    resultOffset += part.length
+  }
+
+  return result
 }
 
 /**

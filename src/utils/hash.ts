@@ -35,6 +35,9 @@ import { bytesToHex as localBytesToHex } from './sha1'
 // Import sha1 from fsx.do for the hashObject function
 import { sha1 } from 'fsx.do'
 
+// Module-level encoder to avoid repeated instantiation (performance optimization)
+const encoder = new TextEncoder()
+
 /**
  * Hash a Git object with its type header.
  *
@@ -63,7 +66,7 @@ import { sha1 } from 'fsx.do'
  */
 export async function hashObject(type: string, data: Uint8Array): Promise<string> {
   const header = `${type} ${data.length}\0`
-  const headerBytes = new TextEncoder().encode(header)
+  const headerBytes = encoder.encode(header)
   const combined = new Uint8Array(headerBytes.length + data.length)
   combined.set(headerBytes, 0)
   combined.set(data, headerBytes.length)

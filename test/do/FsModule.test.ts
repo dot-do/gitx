@@ -1313,8 +1313,8 @@ describe('FsModule', () => {
       try {
         await fsModule.readFile('/nonexistent.txt')
         expect.fail('Should have thrown')
-      } catch (error: any) {
-        expect(error.code).toBe('ENOENT')
+      } catch (error: unknown) {
+        expect((error as NodeJS.ErrnoException).code).toBe('ENOENT')
       }
     })
 
@@ -1324,8 +1324,8 @@ describe('FsModule', () => {
       try {
         await fsModule.readFile('/testdir')
         expect.fail('Should have thrown')
-      } catch (error: any) {
-        expect(error.code).toBe('EISDIR')
+      } catch (error: unknown) {
+        expect((error as NodeJS.ErrnoException).code).toBe('EISDIR')
       }
     })
 
@@ -1335,8 +1335,8 @@ describe('FsModule', () => {
       try {
         await fsModule.mkdir('/existing')
         expect.fail('Should have thrown')
-      } catch (error: any) {
-        expect(error.code).toBe('EEXIST')
+      } catch (error: unknown) {
+        expect((error as NodeJS.ErrnoException).code).toBe('EEXIST')
       }
     })
 
@@ -1346,8 +1346,8 @@ describe('FsModule', () => {
       try {
         await fsModule.rmdir('/file.txt')
         expect.fail('Should have thrown')
-      } catch (error: any) {
-        expect(error.code).toBe('ENOTDIR')
+      } catch (error: unknown) {
+        expect((error as NodeJS.ErrnoException).code).toBe('ENOTDIR')
       }
     })
 
@@ -1358,8 +1358,8 @@ describe('FsModule', () => {
       try {
         await fsModule.rmdir('/nonempty')
         expect.fail('Should have thrown')
-      } catch (error: any) {
-        expect(error.code).toBe('ENOTEMPTY')
+      } catch (error: unknown) {
+        expect((error as NodeJS.ErrnoException).code).toBe('ENOTEMPTY')
       }
     })
   })

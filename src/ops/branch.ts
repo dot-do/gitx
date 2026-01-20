@@ -449,7 +449,7 @@ export interface CheckoutResult {
   detached?: boolean
 
   /** Upstream tracking ref if set */
-  tracking?: string
+  tracking?: string | undefined
 }
 
 /**
@@ -765,7 +765,7 @@ export async function deleteBranch(
 
     return {
       deleted: deletedBranches.length > 0,
-      name: names[0],
+      name: names[0] ?? '',
       sha: deletedBranches[0]?.sha || '',
       deletedBranches
     }
@@ -1162,20 +1162,21 @@ export async function checkoutBranch(
       const remoteBranch = branchParts.join('/')
       getTrackingStore(refStore).set(name, {
         upstream: track,
-        remote,
+        remote: remote ?? '',
         remoteBranch,
         ahead: 0,
         behind: 0
       })
     }
 
-    return {
+    const result: CheckoutResult = {
       success: true,
       branch: name,
       sha: targetSha,
-      created: !existing,
-      tracking: track
+      created: !existing
     }
+    if (track !== undefined) result.tracking = track
+    return result
   }
 
   // Checkout existing branch
@@ -1194,19 +1195,20 @@ export async function checkoutBranch(
     const remoteBranch = branchParts.join('/')
     getTrackingStore(refStore).set(name, {
       upstream: track,
-      remote,
+      remote: remote ?? '',
       remoteBranch,
       ahead: 0,
       behind: 0
     })
   }
 
-  return {
+  const result: CheckoutResult = {
     success: true,
     branch: name,
-    sha: branchSha,
-    tracking: track
+    sha: branchSha
   }
+  if (track !== undefined) result.tracking = track
+  return result
 }
 
 /**
@@ -1347,7 +1349,7 @@ export async function setBranchTracking(
 
   const trackingInfo: TrackingInfo = {
     upstream,
-    remote,
+    remote: remote ?? '',
     remoteBranch,
     ahead: 0,
     behind: 0
@@ -1359,7 +1361,7 @@ export async function setBranchTracking(
     success: true,
     branch,
     upstream,
-    remote,
+    remote: remote ?? '',
     remoteBranch
   }
 }
@@ -1445,8 +1447,9 @@ export async function getDefaultBranch(refStore: RefStore): Promise<string | nul
 
   // Return first available branch
   const branches = await refStore.listRefs('refs/heads/')
-  if (branches.length > 0) {
-    return normalizeBranchName(branches[0].ref)
+  const firstBranch = branches[0]
+  if (firstBranch) {
+    return normalizeBranchName(firstBranch.ref)
   }
 
   return null

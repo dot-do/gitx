@@ -30,7 +30,7 @@
  */
 
 import type { CommitObject, TreeObject } from './objects'
-import { isValidSha, isValidObjectType } from './objects'
+import { isValidSha, isValidObjectType, assertValidSha as assertValidShaFromObjects } from './objects'
 
 // ============================================================================
 // Validation Helpers
@@ -176,6 +176,7 @@ export function validateStoreParams(type: string, data: Uint8Array): ValidationR
  * @description
  * Throws a descriptive error if the SHA is invalid.
  * Use this for input validation in API boundaries.
+ * Supports both SHA-1 (40 chars) and SHA-256 (64 chars) formats.
  *
  * @param sha - The SHA to validate
  * @param context - Optional context for the error message (e.g., 'tree', 'parent')
@@ -187,10 +188,7 @@ export function validateStoreParams(type: string, data: Uint8Array): ValidationR
  * ```
  */
 export function assertValidSha(sha: string, context?: string): void {
-  if (!isValidSha(sha)) {
-    const prefix = context ? `Invalid ${context} SHA` : 'Invalid SHA'
-    throw new Error(`${prefix}: ${sha}. Must be 40 lowercase hexadecimal characters`)
-  }
+  assertValidShaFromObjects(sha, context)
 }
 
 /**

@@ -125,7 +125,7 @@ export interface FullPackOptions {
   /** Zlib compression level 0-9 (default: 6) */
   compressionLevel?: number
   /** Object ordering strategy to use */
-  orderingStrategy?: PackOrderingStrategy
+  orderingStrategy?: PackOrderingStrategy | undefined
 }
 
 /**
@@ -181,7 +181,7 @@ export interface PackGenerationProgress {
   /** Bytes written to output so far */
   bytesWritten: number
   /** SHA of currently processing object (if applicable) */
-  currentObject?: string
+  currentObject?: string | undefined
 }
 
 /**
@@ -294,7 +294,7 @@ export interface LargeRepoConfig {
  */
 export interface IncrementalUpdateOptions {
   generateThinPack?: boolean
-  externalBases?: Set<string>
+  externalBases?: Set<string> | undefined
   reuseDeltas?: boolean
   reoptimizeDeltas?: boolean
 }
@@ -461,7 +461,7 @@ export function applyOrderingStrategy(
   switch (strategy) {
     case PackOrderingStrategy.TYPE_FIRST: {
       orderedObjects.sort((a, b) => {
-        const typeCompare = TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
+        const typeCompare = (TYPE_ORDER[a.type] ?? 0) - (TYPE_ORDER[b.type] ?? 0)
         if (typeCompare !== 0) return typeCompare
         if (config?.secondaryStrategy === PackOrderingStrategy.SIZE_DESCENDING) {
           return b.data.length - a.data.length
@@ -569,17 +569,19 @@ export function computeObjectDependencies(objects: PackableObject[]): ObjectDepe
       // Parse commit to find tree and parent references
       const content = decoder.decode(obj.data)
       const treeMatch = content.match(/^tree ([0-9a-f]{40})/m)
-      if (treeMatch && objectMap.has(treeMatch[1])) {
-        dependencies.get(obj.sha)!.push(treeMatch[1])
-        dependents.get(treeMatch[1])!.push(obj.sha)
-        edges.push({ from: obj.sha, to: treeMatch[1] })
+      const treeSha = treeMatch?.[1]
+      if (treeSha && objectMap.has(treeSha)) {
+        dependencies.get(obj.sha)!.push(treeSha)
+        dependents.get(treeSha)!.push(obj.sha)
+        edges.push({ from: obj.sha, to: treeSha })
       }
       const parentMatches = content.matchAll(/^parent ([0-9a-f]{40})/gm)
       for (const match of parentMatches) {
-        if (objectMap.has(match[1])) {
-          dependencies.get(obj.sha)!.push(match[1])
-          dependents.get(match[1])!.push(obj.sha)
-          edges.push({ from: obj.sha, to: match[1] })
+        const parentSha = match[1]
+        if (parentSha && objectMap.has(parentSha)) {
+          dependencies.get(obj.sha)!.push(parentSha)
+          dependents.get(parentSha)!.push(obj.sha)
+          edges.push({ from: obj.sha, to: parentSha })
         }
       }
     } else if (obj.type === PackObjectType.OBJ_TREE) {
@@ -620,7 +622,7 @@ export function computeObjectDependencies(objects: PackableObject[]): ObjectDepe
           if (parts.length >= 20 && parts.every(n => !isNaN(n) && n >= 0 && n <= 255)) {
             let sha = ''
             for (let i = 0; i < 20; i++) {
-              sha += parts[i].toString(16).padStart(2, '0')
+              sha += (parts[i] ?? 0).toString(16).padStart(2, '0')
             }
             if (objectMap.has(sha)) {
               dependencies.get(obj.sha)!.push(sha)
@@ -683,7 +685,7 @@ export function computeObjectDependencies(objects: PackableObject[]): ObjectDepe
       // Sort objects by type to ensure stable ordering:
       // blobs first, then trees, then commits (dependencies before dependents)
       const sortedObjects = [...objects].sort((a, b) => {
-        return DEPENDENCY_TYPE_ORDER[a.type] - DEPENDENCY_TYPE_ORDER[b.type]
+        return (DEPENDENCY_TYPE_ORDER[a.type] ?? 0) - (DEPENDENCY_TYPE_ORDER[b.type] ?? 0)
       })
 
       for (const obj of sortedObjects) {
@@ -729,12 +731,14 @@ export function selectOptimalBases(
     // For each object, find the best base
     for (let i = 0; i < typeObjects.length; i++) {
       const target = typeObjects[i]
+      if (!target) continue
       let bestBase: PackableObject | null = null
       let bestSavings = 0
 
       for (let j = 0; j < typeObjects.length; j++) {
         if (i === j) continue
         const candidate = typeObjects[j]
+        if (!candidate) continue
 
         // Prefer same-path objects if option is set
         let similarity = calculateSimilarity(candidate.data, target.data)
@@ -799,7 +803,7 @@ export function validatePackIntegrity(
   }
 
   // Validate header signature
-  const signature = String.fromCharCode(packData[0], packData[1], packData[2], packData[3])
+  const signature = String.fromCharCode(packData[0] ?? 0, packData[1] ?? 0, packData[2] ?? 0, packData[3] ?? 0)
   if (signature !== 'PACK') {
     errors.push(`Invalid pack signature: expected "PACK", got "${signature}"`)
   }
@@ -810,13 +814,13 @@ export function validatePackIntegrity(
   }
 
   // Validate version
-  const version = (packData[4] << 24) | (packData[5] << 16) | (packData[6] << 8) | packData[7]
+  const version = ((packData[4] ?? 0) << 24) | ((packData[5] ?? 0) << 16) | ((packData[6] ?? 0) << 8) | (packData[7] ?? 0)
   if (version !== 2) {
     errors.push(`Unsupported pack version: ${version}`)
   }
 
   // Get object count from header
-  const objectCount = (packData[8] << 24) | (packData[9] << 16) | (packData[10] << 8) | packData[11]
+  const objectCount = ((packData[8] ?? 0) << 24) | ((packData[9] ?? 0) << 16) | ((packData[10] ?? 0) << 8) | (packData[11] ?? 0)
 
   // Validate checksum (last 20 bytes)
   const storedChecksum = packData.slice(-20)
@@ -825,7 +829,7 @@ export function validatePackIntegrity(
 
   let checksumValid = true
   for (let i = 0; i < 20; i++) {
-    if (storedChecksum[i] !== computedChecksum[i]) {
+    if ((storedChecksum[i] ?? 0) !== (computedChecksum[i] ?? 0)) {
       checksumValid = false
       break
     }
@@ -842,23 +846,23 @@ export function validatePackIntegrity(
 
   while (offset < dataLength && actualObjectCount < objectCount) {
     // Read type and size header
-    let firstByte = packData[offset]
+    let firstByte = packData[offset] ?? 0
     const type = (firstByte >> 4) & 0x07
     offset++
 
     // Read continuation bytes for size if MSB is set
     while (firstByte & 0x80) {
       if (offset >= dataLength) break
-      firstByte = packData[offset++]
+      firstByte = packData[offset++] ?? 0
     }
 
     // Handle delta types
     if (type === PackObjectType.OBJ_OFS_DELTA) {
       // Read variable-length offset
-      let c = packData[offset++]
+      let c = packData[offset++] ?? 0
       while (c & 0x80) {
         if (offset >= dataLength) break
-        c = packData[offset++]
+        c = packData[offset++] ?? 0
       }
     } else if (type === PackObjectType.OBJ_REF_DELTA) {
       // Skip 20-byte base SHA
@@ -1054,6 +1058,7 @@ export class FullPackGenerator {
 
       for (let i = 0; i < ordered.objects.length; i++) {
         const obj = ordered.objects[i]
+        if (!obj) continue
 
         this.reportProgress('compressing', i, ordered.objects.length, currentOffset, obj.sha)
 
@@ -1108,6 +1113,7 @@ export class FullPackGenerator {
     // Write objects
     for (let i = 0; i < ordered.objects.length; i++) {
       const obj = ordered.objects[i]
+      if (!obj) continue
       const objStart = currentOffset
       offsetMap.set(obj.sha, objStart)
 
@@ -1238,6 +1244,7 @@ export class DeltaChainOptimizer {
       for (let j = i + 1; j < this.objects.length; j++) {
         const a = this.objects[i]
         const b = this.objects[j]
+        if (!a || !b) continue
         if (a.type === b.type) {
           const similarity = calculateSimilarity(a.data, b.data)
           if (similarity > 0.3) {
@@ -1264,11 +1271,13 @@ export class DeltaChainOptimizer {
     for (const [, typeObjects] of byType) {
       for (let i = 0; i < typeObjects.length; i++) {
         const target = typeObjects[i]
+        if (!target) continue
         let bestSavings = 0
 
         for (let j = 0; j < typeObjects.length; j++) {
           if (i === j) continue
           const base = typeObjects[j]
+          if (!base) continue
           const delta = createDelta(base.data, target.data)
           const currentSavings = target.data.length - delta.length
           if (currentSavings > bestSavings) {
@@ -1311,6 +1320,7 @@ export class DeltaChainOptimizer {
           if (i === j) continue
           const target = typeObjects[i]
           const base = typeObjects[j]
+          if (!target || !base) continue
 
           // Skip if base is larger than target (prefer smaller bases)
           if (base.data.length > target.data.length) continue
@@ -1484,8 +1494,10 @@ export class LargeRepositoryHandler {
 
     // Track memory usage estimate
     for (let i = 0; i < this.objects.length; i++) {
-      generator.addObject(this.objects[i])
-      currentMemory += this.objects[i].data.length
+      const obj = this.objects[i]
+      if (!obj) continue
+      generator.addObject(obj)
+      currentMemory += obj.data.length
 
       // Check memory limit
       if (this.config.enableStreaming && currentMemory > (this.config.maxMemoryUsage ?? 500 * 1024 * 1024)) {
@@ -1522,7 +1534,7 @@ export class LargeRepositoryHandler {
  */
 export class StreamingPackWriter {
   private chunkCallback?: (chunk: Uint8Array) => void
-  private outputStream?: { write: (chunk: Uint8Array) => Promise<void> }
+  private outputStream: { write: (chunk: Uint8Array) => Promise<void> } | undefined
   private chunks: Uint8Array[] = []
   private objectCount = 0
   private expectedCount = 0

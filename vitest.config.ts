@@ -20,7 +20,13 @@ export default defineWorkersConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/index.ts']
+      exclude: ['src/**/*.d.ts', 'src/index.ts'],
+      thresholds: {
+        statements: 65,
+        branches: 50,
+        functions: 50,
+        lines: 65
+      }
     },
     testTimeout: 30000
   }

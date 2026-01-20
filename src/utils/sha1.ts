@@ -324,6 +324,13 @@ const SHA1_H4 = 0xc3d2e1f0
 const SHA1_K = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6]
 
 /**
+ * Module-level TextEncoder instance for performance optimization.
+ * Avoids creating new TextEncoder on every hash operation.
+ * @internal
+ */
+const encoder = new TextEncoder()
+
+/**
  * Rotate left (circular left shift) operation.
  * @internal
  */
@@ -660,7 +667,7 @@ export class StreamingSHA1 {
  */
 export function hashObjectStreaming(type: string, data: Uint8Array): Uint8Array {
   const hasher = new StreamingSHA1()
-  const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+  const header = encoder.encode(`${type} ${data.length}\0`)
   hasher.update(header)
   hasher.update(data)
   return hasher.digest()
@@ -686,7 +693,7 @@ export function hashObjectStreaming(type: string, data: Uint8Array): Uint8Array 
  */
 export function hashObjectStreamingHex(type: string, data: Uint8Array): string {
   const hasher = new StreamingSHA1()
-  const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+  const header = encoder.encode(`${type} ${data.length}\0`)
   hasher.update(header)
   hasher.update(data)
   return hasher.digestHex()

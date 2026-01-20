@@ -215,6 +215,46 @@ export interface MigrationCheckpoint {
 }
 
 /**
+ * Rollback information for undoing a migration.
+ */
+export interface MigrationRollbackInfo {
+  /** Migration ID being rolled back */
+  migrationId: string
+
+  /** Bundles created during migration that need to be deleted */
+  bundlesToDelete: string[]
+
+  /** Objects that need their index restored to 'hot' tier */
+  objectsToRestore: Array<{
+    sha: string
+    originalKey: string
+  }>
+
+  /** Timestamp when rollback info was created */
+  timestamp: number
+}
+
+/**
+ * Result of a rollback operation.
+ */
+export interface RollbackResult {
+  /** Whether the rollback completed successfully */
+  success: boolean
+
+  /** Number of bundles deleted */
+  bundlesDeleted: number
+
+  /** Number of index entries restored */
+  indexEntriesRestored: number
+
+  /** Duration of the rollback in milliseconds */
+  durationMs: number
+
+  /** Errors encountered during rollback */
+  errors: Array<{ message: string; cause?: Error }>
+}
+
+/**
  * Status of a migration job.
  */
 export type MigrationStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed'
@@ -328,6 +368,9 @@ const CHECKPOINT_PREFIX = 'migration:checkpoint:'
 
 /** Key prefix for migration locks */
 const LOCK_PREFIX = 'migration:lock:'
+
+/** Key prefix for rollback information */
+const ROLLBACK_PREFIX = 'migration:rollback:'
 
 // =============================================================================
 // Utility Functions

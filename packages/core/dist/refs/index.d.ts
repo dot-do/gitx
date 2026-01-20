@@ -21,7 +21,7 @@ export declare class RefValidationError extends Error {
 }
 /** Base error for resolution failures */
 export declare class ResolutionError extends Error {
-    partialChain?: string[];
+    partialChain?: string[] | undefined;
     constructor(message: string, partialChain?: string[]);
 }
 /** Error when ref not found */

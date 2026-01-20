@@ -636,20 +636,29 @@ export class ObjectStore {
       this._streamingOperations++
     }
 
-    // Create async generator for chunks
+    // Create async generator for chunks with proper cleanup on early termination
     async function* generateChunks(): AsyncIterable<BlobChunk> {
       let offset = 0
-      while (offset < totalSize) {
-        const end = Math.min(offset + chunkSize, totalSize)
-        const chunkData = data.slice(offset, end)
-        const isLast = end >= totalSize
-        yield {
-          data: chunkData,
-          offset,
-          totalSize,
-          isLast
+      // Track a reference to the data slice for cleanup
+      let currentChunk: Uint8Array | null = null
+      try {
+        while (offset < totalSize) {
+          const end = Math.min(offset + chunkSize, totalSize)
+          currentChunk = data.slice(offset, end)
+          const isLast = end >= totalSize
+          yield {
+            data: currentChunk,
+            offset,
+            totalSize,
+            isLast
+          }
+          currentChunk = null // Clear reference after yield
+          offset = end
         }
-        offset = end
+      } finally {
+        // Clean up any pending chunk reference on early termination
+        // This ensures the slice is released for garbage collection
+        currentChunk = null
       }
     }
 
@@ -1208,6 +1217,18 @@ export class ObjectStore {
       totalBytes += obj.data.length
     }
 
+    // Save cache state before transaction for rollback
+    // We need to track which entries existed before so we can restore on failure
+    const cacheSnapshot = new Map<string, StoredObject | null>()
+    for (const { sha } of objectsWithSha) {
+      // Store the previous value (or null if it didn't exist)
+      const existing = this.cache.peek(sha) as StoredObject | undefined
+      cacheSnapshot.set(sha, existing ?? null)
+    }
+
+    // Track which keys were added to cache during transaction (for rollback)
+    const addedToCacheDuringTransaction: string[] = []
+
     // Begin transaction for atomic batch write
     this.storage.sql.exec('BEGIN TRANSACTION')
 
@@ -1258,6 +1279,7 @@ export class ObjectStore {
           createdAt: now
         }
         this.cache.set(sha, storedObject)
+        addedToCacheDuringTransaction.push(sha)
       }
 
       // Commit transaction
@@ -1276,9 +1298,22 @@ export class ObjectStore {
 
       return shas
     } catch (error) {
-      // Rollback on error
+      // Rollback SQL transaction
       this.storage.sql.exec('ROLLBACK')
-      this.log('error', `Batch write failed, rolled back`, error)
+
+      // Restore cache state to pre-transaction snapshot
+      for (const sha of addedToCacheDuringTransaction) {
+        const previousValue = cacheSnapshot.get(sha)
+        if (previousValue === null) {
+          // Entry didn't exist before - remove it
+          this.cache.delete(sha)
+        } else if (previousValue !== undefined) {
+          // Entry had a different value before - restore it
+          this.cache.set(sha, previousValue)
+        }
+      }
+
+      this.log('error', `Batch write failed, rolled back (including cache)`, error)
       throw error
     }
   }

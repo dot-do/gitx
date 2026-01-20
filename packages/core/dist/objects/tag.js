@@ -49,7 +49,10 @@ function validateIdentity(identity, field) {
     if (!identity.timezone || !/^[+-]\d{4}$/.test(identity.timezone)) {
         return { isValid: false, error: `Invalid ${field} timezone format: expected +/-HHMM` };
     }
-    return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined };
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
 }
 /**
  * Validates tag data before creation.
@@ -110,7 +113,10 @@ export function validateTagData(data) {
     if (typeof data.message !== 'string') {
         return { isValid: false, error: 'Tag message must be a string' };
     }
-    return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined };
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
 }
 // =============================================================================
 // GitTag Class
@@ -166,7 +172,9 @@ export class GitTag {
         this.object = data.object;
         this.objectType = data.objectType;
         this.name = data.name;
-        this.tagger = data.tagger ? Object.freeze({ ...data.tagger }) : undefined;
+        if (data.tagger !== undefined) {
+            this.tagger = Object.freeze({ ...data.tagger });
+        }
         this.message = data.message;
         // Store GPG signature and extra headers if provided
         if ('gpgSignature' in data && data.gpgSignature) {
@@ -340,6 +348,8 @@ function parseMultilineHeader(lines, startIdx, firstLineValue, headerName = '') 
     if (headerName === 'gpgsig' || firstLineValue.includes('-----BEGIN PGP SIGNATURE-----')) {
         while (i < lines.length) {
             const line = lines[i];
+            if (line === undefined)
+                break;
             // Remove leading space from continuation lines
             const lineContent = line.startsWith(' ') ? line.slice(1) : line;
             // Check if we've hit the end of headers (empty line at start of message)
@@ -365,9 +375,12 @@ function parseMultilineHeader(lines, startIdx, firstLineValue, headerName = '') 
     }
     else {
         // Continue reading lines that start with space (continuation)
-        while (i < lines.length && lines[i].startsWith(' ')) {
+        while (i < lines.length) {
+            const currentLine = lines[i];
+            if (currentLine === undefined || !currentLine.startsWith(' '))
+                break;
             // Remove the leading space from continuation lines
-            valueLines.push(lines[i].slice(1));
+            valueLines.push(currentLine.slice(1));
             i++;
         }
         i--; // Back up because main loop will increment
@@ -396,6 +409,8 @@ function parseTagContent(content) {
     let i = 0;
     while (i < lines.length) {
         const line = lines[i];
+        if (line === undefined)
+            break;
         // Empty line marks start of message
         if (line === '') {
             messageStartIdx = i + 1;

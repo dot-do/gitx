@@ -889,7 +889,14 @@ export function parseCommandLine(line: string): RefUpdateCommand {
     throw new Error(`Invalid command format: ${line}`)
   }
 
-  const [oldSha, newSha, refName] = parts
+  const oldSha = parts[0]
+  const newSha = parts[1]
+  const refName = parts[2]
+
+  // Validate parts exist
+  if (!oldSha || !newSha || !refName) {
+    throw new Error(`Invalid command format: ${line}`)
+  }
 
   // Validate SHAs
   if (!SHA1_REGEX.test(oldSha)) {
@@ -1116,14 +1123,14 @@ export async function validatePackfile(
 
   // Check version (bytes 4-7, big-endian)
   const version =
-    (packfile[4] << 24) | (packfile[5] << 16) | (packfile[6] << 8) | packfile[7]
+    ((packfile[4] ?? 0) << 24) | ((packfile[5] ?? 0) << 16) | ((packfile[6] ?? 0) << 8) | (packfile[7] ?? 0)
   if (version !== 2 && version !== 3) {
     return { valid: false, error: `Unsupported packfile version: ${version}` }
   }
 
   // Parse object count (bytes 8-11, big-endian)
   const objectCount =
-    (packfile[8] << 24) | (packfile[9] << 16) | (packfile[10] << 8) | packfile[11]
+    ((packfile[8] ?? 0) << 24) | ((packfile[9] ?? 0) << 16) | ((packfile[10] ?? 0) << 8) | (packfile[11] ?? 0)
 
   // Verify checksum if requested
   if (options?.verifyChecksum && packfile.length >= 32) {
@@ -1184,7 +1191,7 @@ export async function unpackObjects(
   // Validate packfile first (don't verify checksum - mock packfiles have fake checksums)
   const validation = await validatePackfile(packfile)
   if (!validation.valid) {
-    return { success: false, objectsUnpacked: 0, unpackedShas: [], error: validation.error }
+    return { success: false, objectsUnpacked: 0, unpackedShas: [], error: validation.error ?? 'Unknown validation error' }
   }
 
   if (validation.objectCount === 0) {
@@ -1778,12 +1785,15 @@ export async function processCommands(
   const results: RefUpdateResult[] = []
 
   for (const cmd of commands) {
-    const result = await validateCommand({
+    const ctx: CommandValidationContext = {
       command: cmd,
       store,
       capabilities: session.capabilities,
-      forcePush: options?.forcePush,
-    })
+    }
+    if (options?.forcePush !== undefined) {
+      ctx.forcePush = options.forcePush
+    }
+    const result = await validateCommand(ctx)
     results.push(result)
   }
 
@@ -2055,11 +2065,14 @@ export async function executeUpdateHook(
 
   for (const cmd of commands) {
     const result = await hookFn(cmd.refName, cmd.oldSha, cmd.newSha, env)
-    results.push({
+    const refUpdateResult: RefUpdateResult = {
       refName: cmd.refName,
       success: result.success,
-      error: result.success ? undefined : result.message,
-    })
+    }
+    if (!result.success && result.message) {
+      refUpdateResult.error = result.message
+    }
+    results.push(refUpdateResult)
   }
 
   return { results }

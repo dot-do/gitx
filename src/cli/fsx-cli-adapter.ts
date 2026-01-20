@@ -28,7 +28,7 @@
 
 import * as path from 'path'
 import * as fs from 'fs/promises'
-import { createFSxAdapter } from '../storage/fsx-adapter'
+import { createFSxAdapter, type FSxFileStorage } from '../storage/fsx-adapter'
 import type { StorageBackend } from '../storage/backend'
 import type { ObjectType } from '../types/objects'
 
@@ -313,6 +313,72 @@ function parseCommitContent(data: Uint8Array): ParsedCommit {
 }
 
 // ============================================================================
+// Node.js Filesystem Storage Implementation
+// ============================================================================
+
+/**
+ * Node.js filesystem-based storage implementing FSxFileStorage.
+ *
+ * @description
+ * This implementation uses Node.js `fs/promises` for persistent local file storage.
+ * It is used by the CLI adapter for local Git repository operations.
+ */
+class NodeFSStorage implements FSxFileStorage {
+  async read(filePath: string): Promise<Uint8Array | null> {
+    try {
+      const data = await fs.readFile(filePath)
+      return new Uint8Array(data)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null
+      }
+      throw error
+    }
+  }
+
+  async write(filePath: string, data: Uint8Array): Promise<void> {
+    // Ensure parent directory exists
+    const dir = path.dirname(filePath)
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(filePath, data)
+  }
+
+  async delete(filePath: string): Promise<void> {
+    try {
+      await fs.unlink(filePath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+    }
+  }
+
+  async exists(filePath: string): Promise<boolean> {
+    try {
+      await fs.access(filePath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async readdir(dirPath: string): Promise<string[]> {
+    try {
+      return await fs.readdir(dirPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return []
+      }
+      throw error
+    }
+  }
+
+  async mkdir(dirPath: string, options?: { recursive?: boolean }): Promise<void> {
+    await fs.mkdir(dirPath, options)
+  }
+}
+
+// ============================================================================
 // FSxCLIAdapter Implementation
 // ============================================================================
 
@@ -354,7 +420,8 @@ export class FSxCLIAdapter {
   constructor(repoPath: string, options?: { gitDir?: string }) {
     this.repoPath = repoPath
     this.gitDir = options?.gitDir ?? path.join(repoPath, '.git')
-    this.backend = createFSxAdapter(this.gitDir)
+    // Use Node.js filesystem storage for persistent local storage
+    this.backend = createFSxAdapter(this.gitDir, new NodeFSStorage())
   }
 
   // ==========================================================================

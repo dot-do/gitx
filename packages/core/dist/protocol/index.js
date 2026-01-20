@@ -87,6 +87,35 @@ export var SideBandChannel;
     SideBandChannel[SideBandChannel["Progress"] = 2] = "Progress";
     SideBandChannel[SideBandChannel["Error"] = 3] = "Error";
 })(SideBandChannel || (SideBandChannel = {}));
+/** Common capability names as constants */
+export const CAPABILITY_NAMES = {
+    MULTI_ACK: 'multi_ack',
+    MULTI_ACK_DETAILED: 'multi_ack_detailed',
+    THIN_PACK: 'thin-pack',
+    SIDE_BAND: 'side-band',
+    SIDE_BAND_64K: 'side-band-64k',
+    OFS_DELTA: 'ofs-delta',
+    SHALLOW: 'shallow',
+    DEEPEN_SINCE: 'deepen-since',
+    DEEPEN_NOT: 'deepen-not',
+    DEEPEN_RELATIVE: 'deepen-relative',
+    NO_PROGRESS: 'no-progress',
+    INCLUDE_TAG: 'include-tag',
+    REPORT_STATUS: 'report-status',
+    REPORT_STATUS_V2: 'report-status-v2',
+    DELETE_REFS: 'delete-refs',
+    QUIET: 'quiet',
+    ATOMIC: 'atomic',
+    PUSH_OPTIONS: 'push-options',
+    ALLOW_TIP_SHA1_IN_WANT: 'allow-tip-sha1-in-want',
+    ALLOW_REACHABLE_SHA1_IN_WANT: 'allow-reachable-sha1-in-want',
+    FILTER: 'filter',
+    AGENT: 'agent',
+    OBJECT_FORMAT: 'object-format',
+    SYMREF: 'symref',
+};
+// Note: ZERO_SHA is exported from the refs module, re-export here for wire protocol convenience
+export { ZERO_SHA } from '../refs';
 // =============================================================================
 // Pkt-line Encoding/Decoding
 // =============================================================================

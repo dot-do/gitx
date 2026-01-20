@@ -17,56 +17,20 @@
  * @module storage/chunked-blob
  */
 
-// ============================================================================
-// Constants
-// ============================================================================
+import {
+  CHUNK_SIZE,
+  CHUNKED_BLOB_PREFIX,
+  calculateChunkCount,
+  shouldChunk,
+  getChunkRange,
+  getMetadataKey,
+  type ChunkedWriteResult,
+  type ChunkMetadata
+} from './chunk-utils'
 
-/**
- * Maximum chunk size for optimal DO SQLite pricing.
- * DO SQLite charges per row read/write regardless of size up to 2MB.
- */
-export const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB
-
-/**
- * Storage key prefix for chunked blob metadata.
- */
-export const CHUNKED_BLOB_PREFIX = '__chunked_blob__'
-
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
-/**
- * Result of a chunked write operation.
- */
-export interface ChunkedWriteResult {
-  /** 40-character SHA-1 hash */
-  sha: string
-  /** Total size in bytes */
-  size: number
-  /** Number of chunks created */
-  chunkCount: number
-  /** Array of chunk keys */
-  chunkKeys: string[]
-  /** Whether the blob was chunked (size > CHUNK_SIZE) */
-  isChunked: boolean
-}
-
-/**
- * Metadata for a chunked blob.
- */
-export interface ChunkMetadata {
-  /** 40-character SHA-1 hash */
-  sha: string
-  /** Total size in bytes */
-  totalSize: number
-  /** Number of chunks */
-  chunkCount: number
-  /** Whether the blob is chunked (size > CHUNK_SIZE) */
-  isChunked: boolean
-  /** Chunk keys for the blob */
-  chunkKeys: string[]
-}
+// Re-export constants and types for backward compatibility
+export { CHUNK_SIZE, CHUNKED_BLOB_PREFIX }
+export type { ChunkedWriteResult, ChunkMetadata }
 
 /**
  * Interface for chunked blob storage operations.
@@ -167,29 +131,11 @@ async function computeBlobSha(content: Uint8Array): Promise<string> {
 /**
  * Generate chunk key for a given SHA and chunk index.
  * Pattern: {sha}:chunk:{n}
+ * Note: This uses a different pattern than the ObjectStore for backward compatibility
+ * with the in-memory ChunkedBlobStorage implementation.
  */
-function getChunkKey(sha: string, chunkIndex: number): string {
+function getLocalChunkKey(sha: string, chunkIndex: number): string {
   return `${sha}:chunk:${chunkIndex}`
-}
-
-/**
- * Generate metadata key for a given SHA.
- */
-function getMetadataKey(sha: string): string {
-  return `${CHUNKED_BLOB_PREFIX}${sha}`
-}
-
-/**
- * Calculate which chunk(s) a byte range spans.
- */
-function getChunkRange(
-  offset: number,
-  length: number,
-  chunkSize: number
-): { startChunk: number; endChunk: number } {
-  const startChunk = Math.floor(offset / chunkSize)
-  const endChunk = Math.floor((offset + length - 1) / chunkSize)
-  return { startChunk, endChunk }
 }
 
 /**
@@ -244,8 +190,8 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
       }
     }
 
-    // Determine if we need to chunk
-    const needsChunking = data.length > CHUNK_SIZE
+    // Determine if we need to chunk using shared utility
+    const needsChunking = shouldChunk(data.length)
 
     if (!needsChunking) {
       // Store as single chunk (not chunked)
@@ -268,16 +214,16 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
       }
     }
 
-    // Chunk the data
-    const chunkCount = Math.ceil(data.length / CHUNK_SIZE)
+    // Chunk the data using shared utility
+    const numChunks = calculateChunkCount(data.length)
     const chunkKeys: string[] = []
 
-    for (let i = 0; i < chunkCount; i++) {
+    for (let i = 0; i < numChunks; i++) {
       const start = i * CHUNK_SIZE
       const end = Math.min(start + CHUNK_SIZE, data.length)
       const chunk = data.slice(start, end)
 
-      const key = getChunkKey(sha, i)
+      const key = getLocalChunkKey(sha, i)
       chunks.set(key, chunk)
       chunkKeys.push(key)
     }
@@ -286,7 +232,7 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
     const record: BlobRecord = {
       sha,
       totalSize: data.length,
-      chunkCount,
+      chunkCount: numChunks,
       isChunked: true,
       chunkKeys,
     }
@@ -295,7 +241,7 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
     return {
       sha,
       size: data.length,
-      chunkCount,
+      chunkCount: numChunks,
       chunkKeys,
       isChunked: true,
     }

@@ -64,7 +64,7 @@ import {
   // Types
   type ObjectType,
   type GitObjectData,
-} from '../../../core/objects'
+} from '../../../packages/core/objects'
 
 // =============================================================================
 // Test Helpers

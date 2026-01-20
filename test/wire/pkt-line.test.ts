@@ -440,6 +440,117 @@ describe('pkt-line', () => {
     })
   })
 
+  describe('size validation security', () => {
+    describe('decodePktLine size validation', () => {
+      it('should reject packets exceeding MAX_PKT_LINE_SIZE early', () => {
+        // fff1 = 65521 which is just 1 byte over the maximum
+        const oversizedPacket = 'fff1' + 'x'.repeat(100)
+        expect(() => decodePktLine(oversizedPacket)).toThrow(
+          `Packet too large: 65521 bytes exceeds maximum ${MAX_PKT_LINE_SIZE}`
+        )
+      })
+
+      it('should reject packets at ffff (65535 bytes)', () => {
+        const maxHexPacket = 'ffff' + 'x'.repeat(100)
+        expect(() => decodePktLine(maxHexPacket)).toThrow(
+          `Packet too large: 65535 bytes exceeds maximum ${MAX_PKT_LINE_SIZE}`
+        )
+      })
+
+      it('should accept packets at exactly MAX_PKT_LINE_SIZE (65520 bytes)', () => {
+        // fff0 = 65520 which is exactly the maximum
+        const maxAllowedData = 'x'.repeat(MAX_PKT_LINE_SIZE - PKT_LINE_LENGTH_SIZE)
+        const packet = 'fff0' + maxAllowedData
+        const result = decodePktLine(packet)
+        expect(result.data).toBe(maxAllowedData)
+        expect(result.bytesRead).toBe(MAX_PKT_LINE_SIZE)
+      })
+
+      it('should handle length prefix with minimum valid size (4 = 0004)', () => {
+        // 0004 is the minimum valid length (just the prefix, no data)
+        const result = decodePktLine('0004')
+        expect(result).toEqual({ data: '', bytesRead: 4 })
+      })
+
+      it('should reject length 0003 as invalid (less than prefix size)', () => {
+        const result = decodePktLine('0003')
+        expect(result).toEqual({ data: null, type: 'incomplete', bytesRead: 0 })
+      })
+
+      it('should reject length 0002 as invalid (reserved for response-end)', () => {
+        const result = decodePktLine('0002')
+        expect(result).toEqual({ data: null, type: 'incomplete', bytesRead: 0 })
+      })
+
+      it('should handle invalid hex characters in length prefix', () => {
+        const invalidHexCases = ['gggg', 'GGGG', '00g0', '000g', ' 000', '000 ', '00-1']
+        for (const hex of invalidHexCases) {
+          const result = decodePktLine(hex + 'data')
+          expect(result).toEqual({ data: null, type: 'incomplete', bytesRead: 0 })
+        }
+      })
+
+      it('should validate size before attempting data extraction', () => {
+        // This test ensures the size check happens BEFORE trying to slice data
+        // If we had a huge length like fff1 and tried to slice first, we'd waste resources
+        const oversizedLength = 'fff1' // 65521 bytes
+        expect(() => decodePktLine(oversizedLength)).toThrow(/Packet too large/)
+      })
+    })
+
+    describe('encodePktLine size validation', () => {
+      it('should reject data exceeding MAX_PKT_LINE_DATA (65516 bytes)', () => {
+        const oversizedData = 'x'.repeat(MAX_PKT_LINE_DATA + 1)
+        expect(() => encodePktLine(oversizedData)).toThrow(
+          `Data too large: ${MAX_PKT_LINE_DATA + 1} bytes exceeds maximum ${MAX_PKT_LINE_DATA}`
+        )
+      })
+
+      it('should accept data at exactly MAX_PKT_LINE_DATA (65516 bytes)', () => {
+        const maxData = 'x'.repeat(MAX_PKT_LINE_DATA)
+        const result = encodePktLine(maxData)
+        expect(typeof result).toBe('string')
+        expect((result as string).startsWith('fff0')).toBe(true) // 65520 in hex
+      })
+
+      it('should reject Uint8Array data exceeding MAX_PKT_LINE_DATA', () => {
+        const oversizedData = new Uint8Array(MAX_PKT_LINE_DATA + 1).fill(0x41) // 'A'
+        expect(() => encodePktLine(oversizedData)).toThrow(
+          `Data too large: ${MAX_PKT_LINE_DATA + 1} bytes exceeds maximum ${MAX_PKT_LINE_DATA}`
+        )
+      })
+
+      it('should accept Uint8Array data at exactly MAX_PKT_LINE_DATA', () => {
+        const maxData = new Uint8Array(MAX_PKT_LINE_DATA).fill(0x41) // 'A'
+        const result = encodePktLine(maxData)
+        // Should not throw
+        expect(result).toBeDefined()
+      })
+
+      it('should validate size before processing data', () => {
+        // Ensure the size check happens early, before any encoding work
+        const oversizedData = 'x'.repeat(MAX_PKT_LINE_DATA + 100)
+        expect(() => encodePktLine(oversizedData)).toThrow(/Data too large/)
+      })
+    })
+
+    describe('pktLineStream size validation', () => {
+      it('should throw on oversized packet in stream', () => {
+        const validPacket = '0009hello'
+        const oversizedPacket = 'ffff' + 'x'.repeat(100)
+        const stream = validPacket + oversizedPacket
+        expect(() => pktLineStream(stream)).toThrow(/Packet too large/)
+      })
+
+      it('should process valid packets before failing on oversized one', () => {
+        // The stream function processes sequentially, so it should process
+        // valid packets but then throw when hitting the oversized one
+        const stream = '0009hello' + 'fff1' + 'x'.repeat(100)
+        expect(() => pktLineStream(stream)).toThrow(/Packet too large/)
+      })
+    })
+  })
+
   describe('constants', () => {
     it('should have correct FLUSH_PKT value', () => {
       expect(FLUSH_PKT).toBe('0000')

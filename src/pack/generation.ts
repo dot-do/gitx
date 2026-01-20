@@ -98,7 +98,7 @@ export interface PackableObject {
   /** The raw (uncompressed) object data */
   data: Uint8Array
   /** Optional file path, used to improve delta base selection */
-  path?: string
+  path?: string | undefined
 }
 
 /**
@@ -283,7 +283,7 @@ export { computePackChecksum } from './utils'
 export function orderObjectsForCompression(objects: PackableObject[]): PackableObject[] {
   return [...objects].sort((a, b) => {
     // First, sort by type using shared TYPE_ORDER
-    const typeCompare = TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
+    const typeCompare = (TYPE_ORDER[a.type] ?? 0) - (TYPE_ORDER[b.type] ?? 0)
     if (typeCompare !== 0) return typeCompare
 
     // Within same type, sort by path if available (groups similar files)
@@ -356,7 +356,7 @@ interface InternalObject {
   sha: string
   type: PackObjectType
   data: Uint8Array
-  path?: string
+  path: string | undefined
   isDelta: boolean
   baseSha?: string
   baseOffset?: number
@@ -444,14 +444,15 @@ export class PackfileGenerator {
     // Skip duplicates
     if (this.objects.has(object.sha)) return
 
-    this.objects.set(object.sha, {
+    const internalObj: InternalObject = {
       sha: object.sha,
       type: object.type,
       data: object.data,
       path: object.path,
-      isDelta: false,
+      isDelta: false as const,
       depth: 0
-    })
+    }
+    this.objects.set(object.sha, internalObj)
   }
 
   /**

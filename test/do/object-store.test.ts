@@ -628,6 +628,128 @@ describe('ObjectStore', () => {
       expect(objects[0]).not.toBeNull()
       expect(objects[1]).toBeNull()
     })
+
+    describe('transaction rollback', () => {
+      it('should rollback cache state when transaction fails', async () => {
+        // Create a mock that throws during COMMIT
+        const failingStorage = new MockObjectStorage()
+        let commitCalled = false
+        const originalExec = failingStorage.sql.exec.bind(failingStorage.sql)
+        failingStorage.sql.exec = (query: string, ...params: unknown[]) => {
+          if (query === 'COMMIT') {
+            commitCalled = true
+            throw new Error('Simulated COMMIT failure')
+          }
+          return originalExec(query, ...params)
+        }
+
+        const failingStore = new ObjectStore(failingStorage)
+
+        const objects = [
+          { type: 'blob' as ObjectType, data: encoder.encode('rollback1') },
+          { type: 'blob' as ObjectType, data: encoder.encode('rollback2') }
+        ]
+
+        // The operation should throw
+        await expect(failingStore.putObjects(objects)).rejects.toThrow('Simulated COMMIT failure')
+
+        // Verify COMMIT was attempted
+        expect(commitCalled).toBe(true)
+
+        // After rollback, cache should not contain the objects
+        // We need to check by trying to get them (which would use cache first)
+        // Since the cache was rolled back, and the storage was rolled back,
+        // the objects should not exist
+        for (const obj of objects) {
+          const sha = await (await import('../../src/utils/hash')).hashObject(obj.type, obj.data)
+          const cached = await failingStore.hasObject(sha)
+          expect(cached).toBe(false)
+        }
+      })
+
+      it('should restore previous cache values on rollback', async () => {
+        // First, store an object normally
+        const content1 = encoder.encode('original content')
+        const sha1 = await objectStore.putObject('blob', content1)
+
+        // Verify it's cached
+        const before = await objectStore.getObject(sha1)
+        expect(before).not.toBeNull()
+        expect(before!.size).toBe(content1.length)
+
+        // Create a failing storage that will throw on COMMIT
+        // but first, inject the existing object so hasObject works
+        const failingStorage = new MockObjectStorage()
+        failingStorage.injectObject(sha1, 'blob', content1)
+
+        const originalExec = failingStorage.sql.exec.bind(failingStorage.sql)
+        failingStorage.sql.exec = (query: string, ...params: unknown[]) => {
+          if (query === 'COMMIT') {
+            throw new Error('Simulated COMMIT failure')
+          }
+          return originalExec(query, ...params)
+        }
+
+        const failingStore = new ObjectStore(failingStorage)
+
+        // Pre-populate the cache with the original object
+        // by reading it first
+        await failingStore.getObject(sha1)
+
+        // Try to store an object with the same SHA but different content
+        // This simulates trying to update a cached object
+        // (In practice this won't happen due to content-addressing, but this tests cache rollback)
+        const newObjects = [
+          { type: 'blob' as ObjectType, data: encoder.encode('new content for different sha') }
+        ]
+
+        // The operation should throw
+        await expect(failingStore.putObjects(newObjects)).rejects.toThrow('Simulated COMMIT failure')
+
+        // The original object should still be cached correctly
+        const afterRollback = await failingStore.getObject(sha1)
+        expect(afterRollback).not.toBeNull()
+        expect(afterRollback!.data).toEqual(content1)
+      })
+
+      it('should remove newly added cache entries on rollback', async () => {
+        const failingStorage = new MockObjectStorage()
+        const addedToCacheKeys: string[] = []
+
+        const originalExec = failingStorage.sql.exec.bind(failingStorage.sql)
+        let objectCount = 0
+        failingStorage.sql.exec = (query: string, ...params: unknown[]) => {
+          // Track what's being stored
+          if (query.includes('INSERT') && query.includes('objects') && !query.includes('wal')) {
+            objectCount++
+            // Fail after the first object is added to trigger partial rollback
+            if (objectCount >= 2 && query.includes('INSERT')) {
+              throw new Error('Simulated storage failure mid-transaction')
+            }
+          }
+          return originalExec(query, ...params)
+        }
+
+        const failingStore = new ObjectStore(failingStorage)
+
+        const objects = [
+          { type: 'blob' as ObjectType, data: encoder.encode('partial1') },
+          { type: 'blob' as ObjectType, data: encoder.encode('partial2') },
+          { type: 'blob' as ObjectType, data: encoder.encode('partial3') }
+        ]
+
+        // The operation should throw
+        await expect(failingStore.putObjects(objects)).rejects.toThrow()
+
+        // After rollback, none of the objects should be accessible
+        // (because cache was rolled back and storage was rolled back)
+        for (const obj of objects) {
+          const sha = await (await import('../../src/utils/hash')).hashObject(obj.type, obj.data)
+          const exists = await failingStore.hasObject(sha)
+          expect(exists).toBe(false)
+        }
+      })
+    })
   })
 
   describe('object deserialization helpers', () => {

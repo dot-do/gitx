@@ -366,13 +366,24 @@ export class CommitWalker {
   }
 
   /**
-   * Iterate over all commits matching the options
+   * Iterate over all commits matching the options.
+   *
+   * @remarks
+   * This iterator properly handles cleanup when iteration is terminated early
+   * (via break, return, or throw). The walker state is reset in the finally block.
+   * Consumers should use for-await-of or manually call .return() when done.
    */
   async *[Symbol.asyncIterator](): AsyncIterableIterator<TraversalCommit> {
-    let commit = await this.next()
-    while (commit !== null) {
-      yield commit
-      commit = await this.next()
+    try {
+      let commit = await this.next()
+      while (commit !== null) {
+        yield commit
+        commit = await this.next()
+      }
+    } finally {
+      // Clean up walker state when iteration is terminated early
+      // This ensures resources are released on break, return, or throw
+      this.reset()
     }
   }
 }
@@ -388,6 +399,11 @@ export class CommitWalker {
  * @param start - Starting commit SHA or array of SHAs
  * @param options - Traversal options
  * @yields TraversalCommit objects in the requested order
+ *
+ * @remarks
+ * This generator properly handles cleanup when iteration is terminated early
+ * (via break, return, or throw). Resources are cleaned up in the finally block.
+ * Consumers should use for-await-of or manually call .return() when done.
  */
 export async function* walkCommits(
   provider: CommitProvider,
@@ -411,179 +427,195 @@ export async function* walkCommits(
     grep
   } = options
 
-  // If maxCount is 0, return immediately
-  if (maxCount === 0) {
-    return
-  }
-
-  // Get commits that match path filters
+  // Track resources for cleanup
   let pathMatchingCommits: Set<string> | null = null
-  if (paths && paths.length > 0 && provider.getCommitsForPath) {
-    pathMatchingCommits = new Set<string>()
-    for (const path of paths) {
-      const commits = await provider.getCommitsForPath(path)
-      for (const sha of commits) {
-        pathMatchingCommits.add(sha)
-      }
-    }
-    // If no commits match paths, return empty
-    if (pathMatchingCommits.size === 0) {
+  let hidden: Set<string> | null = null
+  let allCommits: TraversalCommit[] = []
+  let visited: Set<string> | null = null
+
+  try {
+    // If maxCount is 0, return immediately
+    if (maxCount === 0) {
       return
     }
-  }
 
-  // Build set of hidden commits (exclude and their ancestors)
-  const hidden = new Set<string>()
-  if (exclude && exclude.length > 0) {
-    const toExpand = [...exclude]
-    while (toExpand.length > 0) {
-      const sha = toExpand.pop()!
-      if (hidden.has(sha)) continue
-      hidden.add(sha)
-      const commit = await provider.getCommit(sha)
-      if (commit) {
-        for (const parent of commit.parents) {
-          toExpand.push(parent)
+    // Get commits that match path filters
+    if (paths && paths.length > 0 && provider.getCommitsForPath) {
+      pathMatchingCommits = new Set<string>()
+      for (const path of paths) {
+        const commits = await provider.getCommitsForPath(path)
+        for (const sha of commits) {
+          pathMatchingCommits.add(sha)
+        }
+      }
+      // If no commits match paths, return empty
+      if (pathMatchingCommits.size === 0) {
+        return
+      }
+    }
+
+    // Build set of hidden commits (exclude and their ancestors)
+    hidden = new Set<string>()
+    if (exclude && exclude.length > 0) {
+      const toExpand = [...exclude]
+      while (toExpand.length > 0) {
+        const sha = toExpand.pop()!
+        if (hidden.has(sha)) continue
+        hidden.add(sha)
+        const commit = await provider.getCommit(sha)
+        if (commit) {
+          for (const parent of commit.parents) {
+            toExpand.push(parent)
+          }
         }
       }
     }
-  }
 
-  // Collect all commits first for sorting
-  const allCommits: TraversalCommit[] = []
-  const visited = new Set<string>()
-  const queue: Array<{ sha: string; depth: number }> = startShas.map(sha => ({
-    sha,
-    depth: 0
-  }))
-
-  while (queue.length > 0) {
-    // For date-based sorting, we need to process in date order
-    if (sort === 'date' || sort === 'author-date') {
-      // Sort queue by date (most recent first)
-      queue.sort((_a, _b) => {
-        // We need to fetch commits to sort - use simple queue position for now
-        return 0
-      })
-    }
-
-    const { sha, depth } = queue.shift()!
-
-    if (visited.has(sha) || hidden.has(sha)) {
-      continue
-    }
-
-    const commit = await provider.getCommit(sha)
-    if (!commit) continue
-
-    visited.add(sha)
-
-    // Add parents to queue
-    const parentsToAdd = firstParentOnly
-      ? commit.parents.slice(0, 1)
-      : commit.parents
-
-    for (const parent of parentsToAdd) {
-      if (!visited.has(parent) && !hidden.has(parent)) {
-        queue.push({ sha: parent, depth: depth + 1 })
-      }
-    }
-
-    const traversalCommit: TraversalCommit = {
+    // Collect all commits first for sorting
+    visited = new Set<string>()
+    const queue: Array<{ sha: string; depth: number }> = startShas.map(sha => ({
       sha,
-      commit,
-      depth,
-      isMerge: commit.parents.length > 1
-    }
+      depth: 0
+    }))
 
-    allCommits.push(traversalCommit)
-  }
+    while (queue.length > 0) {
+      // For date-based sorting, we need to process in date order
+      if (sort === 'date' || sort === 'author-date') {
+        // Sort queue by date (most recent first)
+        queue.sort((_a, _b) => {
+          // We need to fetch commits to sort - use simple queue position for now
+          return 0
+        })
+      }
 
-  // Apply sorting
-  let sortedCommits = [...allCommits]
+      const { sha, depth } = queue.shift()!
 
-  if (sort === 'topological') {
-    // Topological sort - children before parents
-    const shas = sortedCommits.map(c => c.sha)
-    const sortedShas = await topologicalSort(provider, shas)
-    const shaToCommit = new Map(sortedCommits.map(c => [c.sha, c]))
-    sortedCommits = sortedShas.map(sha => shaToCommit.get(sha)!).filter(Boolean)
-  } else if (sort === 'date') {
-    // Sort by committer date (newest first)
-    sortedCommits.sort(
-      (a, b) => b.commit.committer.timestamp - a.commit.committer.timestamp
-    )
-  } else if (sort === 'author-date') {
-    // Sort by author date (newest first)
-    sortedCommits.sort(
-      (a, b) => b.commit.author.timestamp - a.commit.author.timestamp
-    )
-  }
-
-  // Reverse if requested
-  if (reverse) {
-    sortedCommits.reverse()
-  }
-
-  // Apply filters and yield commits
-  let skipped = 0
-  let yielded = 0
-
-  for (const traversalCommit of sortedCommits) {
-    const { commit, sha } = traversalCommit
-
-    // Path filter
-    if (pathMatchingCommits && !pathMatchingCommits.has(sha)) {
-      continue
-    }
-
-    // Merge filter
-    if (!includeMerges && commit.parents.length > 1) {
-      continue
-    }
-
-    // Author filter
-    if (author && commit.author.name !== author) {
-      continue
-    }
-
-    // Committer filter
-    if (committer && commit.committer.name !== committer) {
-      continue
-    }
-
-    // Date filters
-    const commitTimestamp = commit.committer.timestamp * 1000
-
-    if (after && commitTimestamp <= after.getTime()) {
-      continue
-    }
-
-    if (before && commitTimestamp >= before.getTime()) {
-      continue
-    }
-
-    // Grep filter
-    if (grep) {
-      const pattern = typeof grep === 'string' ? new RegExp(grep) : grep
-      if (!pattern.test(commit.message)) {
+      if (visited.has(sha) || hidden.has(sha)) {
         continue
       }
+
+      const commit = await provider.getCommit(sha)
+      if (!commit) continue
+
+      visited.add(sha)
+
+      // Add parents to queue
+      const parentsToAdd = firstParentOnly
+        ? commit.parents.slice(0, 1)
+        : commit.parents
+
+      for (const parent of parentsToAdd) {
+        if (!visited.has(parent) && !hidden.has(parent)) {
+          queue.push({ sha: parent, depth: depth + 1 })
+        }
+      }
+
+      const traversalCommit: TraversalCommit = {
+        sha,
+        commit,
+        depth,
+        isMerge: commit.parents.length > 1
+      }
+
+      allCommits.push(traversalCommit)
     }
 
-    // Skip handling
-    if (skipped < skip) {
-      skipped++
-      continue
+    // Apply sorting
+    let sortedCommits = [...allCommits]
+
+    if (sort === 'topological') {
+      // Topological sort - children before parents
+      const shas = sortedCommits.map(c => c.sha)
+      const sortedShas = await topologicalSort(provider, shas)
+      const shaToCommit = new Map(sortedCommits.map(c => [c.sha, c]))
+      sortedCommits = sortedShas.map(sha => shaToCommit.get(sha)!).filter(Boolean)
+    } else if (sort === 'date') {
+      // Sort by committer date (newest first)
+      sortedCommits.sort(
+        (a, b) => b.commit.committer.timestamp - a.commit.committer.timestamp
+      )
+    } else if (sort === 'author-date') {
+      // Sort by author date (newest first)
+      sortedCommits.sort(
+        (a, b) => b.commit.author.timestamp - a.commit.author.timestamp
+      )
     }
 
-    // MaxCount handling
-    if (maxCount !== undefined && yielded >= maxCount) {
-      return
+    // Reverse if requested
+    if (reverse) {
+      sortedCommits.reverse()
     }
 
-    yield traversalCommit
-    yielded++
+    // Apply filters and yield commits
+    let skipped = 0
+    let yielded = 0
+
+    for (const traversalCommit of sortedCommits) {
+      const { commit, sha } = traversalCommit
+
+      // Path filter
+      if (pathMatchingCommits && !pathMatchingCommits.has(sha)) {
+        continue
+      }
+
+      // Merge filter
+      if (!includeMerges && commit.parents.length > 1) {
+        continue
+      }
+
+      // Author filter
+      if (author && commit.author.name !== author) {
+        continue
+      }
+
+      // Committer filter
+      if (committer && commit.committer.name !== committer) {
+        continue
+      }
+
+      // Date filters
+      const commitTimestamp = commit.committer.timestamp * 1000
+
+      if (after && commitTimestamp <= after.getTime()) {
+        continue
+      }
+
+      if (before && commitTimestamp >= before.getTime()) {
+        continue
+      }
+
+      // Grep filter
+      if (grep) {
+        const pattern = typeof grep === 'string' ? new RegExp(grep) : grep
+        if (!pattern.test(commit.message)) {
+          continue
+        }
+      }
+
+      // Skip handling
+      if (skipped < skip) {
+        skipped++
+        continue
+      }
+
+      // MaxCount handling
+      if (maxCount !== undefined && yielded >= maxCount) {
+        return
+      }
+
+      yield traversalCommit
+      yielded++
+    }
+  } finally {
+    // Clean up resources when generator is closed (via break, return, throw, or completion)
+    // Clear references to allow garbage collection
+    pathMatchingCommits?.clear()
+    pathMatchingCommits = null
+    hidden?.clear()
+    hidden = null
+    visited?.clear()
+    visited = null
+    allCommits = []
   }
 }
 
@@ -722,11 +754,18 @@ export async function findMergeBase(
   }
 
   if (commits.length === 1) {
-    return [commits[0]]
+    const first = commits[0]
+    return first ? [first] : []
+  }
+
+  const commit0 = commits[0]
+  const commit1 = commits[1]
+  if (!commit0 || !commit1) {
+    return []
   }
 
   // Find common ancestor of first two commits
-  let result = await findCommonAncestor(provider, commits[0], commits[1], true)
+  let result = await findCommonAncestor(provider, commit0, commit1, true)
 
   if (result === null) {
     return []
@@ -739,7 +778,9 @@ export async function findMergeBase(
     const newBases: string[] = []
 
     for (const base of bases) {
-      const ancestor = await findCommonAncestor(provider, base, commits[i], true)
+      const commitI = commits[i]
+      if (!commitI) continue
+      const ancestor = await findCommonAncestor(provider, base, commitI, true)
       if (ancestor !== null) {
         const ancestors = Array.isArray(ancestor) ? ancestor : [ancestor]
         for (const a of ancestors) {
@@ -782,8 +823,8 @@ export function parseRevisionRange(spec: string): RevisionRange {
     const [left, right] = spec.split('...')
     return {
       type: 'three-dot',
-      left,
-      right
+      left: left ?? '',
+      right: right ?? ''
     }
   }
 
@@ -792,8 +833,8 @@ export function parseRevisionRange(spec: string): RevisionRange {
     const [left, right] = spec.split('..')
     return {
       type: 'two-dot',
-      left,
-      right
+      left: left ?? '',
+      right: right ?? ''
     }
   }
 
@@ -993,7 +1034,9 @@ export async function topologicalSort(
             if (parentCommit) {
               let insertIndex = 0
               for (let i = 0; i < queue.length; i++) {
-                const queueCommit = commitData.get(queue[i])
+                const queueItem = queue[i]
+                if (!queueItem) break
+                const queueCommit = commitData.get(queueItem)
                 if (
                   queueCommit &&
                   parentCommit.committer.timestamp <=

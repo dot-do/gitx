@@ -7,13 +7,13 @@
  */
 
 // Re-export everything from the core refs module
-export * from '../../core/refs'
+export * from '../../packages/core/refs'
 
 // ============================================================================
 // Legacy Types (for backward compatibility)
 // ============================================================================
 
-import { isValidSha } from '../../core/objects'
+import { isValidSha } from '../../packages/core/objects'
 
 /**
  * A Git reference (branch, tag, or symbolic ref like HEAD).

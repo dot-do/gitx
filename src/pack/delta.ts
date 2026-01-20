@@ -159,7 +159,7 @@ const MAX_BUCKET_SIZE = 64
 function rabinHash(data: Uint8Array, offset: number): number {
   let hash = 0
   for (let i = 0; i < WINDOW_SIZE; i++) {
-    hash = (hash * RABIN_BASE + data[offset + i]) % RABIN_MOD
+    hash = (hash * RABIN_BASE + (data[offset + i] ?? 0)) % RABIN_MOD
   }
   return hash
 }
@@ -245,7 +245,7 @@ function buildHashIndex(base: Uint8Array): HashIndex {
 
   for (let i = 1; i <= base.length - WINDOW_SIZE; i++) {
     // Roll the hash forward (O(1) operation)
-    hash = rabinRoll(hash, base[i - 1], base[i + WINDOW_SIZE - 1])
+    hash = rabinRoll(hash, base[i - 1] ?? 0, base[i + WINDOW_SIZE - 1] ?? 0)
     addToIndex(i)
   }
 
@@ -253,10 +253,10 @@ function buildHashIndex(base: Uint8Array): HashIndex {
 
   function addToIndex(offset: number) {
     const bucket = hash & bucketMask
-    const count = counts[bucket]
+    const count = counts[bucket] ?? 0
     if (count < MAX_BUCKET_SIZE) {
       offsets[bucket * MAX_BUCKET_SIZE + count] = offset
-      counts[bucket] = count + 1
+      counts[bucket] = (count + 1) as number
     }
   }
 }
@@ -271,10 +271,10 @@ function buildHashIndex(base: Uint8Array): HashIndex {
  */
 function* lookupIndex(index: HashIndex, hash: number): Generator<number> {
   const bucket = hash & index.bucketMask
-  const count = index.counts[bucket]
+  const count = index.counts[bucket] ?? 0
   const baseOffset = bucket * MAX_BUCKET_SIZE
   for (let i = 0; i < count; i++) {
-    yield index.offsets[baseOffset + i]
+    yield index.offsets[baseOffset + i] ?? 0
   }
 }
 
@@ -427,6 +427,9 @@ export function parseDeltaHeader(data: Uint8Array, offset: number): DeltaHeaderR
     }
 
     const byte = data[offset + bytesRead]
+    if (byte === undefined) {
+      throw new Error(`Delta header parsing failed: unexpected end of data at offset ${offset + bytesRead}`)
+    }
     bytesRead++
 
     // Add the lower 7 bits to the result
@@ -535,6 +538,9 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
   // Process instructions
   while (offset < delta.length) {
     const cmd = delta[offset++]
+    if (cmd === undefined) {
+      break
+    }
 
     if (cmd & COPY_INSTRUCTION) {
       // Copy instruction
@@ -542,15 +548,15 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
       let copySize = 0
 
       // Read offset bytes (bits 0-3 indicate which bytes are present)
-      if (cmd & 0x01) copyOffset |= delta[offset++]
-      if (cmd & 0x02) copyOffset |= delta[offset++] << 8
-      if (cmd & 0x04) copyOffset |= delta[offset++] << 16
-      if (cmd & 0x08) copyOffset |= delta[offset++] << 24
+      if (cmd & 0x01) copyOffset |= (delta[offset++] ?? 0)
+      if (cmd & 0x02) copyOffset |= (delta[offset++] ?? 0) << 8
+      if (cmd & 0x04) copyOffset |= (delta[offset++] ?? 0) << 16
+      if (cmd & 0x08) copyOffset |= (delta[offset++] ?? 0) << 24
 
       // Read size bytes (bits 4-6 indicate which bytes are present)
-      if (cmd & 0x10) copySize |= delta[offset++]
-      if (cmd & 0x20) copySize |= delta[offset++] << 8
-      if (cmd & 0x40) copySize |= delta[offset++] << 16
+      if (cmd & 0x10) copySize |= (delta[offset++] ?? 0)
+      if (cmd & 0x20) copySize |= (delta[offset++] ?? 0) << 8
+      if (cmd & 0x40) copySize |= (delta[offset++] ?? 0) << 16
 
       // Size of 0 means 0x10000 (65536)
       if (copySize === 0) {
@@ -711,8 +717,8 @@ export function createDelta(base: Uint8Array, target: Uint8Array): Uint8Array {
       if (targetOffset <= target.length - WINDOW_SIZE) {
         currentHash = rabinRoll(
           currentHash,
-          target[targetOffset - 1],
-          target[targetOffset + WINDOW_SIZE - 1]
+          target[targetOffset - 1] ?? 0,
+          target[targetOffset + WINDOW_SIZE - 1] ?? 0
         )
       }
     }
@@ -744,7 +750,7 @@ export function createDelta(base: Uint8Array, target: Uint8Array): Uint8Array {
 function _hashBytes(data: Uint8Array, offset: number, length: number): number {
   let hash = 0
   for (let i = 0; i < length; i++) {
-    hash = ((hash << 5) - hash + data[offset + i]) | 0
+    hash = ((hash << 5) - hash + (data[offset + i] ?? 0)) | 0
   }
   return hash
 }
@@ -874,7 +880,7 @@ function emitCopy(
   const instruction = new Uint8Array(1 + bytes.length)
   instruction[0] = cmd
   for (let i = 0; i < bytes.length; i++) {
-    instruction[1 + i] = bytes[i]
+    instruction[1 + i] = bytes[i] ?? 0
   }
   instructions.push(instruction)
 }

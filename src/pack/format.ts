@@ -279,6 +279,9 @@ export function decodeVarint(data: Uint8Array, offset: number): { value: number;
     }
 
     const byte = data[offset + bytesRead]
+    if (byte === undefined) {
+      throw new Error(`Varint decoding failed: unexpected end of data at offset ${offset + bytesRead}`)
+    }
     bytesRead++
     value |= (byte & 0x7f) << shift
     if ((byte & 0x80) === 0) {
@@ -390,6 +393,9 @@ export function decodeTypeAndSize(data: Uint8Array, offset: number): {
 
   let bytesRead = 0
   const firstByte = data[offset + bytesRead]
+  if (firstByte === undefined) {
+    throw new Error(`decodeTypeAndSize failed: offset ${offset} is beyond data length ${data.length}`)
+  }
   bytesRead++
 
   // Extract type (bits 4-6 of first byte)
@@ -410,6 +416,9 @@ export function decodeTypeAndSize(data: Uint8Array, offset: number): {
       }
 
       const byte = data[offset + bytesRead]
+      if (byte === undefined) {
+        throw new Error(`decodeTypeAndSize failed: unexpected end of data at offset ${offset + bytesRead}`)
+      }
       bytesRead++
       size |= (byte & 0x7f) << shift
       shift += 7
@@ -484,19 +493,19 @@ export function parsePackHeader(data: Uint8Array): PackHeader {
   }
 
   // Read signature (4 bytes)
-  const signature = String.fromCharCode(data[0], data[1], data[2], data[3])
+  const signature = String.fromCharCode(data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, data[3] ?? 0)
   if (signature !== PACK_SIGNATURE) {
     throw new Error(`Invalid pack signature: expected "${PACK_SIGNATURE}", got "${signature}"`)
   }
 
   // Read version (4 bytes, big-endian)
-  const version = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+  const version = ((data[4] ?? 0) << 24) | ((data[5] ?? 0) << 16) | ((data[6] ?? 0) << 8) | (data[7] ?? 0)
   if (version !== 2) {
     throw new Error(`Unsupported pack version: ${version} (only version 2 is supported)`)
   }
 
   // Read object count (4 bytes, big-endian)
-  const objectCount = (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11]
+  const objectCount = ((data[8] ?? 0) << 24) | ((data[9] ?? 0) << 16) | ((data[10] ?? 0) << 8) | (data[11] ?? 0)
 
   return { signature, version, objectCount }
 }

@@ -341,13 +341,15 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
 
   // Verify fanout is monotonically non-decreasing
   for (let i = 1; i < 256; i++) {
-    if (fanout[i] < fanout[i - 1]) {
+    const curr = fanout[i] ?? 0
+    const prev = fanout[i - 1] ?? 0
+    if (curr < prev) {
       throw new Error('Invalid fanout table: values must be monotonically non-decreasing')
     }
   }
 
   // Get object count from fanout[255]
-  const objectCount = fanout[255]
+  const objectCount = fanout[255] ?? 0
 
   // Calculate expected size
   const shaListOffset = 8 + 256 * 4
@@ -369,9 +371,12 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
   // Count large offsets (MSB set in 4-byte offset table)
   let largeOffsetCount = 0
   for (let i = 0; i < objectCount; i++) {
-    const offsetValue = view.getUint32(offsetsOffset + i * 4, false)
-    if (offsetValue & 0x80000000) {
-      largeOffsetCount++
+    const offsetPos = offsetsOffset + i * 4
+    if (offsetPos + 4 <= data.length) {
+      const offsetValue = view.getUint32(offsetPos, false)
+      if (offsetValue & 0x80000000) {
+        largeOffsetCount++
+      }
     }
   }
 
@@ -507,7 +512,9 @@ export function createPackIndex(
 
   for (let i = 0; i < 256; i++) {
     while (entryIdx < sortedEntries.length) {
-      const firstByte = parseInt(getEntryObjectId(sortedEntries[entryIdx]).slice(0, 2), 16)
+      const entry = sortedEntries[entryIdx]
+      if (!entry) break
+      const firstByte = parseInt(getEntryObjectId(entry).slice(0, 2), 16)
       if (firstByte <= i) {
         count++
         entryIdx++
@@ -602,7 +609,7 @@ export function lookupObject(index: PackIndex, sha: string): PackIndexEntry | nu
     return null
   }
 
-  return index.entries[position]
+  return index.entries[position] ?? null
 }
 
 /**
@@ -671,12 +678,14 @@ export function verifyPackIndex(data: Uint8Array): boolean {
   const fanout = new Uint32Array(256)
   for (let i = 0; i < 256; i++) {
     fanout[i] = view.getUint32(8 + i * 4, false)
-    if (i > 0 && fanout[i] < fanout[i - 1]) {
+    const curr = fanout[i] ?? 0
+    const prev = fanout[i - 1] ?? 0
+    if (i > 0 && curr < prev) {
       throw new Error('Invalid fanout table: values must be monotonically non-decreasing (fanout consistency)')
     }
   }
 
-  const objectCount = fanout[255]
+  const objectCount = fanout[255] ?? 0
 
   // Calculate expected positions
   const shaListOffset = 8 + 256 * 4
@@ -686,9 +695,12 @@ export function verifyPackIndex(data: Uint8Array): boolean {
   // Count large offsets
   let largeOffsetCount = 0
   for (let i = 0; i < objectCount; i++) {
-    const offsetValue = view.getUint32(offsetsOffset + i * 4, false)
-    if (offsetValue & 0x80000000) {
-      largeOffsetCount++
+    const offsetPos = offsetsOffset + i * 4
+    if (offsetPos + 4 <= data.byteLength) {
+      const offsetValue = view.getUint32(offsetPos, false)
+      if (offsetValue & 0x80000000) {
+        largeOffsetCount++
+      }
     }
   }
 
@@ -711,10 +723,12 @@ export function verifyPackIndex(data: Uint8Array): boolean {
     // Compare SHA-1 bytes
     let cmp = 0
     for (let j = 0; j < 20; j++) {
-      if (prev[j] < curr[j]) {
+      const prevByte = prev[j] ?? 0
+      const currByte = curr[j] ?? 0
+      if (prevByte < currByte) {
         cmp = -1
         break
-      } else if (prev[j] > curr[j]) {
+      } else if (prevByte > currByte) {
         cmp = 1
         break
       }
@@ -758,8 +772,8 @@ export function verifyPackIndex(data: Uint8Array): boolean {
  * // Now binary search entries[start..end)
  */
 export function getFanoutRange(fanout: Uint32Array, firstByte: number): { start: number; end: number } {
-  const end = fanout[firstByte]
-  const start = firstByte === 0 ? 0 : fanout[firstByte - 1]
+  const end = fanout[firstByte] ?? 0
+  const start = firstByte === 0 ? 0 : (fanout[firstByte - 1] ?? 0)
   return { start, end }
 }
 
@@ -801,7 +815,7 @@ export function calculateCRC32(data: Uint8Array): number {
   let crc = 0xffffffff
 
   for (let i = 0; i < data.length; i++) {
-    crc = CRC32_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8)
+    crc = (CRC32_TABLE[(crc ^ (data[i] ?? 0)) & 0xff] ?? 0) ^ (crc >>> 8)
   }
 
   return (crc ^ 0xffffffff) >>> 0
@@ -841,7 +855,9 @@ export function binarySearchObjectId(
 
   while (lo < hi) {
     const mid = (lo + hi) >>> 1
-    const cmp = getEntryObjectId(entries[mid]).localeCompare(objectId)
+    const entry = entries[mid]
+    if (!entry) return -1
+    const cmp = getEntryObjectId(entry).localeCompare(objectId)
 
     if (cmp < 0) {
       lo = mid + 1
@@ -925,7 +941,7 @@ export function serializePackIndex(index: PackIndex): Uint8Array {
 
   // Write fanout table (big-endian)
   for (let i = 0; i < 256; i++) {
-    view.setUint32(offset, fanout[i], false)
+    view.setUint32(offset, fanout[i] ?? 0, false)
     offset += 4
   }
 

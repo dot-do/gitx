@@ -30,7 +30,7 @@ export class RefValidationError extends Error {
 
 /** Base error for resolution failures */
 export class ResolutionError extends Error {
-  public partialChain?: string[]
+  public partialChain?: string[] | undefined
 
   constructor(message: string, partialChain?: string[]) {
     super(message)
@@ -166,7 +166,7 @@ export interface HeadState {
 /** Ref lock */
 export interface RefLock {
   refName: string
-  owner?: string
+  owner?: string | undefined
   isHeld(): boolean
 }
 
@@ -1093,6 +1093,8 @@ export function parseReflogLine(line: string): ReflogEntry | null {
     if (!altMatch) return null
 
     const [, oldSha, newSha, name, email, ts, tz, message] = altMatch
+    // These are guaranteed to exist by the regex match
+    if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined) return null
     return {
       oldSha: oldSha.toLowerCase(),
       newSha: newSha.toLowerCase(),
@@ -1104,6 +1106,8 @@ export function parseReflogLine(line: string): ReflogEntry | null {
   }
 
   const [, oldSha, newSha, name, email, ts, tz, message] = match
+  // These are guaranteed to exist by the regex match
+  if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined) return null
   return {
     oldSha: oldSha.toLowerCase(),
     newSha: newSha.toLowerCase(),

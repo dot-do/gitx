@@ -96,6 +96,12 @@ export class NegotiationError extends WireProtocolError {
 // Types
 // =============================================================================
 
+/** Git wire protocol version (v1 or v2) */
+export type ProtocolVersion = 1 | 2
+
+/** Pkt-line input type (string or binary) */
+export type PktLineInput = string | Uint8Array
+
 /** Capability value (true for presence, string for key=value) */
 export type CapabilityValue = boolean | string
 
@@ -211,6 +217,59 @@ export interface ReceivePackRequest {
   packfile?: Uint8Array
   pushOptions?: string[]
 }
+
+/** Receive-pack response status for a single ref */
+export interface RefStatus {
+  ref: string
+  status: 'ok' | 'ng'
+  message?: string
+}
+
+/** Receive-pack response */
+export interface ReceivePackResponse {
+  unpackStatus: 'ok' | string
+  refStatuses: RefStatus[]
+}
+
+/** Upload-pack response */
+export interface UploadPackResponse {
+  acks: AckNakResponse[]
+  shallows?: ShallowUpdate[]
+  packData?: Uint8Array
+  progress?: string[]
+  errors?: string[]
+}
+
+/** Common capability names as constants */
+export const CAPABILITY_NAMES = {
+  MULTI_ACK: 'multi_ack',
+  MULTI_ACK_DETAILED: 'multi_ack_detailed',
+  THIN_PACK: 'thin-pack',
+  SIDE_BAND: 'side-band',
+  SIDE_BAND_64K: 'side-band-64k',
+  OFS_DELTA: 'ofs-delta',
+  SHALLOW: 'shallow',
+  DEEPEN_SINCE: 'deepen-since',
+  DEEPEN_NOT: 'deepen-not',
+  DEEPEN_RELATIVE: 'deepen-relative',
+  NO_PROGRESS: 'no-progress',
+  INCLUDE_TAG: 'include-tag',
+  REPORT_STATUS: 'report-status',
+  REPORT_STATUS_V2: 'report-status-v2',
+  DELETE_REFS: 'delete-refs',
+  QUIET: 'quiet',
+  ATOMIC: 'atomic',
+  PUSH_OPTIONS: 'push-options',
+  ALLOW_TIP_SHA1_IN_WANT: 'allow-tip-sha1-in-want',
+  ALLOW_REACHABLE_SHA1_IN_WANT: 'allow-reachable-sha1-in-want',
+  FILTER: 'filter',
+  AGENT: 'agent',
+  OBJECT_FORMAT: 'object-format',
+  SYMREF: 'symref',
+} as const
+
+// Note: ZERO_SHA is exported from the refs module, re-export here for wire protocol convenience
+export { ZERO_SHA } from '../refs'
 
 // =============================================================================
 // Pkt-line Encoding/Decoding
@@ -424,7 +483,9 @@ export function formatRefAdvertisement(
     lines.push(encodePktLine(line) as string)
   } else {
     for (let i = 0; i < refs.length; i++) {
-      const { sha, ref } = refs[i]
+      const refEntry = refs[i]
+      if (!refEntry) continue
+      const { sha, ref } = refEntry
       let line = `${sha} ${ref}`
 
       if (i === 0 && capabilities) {
@@ -952,6 +1013,7 @@ export function formatUploadPackRequest(request: UploadPackRequest): string {
   // Wants (capabilities on first)
   for (let i = 0; i < request.wants.length; i++) {
     const sha = request.wants[i]
+    if (!sha) continue
     const caps = i === 0 ? request.capabilities : undefined
     lines.push(encodePktLine(formatWantLine(sha, caps)) as string)
   }

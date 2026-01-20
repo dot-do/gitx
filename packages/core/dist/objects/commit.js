@@ -52,8 +52,13 @@ export function parseIdentity(line) {
     if (parts.length < 2) {
         throw new Error(`Invalid identity line: missing timestamp/timezone: ${line}`);
     }
-    const timestamp = parseInt(parts[0], 10);
-    const timezone = parts[1];
+    const timestampStr = parts[0];
+    const timezoneStr = parts[1];
+    if (timestampStr === undefined || timezoneStr === undefined) {
+        throw new Error(`Invalid identity line: missing timestamp/timezone: ${line}`);
+    }
+    const timestamp = parseInt(timestampStr, 10);
+    const timezone = timezoneStr;
     return { name, email, timestamp, timezone };
 }
 /**
@@ -111,8 +116,9 @@ export function validateCommitData(data) {
     // Validate parent SHAs
     if (data.parents) {
         for (let i = 0; i < data.parents.length; i++) {
-            if (!isValidSha(data.parents[i])) {
-                return { isValid: false, error: `Invalid parent SHA at index ${i}: ${data.parents[i]}` };
+            const parentSha = data.parents[i];
+            if (parentSha === undefined || !isValidSha(parentSha)) {
+                return { isValid: false, error: `Invalid parent SHA at index ${i}: ${parentSha}` };
             }
         }
     }
@@ -141,11 +147,14 @@ export function validateCommitData(data) {
         warnings.push('Empty commit message');
     }
     // Warn about very long subject lines
-    const firstLine = data.message.split('\n')[0];
+    const firstLine = data.message.split('\n')[0] ?? '';
     if (firstLine.length > 72) {
         warnings.push(`Subject line exceeds 72 characters (${firstLine.length} chars)`);
     }
-    return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined };
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
 }
 /**
  * Validates a GitIdentity object
@@ -170,7 +179,10 @@ function validateIdentity(identity, field) {
     if (!identity.timezone || !/^[+-]\d{4}$/.test(identity.timezone)) {
         return { isValid: false, error: `Invalid ${field} timezone format: expected +/-HHMM` };
     }
-    return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined };
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
 }
 // =============================================================================
 // GitCommit Class
@@ -225,7 +237,9 @@ export class GitCommit {
         this.author = Object.freeze({ ...data.author });
         this.committer = Object.freeze({ ...data.committer });
         this.message = data.message;
-        this.gpgSignature = data.gpgSignature;
+        if (data.gpgSignature !== undefined) {
+            this.gpgSignature = data.gpgSignature;
+        }
         // Store extra headers if provided
         if ('extraHeaders' in data && data.extraHeaders) {
             this.extraHeaders = Object.freeze({ ...data.extraHeaders });
@@ -407,6 +421,8 @@ function parseMultilineHeader(lines, startIdx, firstLineValue, headerName = '') 
     if (headerName === 'gpgsig' || firstLineValue.includes('-----BEGIN PGP SIGNATURE-----')) {
         while (i < lines.length) {
             const line = lines[i];
+            if (line === undefined)
+                break;
             // Remove leading space from continuation lines
             const content = line.startsWith(' ') ? line.slice(1) : line;
             // Check if we've hit the end of headers (empty line at start of message)
@@ -432,9 +448,12 @@ function parseMultilineHeader(lines, startIdx, firstLineValue, headerName = '') 
     }
     else {
         // Continue reading lines that start with space (continuation)
-        while (i < lines.length && lines[i].startsWith(' ')) {
+        while (i < lines.length) {
+            const currentLine = lines[i];
+            if (currentLine === undefined || !currentLine.startsWith(' '))
+                break;
             // Remove the leading space from continuation lines
-            valueLines.push(lines[i].slice(1));
+            valueLines.push(currentLine.slice(1));
             i++;
         }
         i--; // Back up because main loop will increment
@@ -463,6 +482,8 @@ function parseCommitContent(content) {
     let i = 0;
     while (i < lines.length) {
         const line = lines[i];
+        if (line === undefined)
+            break;
         // Empty line marks start of message
         if (line === '') {
             messageStartIdx = i + 1;

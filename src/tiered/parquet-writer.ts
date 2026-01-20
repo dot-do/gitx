@@ -55,6 +55,10 @@
 
 import pako from 'pako'
 
+// Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Types and Enums
 // ============================================================================
@@ -1335,7 +1339,7 @@ export class ParquetWriter {
 
     // Encode metadata to JSON and then to bytes
     const metadataJson = JSON.stringify(metadata)
-    const metadataBytes = new TextEncoder().encode(metadataJson)
+    const metadataBytes = encoder.encode(metadataJson)
 
     // Compress metadata if needed
     let compressedMetadata: Uint8Array
@@ -1349,7 +1353,7 @@ export class ParquetWriter {
 
     // Build final file structure
     // PAR1 magic (4 bytes) + data + metadata length (4 bytes) + metadata + PAR1 magic (4 bytes)
-    const magic = new TextEncoder().encode('PAR1')
+    const magic = encoder.encode('PAR1')
     const metadataLength = new Uint8Array(4)
     new DataView(metadataLength.buffer).setUint32(0, compressedMetadata.length, true)
 

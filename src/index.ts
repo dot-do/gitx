@@ -772,6 +772,124 @@ export {
   MAX_PKT_LINE_DATA,
 } from './wire/pkt-line'
 
+/**
+ * Git HTTP Authentication.
+ *
+ * @description
+ * Authentication layer for Git HTTP protocol operations (push/pull) including:
+ * - Basic authentication (username/password or token)
+ * - Bearer token authentication
+ * - Credential parsing and encoding
+ * - Authentication middleware
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createAuthMiddleware,
+ *   MemoryAuthProvider,
+ *   parseAuthorizationHeader,
+ *   encodeBasicAuth
+ * } from 'gitx.do'
+ *
+ * // Create an auth provider
+ * const provider = new MemoryAuthProvider({
+ *   users: {
+ *     'alice': { password: 'secret', scopes: ['repo:read', 'repo:write'] }
+ *   }
+ * })
+ *
+ * // Create middleware
+ * const auth = createAuthMiddleware(provider)
+ *
+ * // Authenticate a request
+ * const result = await auth.authenticate(request)
+ * if (!result.authenticated) {
+ *   return new Response('Unauthorized', { status: 401 })
+ * }
+ * ```
+ */
+export {
+  // Credential parsing/encoding
+  parseAuthorizationHeader,
+  encodeBasicAuth,
+  encodeBearerAuth,
+  // Response helpers
+  createUnauthorizedResponse,
+  // Type guards
+  isAnonymous,
+  isBasicAuth,
+  isBearerAuth,
+  // Utilities
+  constantTimeCompare,
+  // Constants
+  DEFAULT_REALM,
+  // Types
+  type AuthType,
+  type BasicCredentials,
+  type BearerCredentials,
+  type AnonymousCredentials,
+  type Credentials,
+  type AuthContext,
+  type AuthResult,
+  type AuthenticatedUser,
+  type AuthProvider,
+  type AuthOptions,
+} from './wire/auth'
+
+/**
+ * Git HTTP Authentication Middleware.
+ *
+ * @description
+ * Middleware for authenticating Git HTTP protocol requests including:
+ * - Request-level authentication
+ * - Integration with RepositoryProvider
+ * - Built-in auth providers (memory, callback)
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createAuthMiddleware,
+ *   MemoryAuthProvider,
+ *   CallbackAuthProvider,
+ *   createAuthenticatedRepositoryProvider
+ * } from 'gitx.do'
+ *
+ * // Memory-based provider for development
+ * const memProvider = new MemoryAuthProvider({
+ *   users: { 'user': { password: 'pass', scopes: ['repo:read'] } },
+ *   tokens: { 'token123': { scopes: ['repo:read', 'repo:write'] } }
+ * })
+ *
+ * // Callback-based provider for production
+ * const callbackProvider = new CallbackAuthProvider({
+ *   validateBasic: async (username, password, context) => {
+ *     const valid = await checkCredentials(username, password)
+ *     return { valid, user: valid ? { id: username } : undefined }
+ *   }
+ * })
+ *
+ * // Wrap repository with auth context
+ * const authedRepo = createAuthenticatedRepositoryProvider(
+ *   repository,
+ *   authResult.user,
+ *   authResult.scopes
+ * )
+ * ```
+ */
+export {
+  // Middleware factory
+  createAuthMiddleware,
+  // Built-in providers
+  MemoryAuthProvider,
+  CallbackAuthProvider,
+  // Repository wrapper
+  createAuthenticatedRepositoryProvider,
+  // Types
+  type AuthMiddleware,
+  type AuthenticationResult,
+  type MemoryAuthProviderConfig,
+} from './wire/auth-middleware'
+
 // =============================================================================
 // Storage - R2 packfile storage and object indexing
 // =============================================================================

@@ -250,7 +250,7 @@ export function calculateSimilarity(a: Uint8Array, b: Uint8Array): number {
   for (let i = 0; i <= a.length - windowSize; i++) {
     let hash = 0
     for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + a[i + j]) | 0
+      hash = ((hash << 5) - hash + (a[i + j] ?? 0)) | 0
     }
     hashes.add(hash)
   }
@@ -260,7 +260,7 @@ export function calculateSimilarity(a: Uint8Array, b: Uint8Array): number {
   for (let i = 0; i <= b.length - windowSize; i++) {
     let hash = 0
     for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + b[i + j]) | 0
+      hash = ((hash << 5) - hash + (b[i + j] ?? 0)) | 0
     }
     if (hashes.has(hash)) matches++
   }

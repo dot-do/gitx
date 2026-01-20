@@ -275,9 +275,8 @@ function parseDiffLines(diff: string): { oldLines: string[]; newLines: string[];
  * @description Main entry point for the `gitx review` command. Parses
  * command-line options and displays an interactive PR-style diff review.
  *
- * @param _ctx - Command context (unused in current implementation)
+ * @param ctx - Command context with cwd, args, options, and I/O functions
  * @returns Promise that resolves when review is complete
- * @throws {Error} Always throws "Not implemented" - command not yet implemented
  *
  * @example
  * // CLI usage
@@ -286,7 +285,7 @@ function parseDiffLines(diff: string): { oldLines: string[]; newLines: string[];
  * // gitx review --interactive
  */
 export async function reviewCommand(ctx: CommandContext): Promise<void> {
-  const { options, stdout } = ctx
+  const { cwd, args, options, stdout, stderr } = ctx
 
   // Handle --help flag
   if (options.help || options.h) {
@@ -313,7 +312,106 @@ Examples:
     return
   }
 
-  throw new Error('Not implemented')
+  // Parse branch arguments
+  let baseBranch = 'main'
+  let headBranch = 'HEAD'
+
+  if (args.length >= 2) {
+    // gitx review base head
+    baseBranch = args[0]
+    headBranch = args[1]
+  } else if (args.length === 1) {
+    const arg = args[0]
+    // Check for range syntax (base..head or base...head)
+    if (arg.includes('...')) {
+      const parts = arg.split('...')
+      baseBranch = parts[0] || 'main'
+      headBranch = parts[1] || 'HEAD'
+    } else if (arg.includes('..')) {
+      const parts = arg.split('..')
+      baseBranch = parts[0] || 'main'
+      headBranch = parts[1] || 'HEAD'
+    } else {
+      // Single argument - compare against main
+      headBranch = arg
+    }
+  }
+
+  try {
+    // Check if there are changes
+    const hasAnyChanges = await hasChanges(cwd, baseBranch, headBranch)
+    if (!hasAnyChanges) {
+      stdout(handleNoChanges(baseBranch, headBranch))
+      return
+    }
+
+    // Get the review diff
+    const result = await getReviewDiff(cwd, baseBranch, headBranch)
+
+    // Check for empty diff
+    if (result.files.length === 0) {
+      stdout(handleNoChanges(baseBranch, headBranch))
+      return
+    }
+
+    // Output header
+    stdout(`Comparing ${baseBranch}...${headBranch}`)
+    stdout(`${result.commitRange.commitCount} commit(s)`)
+    stdout('')
+
+    // Output summary
+    stdout(formatSummary(result.summary))
+    stdout('')
+
+    // Output file list with stats
+    for (const file of result.files) {
+      const statusIndicator = {
+        added: '+',
+        modified: 'M',
+        deleted: '-',
+        renamed: 'R'
+      }[file.status]
+
+      stdout(`${statusIndicator} ${formatFileStats(file)}`)
+    }
+
+    // If split view requested, render files in split format
+    if (options.split || options.s) {
+      stdout('')
+      stdout('--- Split View ---')
+      const terminalWidth = process.stdout.columns || 120
+      for (const file of result.files) {
+        stdout(`\n=== ${file.path} ===`)
+        const splitLines = renderSplitView(file, terminalWidth)
+        for (const line of splitLines) {
+          stdout(line)
+        }
+      }
+    } else {
+      // Unified view (default)
+      stdout('')
+      for (const file of result.files) {
+        stdout(`\n=== ${file.path} ===`)
+        const unifiedLines = renderUnifiedView(file)
+        for (const line of unifiedLines) {
+          stdout(line)
+        }
+      }
+    }
+
+    // Interactive mode note
+    if (options.interactive || options.i) {
+      stdout('')
+      stdout('Interactive mode: Use j/k to navigate, q to quit, enter to toggle collapse')
+      // Note: Full interactive mode would require terminal UI library
+      // For now, just output the diff in a browsable format
+    }
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    stderr(`fatal: ${message}`)
+    throw error
+  }
 }
 
 // ============================================================================

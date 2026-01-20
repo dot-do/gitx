@@ -113,7 +113,10 @@ function validateIdentity(identity: GitIdentity, field: string): TagValidationRe
     return { isValid: false, error: `Invalid ${field} timezone format: expected +/-HHMM` }
   }
 
-  return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined }
+  if (warnings.length > 0) {
+    return { isValid: true, warnings }
+  }
+  return { isValid: true }
 }
 
 /**
@@ -182,7 +185,10 @@ export function validateTagData(data: TagData | ExtendedTagData): TagValidationR
     return { isValid: false, error: 'Tag message must be a string' }
   }
 
-  return { isValid: true, warnings: warnings.length > 0 ? warnings : undefined }
+  if (warnings.length > 0) {
+    return { isValid: true, warnings }
+  }
+  return { isValid: true }
 }
 
 // =============================================================================
@@ -243,7 +249,9 @@ export class GitTag {
     this.object = data.object
     this.objectType = data.objectType
     this.name = data.name
-    this.tagger = data.tagger ? Object.freeze({ ...data.tagger }) : undefined
+    if (data.tagger !== undefined) {
+      this.tagger = Object.freeze({ ...data.tagger })
+    }
     this.message = data.message
 
     // Store GPG signature and extra headers if provided
@@ -448,6 +456,7 @@ function parseMultilineHeader(
   if (headerName === 'gpgsig' || firstLineValue.includes('-----BEGIN PGP SIGNATURE-----')) {
     while (i < lines.length) {
       const line = lines[i]
+      if (line === undefined) break
       // Remove leading space from continuation lines
       const lineContent = line.startsWith(' ') ? line.slice(1) : line
 
@@ -477,9 +486,11 @@ function parseMultilineHeader(
     }
   } else {
     // Continue reading lines that start with space (continuation)
-    while (i < lines.length && lines[i].startsWith(' ')) {
+    while (i < lines.length) {
+      const currentLine = lines[i]
+      if (currentLine === undefined || !currentLine.startsWith(' ')) break
       // Remove the leading space from continuation lines
-      valueLines.push(lines[i].slice(1))
+      valueLines.push(currentLine.slice(1))
       i++
     }
     i-- // Back up because main loop will increment
@@ -511,6 +522,7 @@ function parseTagContent(content: string): GitTag {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
+    if (line === undefined) break
 
     // Empty line marks start of message
     if (line === '') {

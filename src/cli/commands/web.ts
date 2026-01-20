@@ -703,12 +703,12 @@ export async function uploadPreview(
           body: html,
           signal: controller.signal,
         })
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') {
           throw new Error('Request timed out')
         }
         // Wrap network errors with a better message
-        const message = err?.message || String(err)
+        const message = err instanceof Error ? err.message : String(err)
 
         // Try to infer error type from endpoint URL for better error messages
         // This helps in testing scenarios where mock servers may be unreachable

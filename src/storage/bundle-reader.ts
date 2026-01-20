@@ -6,13 +6,16 @@
  * - Range reads for partial object data
  * - Batch read operations
  * - LRU cache eviction for bundle indices
- *
- * This is a stub file for RED phase TDD.
- * All exports throw "not implemented" errors.
  */
 
 import type { StorageBackend } from './backend'
-import type { BundleObjectType, BundleIndexEntry, BundleObject } from './bundle-format'
+import {
+  BundleReader,
+  BundleFormatError,
+  type BundleObjectType,
+  type BundleIndexEntry,
+  type BundleObject
+} from './bundle-format'
 
 // Re-export types from bundle-format for convenience
 export type { BundleObjectType, BundleIndexEntry, BundleObject }
@@ -94,6 +97,13 @@ export class BundleNotFoundError extends BundleReaderError {
   }
 }
 
+interface CachedBundle {
+  reader: BundleReader
+  data: Uint8Array
+  size: number
+  lastAccess: number
+}
+
 /**
  * BundleReaderService - High-level service for reading objects from bundles
  *
@@ -104,107 +114,264 @@ export class BundleNotFoundError extends BundleReaderError {
  * - Concurrent read handling
  */
 export class BundleReaderService {
-  constructor(_storage: StorageBackend, _options?: BundleReaderOptions) {
-    throw new Error('BundleReaderService not implemented')
+  private storage: StorageBackend
+  private options: Required<BundleReaderOptions>
+  private cache: Map<string, CachedBundle> = new Map()
+  private pendingLoads: Map<string, Promise<CachedBundle>> = new Map()
+  private cacheBytes: number = 0
+  private cacheHits: number = 0
+  private cacheMisses: number = 0
+
+  constructor(storage: StorageBackend, options?: BundleReaderOptions) {
+    this.storage = storage
+    this.options = {
+      maxCachedBundles: options?.maxCachedBundles ?? 100,
+      maxCacheBytes: options?.maxCacheBytes ?? 100 * 1024 * 1024, // 100MB default
+      indexCacheTTL: options?.indexCacheTTL ?? 3600000 // 1 hour default
+    }
   }
 
   /**
    * Maximum number of bundles that can be cached
    */
   get maxCachedBundles(): number {
-    throw new Error('BundleReaderService.maxCachedBundles not implemented')
+    return this.options.maxCachedBundles
+  }
+
+  /**
+   * Load a bundle from storage and cache it
+   */
+  private async loadBundle(bundlePath: string): Promise<CachedBundle> {
+    // Check if already loading
+    const pending = this.pendingLoads.get(bundlePath)
+    if (pending) {
+      return pending
+    }
+
+    // Check cache first
+    const cached = this.cache.get(bundlePath)
+    if (cached) {
+      this.cacheHits++
+      cached.lastAccess = Date.now()
+      // Move to end of Map for LRU
+      this.cache.delete(bundlePath)
+      this.cache.set(bundlePath, cached)
+      return cached
+    }
+
+    this.cacheMisses++
+
+    // Load from storage
+    const loadPromise = this.loadBundleFromStorage(bundlePath)
+    this.pendingLoads.set(bundlePath, loadPromise)
+
+    try {
+      const result = await loadPromise
+      return result
+    } finally {
+      this.pendingLoads.delete(bundlePath)
+    }
+  }
+
+  private async loadBundleFromStorage(bundlePath: string): Promise<CachedBundle> {
+    let data: Uint8Array | null
+    try {
+      data = await this.storage.readFile(bundlePath)
+    } catch (error) {
+      throw new BundleReaderError(
+        `Storage read failed for ${bundlePath}: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+
+    if (!data) {
+      throw new BundleNotFoundError(bundlePath)
+    }
+
+    // Parse the bundle
+    let reader: BundleReader
+    try {
+      reader = new BundleReader(data)
+    } catch (error) {
+      if (error instanceof BundleFormatError) {
+        throw error
+      }
+      throw error
+    }
+
+    const cachedBundle: CachedBundle = {
+      reader,
+      data,
+      size: data.length,
+      lastAccess: Date.now()
+    }
+
+    // Evict if needed before adding
+    this.evictIfNeeded(data.length)
+
+    // Add to cache
+    this.cache.set(bundlePath, cachedBundle)
+    this.cacheBytes += data.length
+
+    return cachedBundle
+  }
+
+  private evictIfNeeded(additionalBytes: number): void {
+    // Evict by count
+    while (
+      this.cache.size >= this.options.maxCachedBundles ||
+      this.cacheBytes + additionalBytes > this.options.maxCacheBytes
+    ) {
+      if (this.cache.size === 0) break
+
+      // Evict oldest (first in Map)
+      const oldest = this.cache.keys().next()
+      if (oldest.done) break
+
+      const evicted = this.cache.get(oldest.value)
+      if (evicted) {
+        this.cacheBytes -= evicted.size
+      }
+      this.cache.delete(oldest.value)
+    }
+  }
+
+  private validateOidLength(oid: string): void {
+    if (oid.length !== 40) {
+      throw new BundleReaderError(`Invalid OID length: expected 40, got ${oid.length}`)
+    }
   }
 
   /**
    * Read a single object from a bundle by OID
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @param oid - 40-character hex OID of the object
-   * @returns The object data or null if not found
-   * @throws BundleNotFoundError if the bundle doesn't exist
-   * @throws BundleFormatError if the bundle is malformed
    */
-  async readObject(_bundlePath: string, _oid: string): Promise<BundleObject | null> {
-    throw new Error('BundleReaderService.readObject not implemented')
+  async readObject(bundlePath: string, oid: string): Promise<BundleObject | null> {
+    this.validateOidLength(oid)
+    const cached = await this.loadBundle(bundlePath)
+    return cached.reader.readObject(oid)
   }
 
   /**
    * Read a range of bytes from an object
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @param oid - 40-character hex OID of the object
-   * @param start - Starting byte offset (inclusive)
-   * @param end - Ending byte offset (exclusive), or undefined for end of object
-   * @returns Range read result with partial data and metadata
    */
   async readObjectRange(
-    _bundlePath: string,
-    _oid: string,
-    _start: number,
-    _end?: number
+    bundlePath: string,
+    oid: string,
+    start: number,
+    end?: number
   ): Promise<RangeReadResult> {
-    throw new Error('BundleReaderService.readObjectRange not implemented')
+    const cached = await this.loadBundle(bundlePath)
+    const entry = cached.reader.getEntry(oid)
+
+    if (!entry) {
+      throw new BundleReaderError(`Object not found: ${oid}`)
+    }
+
+    const totalSize = entry.size
+
+    // Clamp start to valid range
+    const actualStart = Math.min(Math.max(0, start), totalSize)
+
+    // Determine end position
+    let actualEnd: number
+    if (end === undefined) {
+      actualEnd = totalSize
+    } else {
+      actualEnd = Math.min(Math.max(actualStart, end), totalSize)
+    }
+
+    // Handle out-of-bounds start
+    if (actualStart >= totalSize) {
+      return {
+        oid,
+        type: entry.type,
+        totalSize,
+        offset: actualStart,
+        data: new Uint8Array(0),
+        truncated: false
+      }
+    }
+
+    // Read the full object and slice
+    const fullObject = cached.reader.readObject(oid)
+    if (!fullObject) {
+      throw new BundleReaderError(`Object not found: ${oid}`)
+    }
+
+    const data = fullObject.data.slice(actualStart, actualEnd)
+    const truncated = end !== undefined && end > totalSize
+
+    return {
+      oid,
+      type: entry.type,
+      totalSize,
+      offset: actualStart,
+      data,
+      truncated
+    }
   }
 
   /**
    * Batch read multiple objects from a bundle
-   *
-   * Objects are returned in the same order as the requested OIDs.
-   * Missing objects are returned as null in the result array.
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @param oids - Array of 40-character hex OIDs
-   * @returns Array of objects (or null for missing) in requested order
    */
-  async readObjectsBatch(_bundlePath: string, _oids: string[]): Promise<BatchReadResult> {
-    throw new Error('BundleReaderService.readObjectsBatch not implemented')
+  async readObjectsBatch(bundlePath: string, oids: string[]): Promise<BatchReadResult> {
+    if (oids.length === 0) {
+      return []
+    }
+
+    const cached = await this.loadBundle(bundlePath)
+    const results: BatchReadResult = []
+
+    for (const oid of oids) {
+      const obj = cached.reader.readObject(oid)
+      results.push(obj)
+    }
+
+    return results
   }
 
   /**
    * List all OIDs in a bundle
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @returns Array of OIDs in the bundle
    */
-  async listOids(_bundlePath: string): Promise<string[]> {
-    throw new Error('BundleReaderService.listOids not implemented')
+  async listOids(bundlePath: string): Promise<string[]> {
+    const cached = await this.loadBundle(bundlePath)
+    return cached.reader.listOids()
   }
 
   /**
    * Check if an object exists in a bundle
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @param oid - 40-character hex OID
-   * @returns True if the object exists in the bundle
    */
-  async hasObject(_bundlePath: string, _oid: string): Promise<boolean> {
-    throw new Error('BundleReaderService.hasObject not implemented')
+  async hasObject(bundlePath: string, oid: string): Promise<boolean> {
+    const cached = await this.loadBundle(bundlePath)
+    return cached.reader.hasObject(oid)
   }
 
   /**
    * Get entry metadata without reading the full object data
-   *
-   * @param bundlePath - Path to the bundle file in storage
-   * @param oid - 40-character hex OID
-   * @returns Index entry with metadata, or null if not found
    */
-  async getEntry(_bundlePath: string, _oid: string): Promise<BundleIndexEntry | null> {
-    throw new Error('BundleReaderService.getEntry not implemented')
+  async getEntry(bundlePath: string, oid: string): Promise<BundleIndexEntry | null> {
+    const cached = await this.loadBundle(bundlePath)
+    return cached.reader.getEntry(oid)
   }
 
   /**
    * Get cache statistics
-   *
-   * @returns Current cache statistics
    */
   getCacheStats(): BundleReaderCacheStats {
-    throw new Error('BundleReaderService.getCacheStats not implemented')
+    const total = this.cacheHits + this.cacheMisses
+    return {
+      hits: this.cacheHits,
+      misses: this.cacheMisses,
+      bundleCount: this.cache.size,
+      bytes: this.cacheBytes,
+      hitRate: total > 0 ? (this.cacheHits / total) * 100 : 0
+    }
   }
 
   /**
    * Clear all cached bundle data
    */
   clearCache(): void {
-    throw new Error('BundleReaderService.clearCache not implemented')
+    this.cache.clear()
+    this.cacheBytes = 0
   }
 }
