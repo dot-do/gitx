@@ -1,0 +1,65 @@
+{
+  "name": "@dotdo/gitx",
+  "version": "0.1.1",
+  "description": "Pure Git implementation in TypeScript - object parsing, pack files, delta compression, refs. Zero dependencies.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./objects": {
+      "types": "./dist/objects/index.d.ts",
+      "import": "./dist/objects/index.js"
+    },
+    "./pack": {
+      "types": "./dist/pack/index.d.ts",
+      "import": "./dist/pack/index.js"
+    },
+    "./refs": {
+      "types": "./dist/refs/index.d.ts",
+      "import": "./dist/refs/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "git",
+    "version-control",
+    "vcs",
+    "pack",
+    "delta",
+    "objects",
+    "refs",
+    "blob",
+    "tree",
+    "commit",
+    "tag",
+    "typescript",
+    "pure",
+    "portable"
+  ],
+  "author": "dot-do",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dot-do/gitx.git",
+    "directory": "packages/core"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

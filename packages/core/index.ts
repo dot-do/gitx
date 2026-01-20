@@ -185,3 +185,21 @@ export * from './refs'
 // =============================================================================
 
 export * from './protocol'
+
+// =============================================================================
+// Storage Interfaces
+// =============================================================================
+
+export {
+  type StoredObjectResult,
+  type BasicObjectStore,
+  type RefObjectStore,
+  type ObjectStore,
+  type CommitInfo,
+  type CommitProvider,
+  type StorageBackend,
+  type HashFunction,
+  type CompressionProvider,
+  type ValidationResult,
+  type OperationResult,
+} from './types'

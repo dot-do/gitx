@@ -1,30 +1,16 @@
 {
-  "name": "gitx.do",
+  "name": "gitx-monorepo",
   "version": "0.1.1",
-  "description": "Git on Cloudflare Durable Objects - A complete git reimplementation for the edge",
+  "private": true,
+  "description": "Git on Cloudflare - Monorepo containing @dotdo/gitx (core) and gitx.do (service)",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": {
-    "gitx": "./dist/cli/index.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./do": {
-      "types": "./dist/do/index.d.ts",
-      "import": "./dist/do/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md"
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build --workspaces",
+    "build:core": "npm run build -w @dotdo/gitx",
+    "build:do": "npm run build -w gitx.do",
     "test": "vitest run",
     "test:node": "vitest run --config vitest.node.config.ts",
     "test:all": "vitest run && vitest run --config vitest.node.config.ts",
@@ -33,7 +19,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "lint": "eslint src test --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist && npm run clean --workspaces --if-present"
   },
   "keywords": [
     "git",

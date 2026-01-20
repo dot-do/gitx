@@ -2,6 +2,8 @@
 
 Pure Git implementation in TypeScript. Parse objects, read/write pack files, handle delta compression, manage refs. Zero dependencies - runs anywhere JavaScript runs.
 
+This is the core package that provides platform-agnostic Git functionality. For Cloudflare Workers/Durable Objects integration, see [gitx.do](../do).
+
 ## Installation
 
 ```bash

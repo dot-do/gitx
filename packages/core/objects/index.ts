@@ -17,8 +17,20 @@
 export { GitBlob } from './blob'
 export { GitTree, sortTreeEntries, parseTreeEntries, serializeTreeEntries } from './tree'
 export type { TreeEntry } from './tree'
-export { GitCommit, parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature } from './commit'
-export type { GitIdentity } from './commit'
+export {
+  GitCommit,
+  parseIdentity,
+  formatIdentity,
+  hasGpgSignature,
+  parseGpgSignature,
+  validateCommitData,
+} from './commit'
+export type {
+  GitIdentity,
+  CommitValidationResult,
+  CommitExtraHeaders,
+  ExtendedCommitData,
+} from './commit'
 export { GitTag } from './tag'
 
 // =============================================================================

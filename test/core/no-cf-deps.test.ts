@@ -1,12 +1,12 @@
 /**
  * RED Phase Tests: Verify core/ directory has ZERO Cloudflare dependencies
  *
- * These tests scan all TypeScript files in src/core/ to ensure the core
+ * These tests scan all TypeScript files in packages/core/ to ensure the core
  * git implementation is completely platform-agnostic with no Cloudflare
  * runtime dependencies.
  *
  * Tests should FAIL initially because:
- * 1. src/core/ directory doesn't exist yet
+ * 1. packages/core/ directory doesn't exist yet
  * 2. Once created, code may need to be cleaned of CF dependencies
  *
  * The goal is to have a pure git implementation that can run anywhere:
@@ -335,7 +335,7 @@ function formatViolations(violations: Violation[]): string {
 }
 
 // Resolve the core directory path
-const CORE_DIR = path.resolve(__dirname, '../../src/core')
+const CORE_DIR = path.resolve(__dirname, '../../packages/core')
 
 describe('Core Directory: Zero Cloudflare Dependencies', () => {
   let scanResult: ScanResult
@@ -345,10 +345,10 @@ describe('Core Directory: Zero Cloudflare Dependencies', () => {
   })
 
   describe('Directory Structure', () => {
-    it('should have src/core/ directory', () => {
+    it('should have packages/core/ directory', () => {
       expect(
         scanResult.directoryExists,
-        `src/core/ directory does not exist at ${CORE_DIR}. ` +
+        `packages/core/ directory does not exist at ${CORE_DIR}. ` +
           'Create the core directory with platform-agnostic git implementation.'
       ).toBe(true)
     })
@@ -356,7 +356,7 @@ describe('Core Directory: Zero Cloudflare Dependencies', () => {
     it('should contain TypeScript files', () => {
       expect(
         scanResult.filesScanned,
-        'src/core/ should contain TypeScript files with the git implementation'
+        'packages/core/ should contain TypeScript files with the git implementation'
       ).toBeGreaterThan(0)
     })
   })
@@ -580,7 +580,7 @@ describe('Core Directory: Expected Contents', () => {
 
     expect(
       hasObjects,
-      'src/core/ should contain objects.ts or objects/ directory for git object types (blob, tree, commit, tag)'
+      'packages/core/ should contain objects.ts or objects/ directory for git object types (blob, tree, commit, tag)'
     ).toBe(true)
   })
 
@@ -591,7 +591,7 @@ describe('Core Directory: Expected Contents', () => {
 
     expect(
       hasRefs,
-      'src/core/ should contain refs.ts or refs/ directory for reference management'
+      'packages/core/ should contain refs.ts or refs/ directory for reference management'
     ).toBe(true)
   })
 
@@ -602,7 +602,7 @@ describe('Core Directory: Expected Contents', () => {
 
     expect(
       hasPack,
-      'src/core/ should contain pack.ts or pack/ directory for packfile format'
+      'packages/core/ should contain pack.ts or pack/ directory for packfile format'
     ).toBe(true)
   })
 
@@ -617,7 +617,7 @@ describe('Core Directory: Expected Contents', () => {
 
     expect(
       hasStorage,
-      'src/core/ should define storage abstraction interface (not CF-specific implementation)'
+      'packages/core/ should define storage abstraction interface (not CF-specific implementation)'
     ).toBe(true)
   })
 })
