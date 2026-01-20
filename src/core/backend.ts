@@ -28,6 +28,7 @@
  */
 
 import type { GitObject, ObjectType } from '../types/objects'
+import { isValidObjectType } from '../types/objects'
 
 // Re-export types from objects for convenience
 export type { GitObject, ObjectType, BlobObject, TreeObject, CommitObject, TagObject } from '../types/objects'
@@ -481,6 +482,8 @@ export function createMemoryBackend(): MemoryBackend {
   const objects = new Map<string, GitObject>()
   const refs = new Map<string, string>()
   const packedRefs: PackedRefs = { refs: new Map() }
+  const packs = new Map<string, Uint8Array>()
+  const symbolicRefs = new Map<string, string>()
 
   return {
     // =========================================================================
@@ -508,6 +511,11 @@ export function createMemoryBackend(): MemoryBackend {
     },
 
     async writeObject(obj: GitObject): Promise<string> {
+      // Validate object type
+      if (!isValidObjectType(obj.type)) {
+        throw new Error(`Invalid object type: ${obj.type}`)
+      }
+
       const sha = await computeGitSha(obj.type, obj.data)
 
       // Store a copy to prevent mutation
@@ -575,6 +583,71 @@ export function createMemoryBackend(): MemoryBackend {
           data: new Uint8Array(obj.data),
         } as GitObject)
       }
+
+      // Store the pack data itself
+      const packName = `pack-default`
+      packs.set(packName, new Uint8Array(pack))
+    },
+
+    // =========================================================================
+    // Extended Pack Operations
+    // =========================================================================
+
+    async readPack(name: string): Promise<Uint8Array | null> {
+      const pack = packs.get(name)
+      return pack ? new Uint8Array(pack) : null
+    },
+
+    async listPacks(): Promise<string[]> {
+      return Array.from(packs.keys())
+    },
+
+    // =========================================================================
+    // Symbolic Ref Operations
+    // =========================================================================
+
+    async writeSymbolicRef(name: string, target: string): Promise<void> {
+      symbolicRefs.set(name, target)
+    },
+
+    async readSymbolicRef(name: string): Promise<string | null> {
+      return symbolicRefs.get(name) ?? null
+    },
+
+    // =========================================================================
+    // Atomic Ref Operations
+    // =========================================================================
+
+    async compareAndSwapRef(name: string, expectedSha: string | null, newSha: string): Promise<boolean> {
+      const currentSha = refs.get(name) ?? null
+
+      // If expected is null, we're trying to create a new ref
+      if (expectedSha === null) {
+        if (currentSha !== null) {
+          // Ref already exists, fail
+          return false
+        }
+        refs.set(name, normalizeSha(newSha))
+        return true
+      }
+
+      // Check if current matches expected
+      if (currentSha !== normalizeSha(expectedSha)) {
+        return false
+      }
+
+      refs.set(name, normalizeSha(newSha))
+      return true
+    },
+
+    // =========================================================================
+    // Object Deletion
+    // =========================================================================
+
+    async deleteObject(sha: string): Promise<void> {
+      if (isValidSha(sha)) {
+        objects.delete(normalizeSha(sha))
+      }
     },
 
     // =========================================================================
@@ -588,6 +661,8 @@ export function createMemoryBackend(): MemoryBackend {
       if (packedRefs.peeled) {
         packedRefs.peeled.clear()
       }
+      packs.clear()
+      symbolicRefs.clear()
     },
   }
 }

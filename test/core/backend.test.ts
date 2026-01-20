@@ -18,6 +18,13 @@
  * 11. MemoryBackend implementation for testing
  * 12. Backend isolation (multiple instances don't share state)
  *
+ * NEW - RED Phase tests (these should FAIL until GREEN phase):
+ * 13. readPack(id: string): Promise<ReadableStream | null> - streaming pack read
+ * 14. writePack(stream: ReadableStream): Promise<string> - streaming pack write
+ * 15. listPacks(): Promise<string[]> - list all pack IDs
+ * 16. deletePack(id: string): Promise<void> - delete a pack
+ * 17. MockBackend with call recording for test verification
+ *
  * @module test/core/backend
  */
 
@@ -25,11 +32,14 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import type {
   GitBackend,
   MemoryBackend,
+  MockBackend,
   Ref,
   PackedRefs,
+  MethodCall,
 } from '../../src/core/backend'
 import {
   createMemoryBackend,
+  createMockBackend,
 } from '../../src/core/backend'
 import type { GitObject, BlobObject, TreeObject, CommitObject, TagObject, ObjectType } from '../../src/types/objects'
 
@@ -109,15 +119,26 @@ describe('GitBackend Interface', () => {
     })
 
     it('should have all required methods', () => {
+      // Object operations
       expect(typeof backend.readObject).toBe('function')
       expect(typeof backend.writeObject).toBe('function')
       expect(typeof backend.hasObject).toBe('function')
+      // Ref operations
       expect(typeof backend.readRef).toBe('function')
       expect(typeof backend.writeRef).toBe('function')
       expect(typeof backend.deleteRef).toBe('function')
       expect(typeof backend.listRefs).toBe('function')
+      // Packed refs operations
       expect(typeof backend.readPackedRefs).toBe('function')
       expect(typeof backend.writePackfile).toBe('function')
+    })
+
+    it('should have pack streaming methods (NEW - RED phase)', () => {
+      // Pack streaming operations - these should FAIL until GREEN phase
+      expect(typeof backend.readPack).toBe('function')
+      expect(typeof backend.writePack).toBe('function')
+      expect(typeof backend.listPacks).toBe('function')
+      expect(typeof backend.deletePack).toBe('function')
     })
   })
 
@@ -621,6 +642,311 @@ describe('GitBackend Interface', () => {
     })
   })
 
+  // ==========================================================================
+  // Pack Streaming Operations (NEW - RED phase)
+  // ==========================================================================
+
+  describe('readPack(id: string): Promise<ReadableStream>', () => {
+    it('should return a ReadableStream for an existing pack', async () => {
+      // First write a pack
+      const packData = createMinimalPackfile()
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      const stream = await backend.readPack(packId)
+
+      expect(stream).toBeInstanceOf(ReadableStream)
+    })
+
+    it('should throw or return null for non-existent pack', async () => {
+      // Attempting to read a pack that doesn't exist
+      const result = await backend.readPack('nonexistent-pack-id')
+
+      // Should return null (like readObject) for consistency
+      expect(result).toBeNull()
+    })
+
+    it('should stream pack content that can be fully consumed', async () => {
+      const packData = createMinimalPackfile()
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      const stream = await backend.readPack(packId)
+      expect(stream).not.toBeNull()
+
+      // Consume the stream
+      const reader = stream!.getReader()
+      const chunks: Uint8Array[] = []
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+      }
+
+      // Combine chunks and verify content
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+      const result = new Uint8Array(totalLength)
+      let offset = 0
+      for (const chunk of chunks) {
+        result.set(chunk, offset)
+        offset += chunk.length
+      }
+
+      expect(result).toEqual(packData)
+    })
+
+    it('should handle large pack files in streaming fashion', async () => {
+      // Create a larger packfile (simulated with random data for size)
+      const largePack = new Uint8Array(1024 * 100) // 100KB
+      largePack.set(createMinimalPackfile()) // Valid header
+      for (let i = 32; i < largePack.length; i++) {
+        largePack[i] = i % 256
+      }
+
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          // Stream in chunks
+          const chunkSize = 8192
+          for (let i = 0; i < largePack.length; i += chunkSize) {
+            controller.enqueue(largePack.slice(i, Math.min(i + chunkSize, largePack.length)))
+          }
+          controller.close()
+        }
+      }))
+
+      const stream = await backend.readPack(packId)
+      expect(stream).not.toBeNull()
+
+      // Verify we can read it back
+      const reader = stream!.getReader()
+      let totalBytesRead = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        totalBytesRead += value.length
+      }
+
+      expect(totalBytesRead).toBe(largePack.length)
+    })
+  })
+
+  describe('writePack(stream: ReadableStream): Promise<string>', () => {
+    it('should return a pack ID string', async () => {
+      const packData = createMinimalPackfile()
+
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      expect(typeof packId).toBe('string')
+      expect(packId.length).toBeGreaterThan(0)
+    })
+
+    it('should accept a ReadableStream and store the pack', async () => {
+      const packData = createMinimalPackfile()
+
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      // Verify the pack is now retrievable
+      const stream = await backend.readPack(packId)
+      expect(stream).not.toBeNull()
+    })
+
+    it('should return consistent ID for same pack content', async () => {
+      const packData = createMinimalPackfile()
+
+      const createStream = () => new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      })
+
+      const packId1 = await backend.writePack(createStream())
+      const packId2 = await backend.writePack(createStream())
+
+      // Same content should produce same ID (content-addressable)
+      expect(packId1).toBe(packId2)
+    })
+
+    it('should handle chunked stream input', async () => {
+      const packData = createMinimalPackfile()
+
+      // Stream the pack data in small chunks
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          // Send in 4-byte chunks
+          for (let i = 0; i < packData.length; i += 4) {
+            controller.enqueue(packData.slice(i, Math.min(i + 4, packData.length)))
+          }
+          controller.close()
+        }
+      }))
+
+      expect(typeof packId).toBe('string')
+
+      // Verify content is intact
+      const stream = await backend.readPack(packId)
+      const reader = stream!.getReader()
+      const chunks: Uint8Array[] = []
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+      }
+
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+      expect(totalLength).toBe(packData.length)
+    })
+
+    it('should handle empty pack (header only)', async () => {
+      const emptyPack = createEmptyPackfile()
+
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(emptyPack)
+          controller.close()
+        }
+      }))
+
+      expect(typeof packId).toBe('string')
+    })
+  })
+
+  describe('listPacks(): Promise<string[]>', () => {
+    it('should return empty array when no packs exist', async () => {
+      const packs = await backend.listPacks()
+
+      expect(Array.isArray(packs)).toBe(true)
+      expect(packs.length).toBe(0)
+    })
+
+    it('should list all stored pack IDs', async () => {
+      // Write multiple packs with different content
+      const pack1 = createMinimalPackfile()
+      const pack2 = new Uint8Array(pack1.length + 10)
+      pack2.set(pack1)
+      pack2[pack1.length] = 0xff // Different content
+
+      const id1 = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(pack1)
+          controller.close()
+        }
+      }))
+
+      const id2 = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(pack2)
+          controller.close()
+        }
+      }))
+
+      const packs = await backend.listPacks()
+
+      expect(packs).toContain(id1)
+      expect(packs).toContain(id2)
+      expect(packs.length).toBe(2)
+    })
+
+    it('should not include deleted packs', async () => {
+      const packData = createMinimalPackfile()
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      // Verify it's listed
+      let packs = await backend.listPacks()
+      expect(packs).toContain(packId)
+
+      // Delete it
+      await backend.deletePack(packId)
+
+      // Should no longer be listed
+      packs = await backend.listPacks()
+      expect(packs).not.toContain(packId)
+    })
+  })
+
+  describe('deletePack(id: string): Promise<void>', () => {
+    it('should delete an existing pack', async () => {
+      const packData = createMinimalPackfile()
+      const packId = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(packData)
+          controller.close()
+        }
+      }))
+
+      // Verify pack exists
+      expect(await backend.readPack(packId)).not.toBeNull()
+
+      // Delete it
+      await backend.deletePack(packId)
+
+      // Verify it's gone
+      expect(await backend.readPack(packId)).toBeNull()
+    })
+
+    it('should not throw for non-existent pack (idempotent)', async () => {
+      // Deleting a non-existent pack should not throw
+      await expect(backend.deletePack('nonexistent-pack-id')).resolves.toBeUndefined()
+    })
+
+    it('should only delete the specified pack', async () => {
+      const pack1 = createMinimalPackfile()
+      const pack2 = new Uint8Array(pack1.length + 5)
+      pack2.set(pack1)
+      pack2[pack1.length] = 0xaa
+
+      const id1 = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(pack1)
+          controller.close()
+        }
+      }))
+
+      const id2 = await backend.writePack(new ReadableStream({
+        start(controller) {
+          controller.enqueue(pack2)
+          controller.close()
+        }
+      }))
+
+      // Delete only pack1
+      await backend.deletePack(id1)
+
+      // pack1 should be gone
+      expect(await backend.readPack(id1)).toBeNull()
+
+      // pack2 should still exist
+      expect(await backend.readPack(id2)).not.toBeNull()
+    })
+  })
+
+  // ==========================================================================
+  // Legacy Packed Refs Operations (existing)
+  // ==========================================================================
+
   describe('writePackfile(pack: Uint8Array): Promise<void>', () => {
     it('should accept a packfile without error', async () => {
       // Minimal valid packfile structure
@@ -892,6 +1218,165 @@ describe('GitBackend Interface', () => {
       // Should have the last value
       const result = await backend.readRef('refs/heads/rapid')
       expect(result).toBe(updates[updates.length - 1])
+    })
+  })
+})
+
+// ============================================================================
+// MockBackend Tests (NEW - RED phase)
+// ============================================================================
+
+describe('MockBackend (Call Recording)', () => {
+  let mockBackend: MockBackend
+
+  beforeEach(() => {
+    mockBackend = createMockBackend()
+  })
+
+  describe('createMockBackend()', () => {
+    it('should create a MockBackend instance', () => {
+      const backend = createMockBackend()
+      expect(backend).toBeDefined()
+    })
+
+    it('should implement GitBackend interface', () => {
+      expect(typeof mockBackend.readObject).toBe('function')
+      expect(typeof mockBackend.writeObject).toBe('function')
+      expect(typeof mockBackend.hasObject).toBe('function')
+      expect(typeof mockBackend.readRef).toBe('function')
+      expect(typeof mockBackend.writeRef).toBe('function')
+      expect(typeof mockBackend.deleteRef).toBe('function')
+      expect(typeof mockBackend.listRefs).toBe('function')
+      expect(typeof mockBackend.readPackedRefs).toBe('function')
+      expect(typeof mockBackend.writePackfile).toBe('function')
+    })
+
+    it('should have call recording methods', () => {
+      expect(typeof mockBackend.getCalls).toBe('function')
+      expect(typeof mockBackend.getCallsFor).toBe('function')
+      expect(typeof mockBackend.clearCalls).toBe('function')
+    })
+  })
+
+  describe('getCalls(): MethodCall[]', () => {
+    it('should return empty array initially', () => {
+      const calls = mockBackend.getCalls()
+      expect(Array.isArray(calls)).toBe(true)
+      expect(calls.length).toBe(0)
+    })
+
+    it('should record all method calls in order', async () => {
+      const blob: BlobObject = { type: 'blob', data: new TextEncoder().encode('test') }
+
+      await mockBackend.writeObject(blob)
+      await mockBackend.readRef('refs/heads/main')
+      await mockBackend.hasObject('a'.repeat(40))
+
+      const calls = mockBackend.getCalls()
+
+      expect(calls.length).toBe(3)
+      expect(calls[0].method).toBe('writeObject')
+      expect(calls[1].method).toBe('readRef')
+      expect(calls[2].method).toBe('hasObject')
+    })
+
+    it('should include call arguments', async () => {
+      const sha = 'b'.repeat(40)
+      await mockBackend.readObject(sha)
+
+      const calls = mockBackend.getCalls()
+
+      expect(calls.length).toBe(1)
+      expect(calls[0].method).toBe('readObject')
+      expect(calls[0].args).toEqual([sha])
+    })
+
+    it('should include timestamp for each call', async () => {
+      await mockBackend.readRef('refs/heads/test')
+
+      const calls = mockBackend.getCalls()
+
+      expect(calls.length).toBe(1)
+      expect(typeof calls[0].timestamp).toBe('number')
+      expect(calls[0].timestamp).toBeLessThanOrEqual(Date.now())
+    })
+  })
+
+  describe('getCallsFor(method: string): MethodCall[]', () => {
+    it('should filter calls by method name', async () => {
+      const blob: BlobObject = { type: 'blob', data: new TextEncoder().encode('test') }
+
+      await mockBackend.writeObject(blob)
+      await mockBackend.readRef('refs/heads/main')
+      await mockBackend.writeObject(blob)
+      await mockBackend.readRef('refs/heads/develop')
+
+      const writeCalls = mockBackend.getCallsFor('writeObject')
+      const readCalls = mockBackend.getCallsFor('readRef')
+
+      expect(writeCalls.length).toBe(2)
+      expect(readCalls.length).toBe(2)
+      expect(writeCalls.every(c => c.method === 'writeObject')).toBe(true)
+      expect(readCalls.every(c => c.method === 'readRef')).toBe(true)
+    })
+
+    it('should return empty array for unrecorded method', async () => {
+      await mockBackend.readRef('refs/heads/main')
+
+      const calls = mockBackend.getCallsFor('writeObject')
+
+      expect(calls).toEqual([])
+    })
+  })
+
+  describe('clearCalls(): void', () => {
+    it('should clear all recorded calls', async () => {
+      await mockBackend.readObject('a'.repeat(40))
+      await mockBackend.readRef('refs/heads/main')
+
+      expect(mockBackend.getCalls().length).toBe(2)
+
+      mockBackend.clearCalls()
+
+      expect(mockBackend.getCalls().length).toBe(0)
+    })
+
+    it('should allow recording new calls after clearing', async () => {
+      await mockBackend.readRef('refs/heads/first')
+      mockBackend.clearCalls()
+      await mockBackend.readRef('refs/heads/second')
+
+      const calls = mockBackend.getCalls()
+
+      expect(calls.length).toBe(1)
+      expect(calls[0].args).toEqual(['refs/heads/second'])
+    })
+  })
+
+  describe('MockBackend behavior', () => {
+    it('should function like MemoryBackend (store and retrieve data)', async () => {
+      const blob: BlobObject = { type: 'blob', data: new TextEncoder().encode('mock test') }
+
+      const sha = await mockBackend.writeObject(blob)
+      const result = await mockBackend.readObject(sha)
+
+      expect(result).not.toBeNull()
+      expect(result!.type).toBe('blob')
+    })
+
+    it('should record calls while functioning normally', async () => {
+      const sha = 'c'.repeat(40)
+      await mockBackend.writeRef('refs/heads/feature', sha)
+      const result = await mockBackend.readRef('refs/heads/feature')
+
+      // Should function normally
+      expect(result).toBe(sha)
+
+      // And record calls
+      const calls = mockBackend.getCalls()
+      expect(calls.length).toBe(2)
+      expect(calls[0].method).toBe('writeRef')
+      expect(calls[1].method).toBe('readRef')
     })
   })
 })

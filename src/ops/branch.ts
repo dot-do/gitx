@@ -37,6 +37,14 @@
  * @module ops/branch
  */
 
+// Import shared validation utilities
+import {
+  isValidBranchName as sharedIsValidBranchName,
+  normalizeBranchName as sharedNormalizeBranchName,
+  BRANCH_REF_PREFIX,
+  REMOTE_REF_PREFIX
+} from '../utils/branch-validation'
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -501,17 +509,15 @@ function getTrackingStore(refStore: RefStore): Map<string, TrackingInfo> {
 }
 
 // ============================================================================
-// Branch Name Validation
+// Branch Name Validation (delegating to shared utilities)
 // ============================================================================
-
-/** Maximum allowed length for branch names */
-const MAX_BRANCH_NAME_LENGTH = 255
 
 /**
  * Validates a branch name according to Git naming rules.
  *
  * Git branch names have specific rules to ensure they work correctly
  * across all platforms and don't conflict with Git's special syntax.
+ * Delegates to shared validation utilities for consistent behavior.
  *
  * Rules checked:
  * - Not empty
@@ -535,75 +541,11 @@ const MAX_BRANCH_NAME_LENGTH = 255
  * isValidBranchName('has space')      // false (contains space)
  * ```
  */
-export function isValidBranchName(name: string): boolean {
-  // Empty string is invalid
-  if (!name || name.length === 0) {
-    return false
-  }
-
-  // Check max length
-  if (name.length > MAX_BRANCH_NAME_LENGTH) {
-    return false
-  }
-
-  // Cannot start with dash
-  if (name.startsWith('-')) {
-    return false
-  }
-
-  // Cannot end with .lock
-  if (name.endsWith('.lock')) {
-    return false
-  }
-
-  // Cannot end with slash or dot
-  if (name.endsWith('/') || name.endsWith('.')) {
-    return false
-  }
-
-  // Cannot contain double dots
-  if (name.includes('..')) {
-    return false
-  }
-
-  // Cannot contain consecutive slashes
-  if (name.includes('//')) {
-    return false
-  }
-
-  // Cannot be exactly "@"
-  if (name === '@') {
-    return false
-  }
-
-  // Cannot contain @{
-  if (name.includes('@{')) {
-    return false
-  }
-
-  // Cannot be HEAD or start with refs/
-  if (name === 'HEAD' || name.startsWith('refs/')) {
-    return false
-  }
-
-  // Check for invalid characters
-  // Git disallows: space, ~, ^, :, \, ?, *, [, control characters
-  const invalidChars = /[\s~^:\\?*\[\x00-\x1f\x7f]/
-  if (invalidChars.test(name)) {
-    return false
-  }
-
-  // Check for non-ASCII characters (unicode)
-  // eslint-disable-next-line no-control-regex
-  if (/[^\x00-\x7F]/.test(name)) {
-    return false
-  }
-
-  return true
-}
+export const isValidBranchName = sharedIsValidBranchName
 
 /**
  * Normalizes a branch name by removing refs/heads/ prefix.
+ * Delegates to shared normalization utilities.
  *
  * @param name - The branch name or ref path
  * @returns The normalized branch name
@@ -614,12 +556,7 @@ export function isValidBranchName(name: string): boolean {
  * normalizeBranchName('main')             // 'main'
  * ```
  */
-export function normalizeBranchName(name: string): string {
-  if (name.startsWith('refs/heads/')) {
-    return name.slice(11)
-  }
-  return name
-}
+export const normalizeBranchName = sharedNormalizeBranchName
 
 /**
  * Gets the full ref path for a branch name.
@@ -633,9 +570,9 @@ function getRefPath(name: string, remote: boolean = false): string {
     return name
   }
   if (remote) {
-    return `refs/remotes/${name}`
+    return `${REMOTE_REF_PREFIX}${name}`
   }
-  return `refs/heads/${name}`
+  return `${BRANCH_REF_PREFIX}${name}`
 }
 
 // ============================================================================

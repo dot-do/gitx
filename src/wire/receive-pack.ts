@@ -23,6 +23,23 @@
  * - Validates ref names according to Git rules
  * - Supports pre-receive, update, and post-receive hooks
  *
+ * ## Hook System
+ *
+ * This module provides two hook APIs:
+ *
+ * ### Simple Hook Functions (backward compatible)
+ * - `executePreReceiveHook()` - Run a single pre-receive hook
+ * - `executeUpdateHook()` - Run update hooks per-ref
+ * - `executePostReceiveHook()` - Run a single post-receive hook
+ * - `executePostUpdateHook()` - Run a single post-update hook
+ *
+ * ### Advanced Hook System (via `./hooks` module)
+ * - `HookRegistry` - Register multiple hooks with priorities
+ * - `HookExecutor` - Execute hooks with streaming output
+ * - Webhook support with HTTP POST, HMAC signatures, and retry logic
+ * - Async/parallel hook execution
+ * - Hook priority ordering
+ *
  * @see {@link https://git-scm.com/docs/pack-protocol} Git Pack Protocol
  * @see {@link https://git-scm.com/docs/git-receive-pack} git-receive-pack Documentation
  *
@@ -41,11 +58,52 @@
  * // Handle push request
  * const response = await handleReceivePack(session, requestBody, store)
  * ```
+ *
+ * @example Advanced hooks with webhooks and priorities
+ * ```typescript
+ * import {
+ *   HookRegistry,
+ *   HookExecutor,
+ *   createPreReceiveHook,
+ *   createWebhook,
+ * } from './wire/receive-pack'
+ *
+ * const registry = new HookRegistry()
+ *
+ * // Add policy check hook (runs first)
+ * registry.register(createPreReceiveHook({
+ *   id: 'policy-check',
+ *   priority: 10,
+ *   handler: async (commands, env) => {
+ *     // Validate commands against policy
+ *     return { success: true }
+ *   }
+ * }))
+ *
+ * // Add CI webhook (runs after policy)
+ * registry.register(createWebhook({
+ *   id: 'ci-trigger',
+ *   point: 'post-receive',
+ *   priority: 100,
+ *   url: 'https://ci.example.com/hooks/git',
+ *   secret: 'webhook-secret',
+ *   retry: { attempts: 3, delay: 1000 }
+ * }))
+ *
+ * const executor = new HookExecutor(registry)
+ * const result = await executor.executePreReceive(commands, env, {
+ *   mode: 'sync',
+ *   onOutput: (output) => console.log(`Hook ${output.hookId}: ${output.message}`)
+ * })
+ * ```
  */
 
 import type { ObjectType } from '../types/objects'
 import { encodePktLine, FLUSH_PKT } from './pkt-line'
 import { containsPathTraversal, isAbsolutePath, containsDangerousCharacters } from './path-security'
+
+// Re-export the advanced hooks module for production-ready hook management
+export * from './hooks'
 
 // ============================================================================
 // Constants
@@ -522,6 +580,42 @@ export interface UnpackOptions {
   resolveDelta?: boolean
   /** Progress callback */
   onProgress?: (message: string) => void
+  /** Use quarantine area for unpacking (isolates objects until validation passes) */
+  useQuarantine?: boolean
+}
+
+/**
+ * Quarantine environment for packfile unpacking.
+ *
+ * @description
+ * Provides an isolated environment for unpacking objects before they're
+ * committed to the main object store. This allows validation to fail
+ * without polluting the repository with partial data.
+ *
+ * @example
+ * ```typescript
+ * const quarantine = createQuarantine('push-123')
+ * try {
+ *   await unpackObjects(packfile, quarantine.store, { useQuarantine: true })
+ *   // Validate objects...
+ *   await quarantine.commit(mainStore)
+ * } catch (e) {
+ *   await quarantine.abort()
+ *   throw e
+ * }
+ * ```
+ */
+export interface QuarantineEnvironment {
+  /** Unique quarantine ID */
+  id: string
+  /** Isolated object store for quarantined objects */
+  store: ObjectStore
+  /** Commit quarantined objects to main store */
+  commit: (mainStore: ObjectStore) => Promise<void>
+  /** Abort and clean up quarantined objects */
+  abort: () => Promise<void>
+  /** Get list of quarantined object SHAs */
+  getObjectShas: () => string[]
 }
 
 /**
@@ -1134,6 +1228,200 @@ export async function unpackObjects(
   }
 }
 
+/**
+ * Create a quarantine environment for isolated packfile unpacking.
+ *
+ * @description
+ * Creates an isolated environment for unpacking objects before committing
+ * them to the main object store. This follows Git's quarantine pattern
+ * which prevents partial or malicious data from polluting the repository
+ * if validation fails.
+ *
+ * The quarantine environment:
+ * - Maintains objects in an isolated store
+ * - Falls back to the main store for reading existing objects (deltas)
+ * - Can commit all quarantined objects atomically on success
+ * - Cleans up on abort without affecting the main store
+ *
+ * @param mainStore - The main object store (for reading existing objects)
+ * @param quarantineId - Optional unique ID for this quarantine session
+ * @returns A quarantine environment
+ *
+ * @example
+ * ```typescript
+ * const quarantine = createQuarantine(mainStore, 'push-abc123')
+ *
+ * try {
+ *   // Unpack to quarantine store
+ *   const result = await unpackObjects(packfile, quarantine.store)
+ *   if (!result.success) throw new Error(result.error)
+ *
+ *   // Validate objects in quarantine
+ *   for (const sha of quarantine.getObjectShas()) {
+ *     await validateObject(sha, quarantine.store)
+ *   }
+ *
+ *   // Success - commit to main store
+ *   await quarantine.commit(mainStore)
+ * } catch (e) {
+ *   // Failure - clean up quarantine
+ *   await quarantine.abort()
+ *   throw e
+ * }
+ * ```
+ */
+export function createQuarantine(
+  mainStore: ObjectStore,
+  quarantineId?: string
+): QuarantineEnvironment {
+  const id = quarantineId || `quarantine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const quarantinedObjects = new Map<string, { type: string; data: Uint8Array }>()
+
+  // Create a hybrid store that writes to quarantine but reads from both
+  const quarantineStore: ObjectStore = {
+    async getObject(sha: string) {
+      // Check quarantine first
+      const quarantined = quarantinedObjects.get(sha)
+      if (quarantined) {
+        return { type: quarantined.type as any, data: quarantined.data }
+      }
+      // Fall back to main store (for delta resolution)
+      return mainStore.getObject(sha)
+    },
+
+    async hasObject(sha: string) {
+      return quarantinedObjects.has(sha) || mainStore.hasObject(sha)
+    },
+
+    async getCommitParents(sha: string) {
+      return mainStore.getCommitParents(sha)
+    },
+
+    async getRefs() {
+      return mainStore.getRefs()
+    },
+
+    async getRef(name: string) {
+      return mainStore.getRef(name)
+    },
+
+    async setRef(name: string, sha: string) {
+      // Refs are not quarantined, update main store directly
+      return mainStore.setRef(name, sha)
+    },
+
+    async deleteRef(name: string) {
+      return mainStore.deleteRef(name)
+    },
+
+    async storeObject(sha: string, type: string, data: Uint8Array) {
+      // Store in quarantine, not main store
+      quarantinedObjects.set(sha, { type, data })
+    },
+
+    async isAncestor(ancestor: string, descendant: string) {
+      return mainStore.isAncestor(ancestor, descendant)
+    },
+  }
+
+  return {
+    id,
+    store: quarantineStore,
+
+    async commit(targetStore: ObjectStore) {
+      // Move all quarantined objects to the target store
+      const entries = Array.from(quarantinedObjects.entries())
+      for (const [sha, obj] of entries) {
+        await targetStore.storeObject(sha, obj.type, obj.data)
+      }
+      quarantinedObjects.clear()
+    },
+
+    async abort() {
+      // Simply clear quarantined objects
+      quarantinedObjects.clear()
+    },
+
+    getObjectShas() {
+      return Array.from(quarantinedObjects.keys())
+    },
+  }
+}
+
+/**
+ * Unpack options with quarantine support.
+ */
+export interface UnpackWithQuarantineOptions extends UnpackOptions {
+  /** Session ID for quarantine (for logging/debugging) */
+  sessionId?: string
+}
+
+/**
+ * Unpack packfile with quarantine support.
+ *
+ * @description
+ * High-level helper that unpacks a packfile using the quarantine pattern.
+ * Objects are first unpacked to an isolated quarantine environment, then
+ * committed to the main store only if unpacking succeeds.
+ *
+ * This is the recommended way to unpack pushes as it prevents partial
+ * or corrupt data from being committed to the repository.
+ *
+ * @param packfile - Packfile binary data
+ * @param store - Main object store
+ * @param options - Unpack options
+ * @returns Unpack result
+ *
+ * @example
+ * ```typescript
+ * // Safe unpacking with automatic quarantine
+ * const result = await unpackWithQuarantine(packfile, store, {
+ *   sessionId: 'push-123',
+ *   onProgress: (msg) => console.log(msg)
+ * })
+ *
+ * if (result.success) {
+ *   console.log(`Unpacked ${result.objectsUnpacked} objects`)
+ * } else {
+ *   console.error(`Unpack failed: ${result.error}`)
+ * }
+ * ```
+ */
+export async function unpackWithQuarantine(
+  packfile: Uint8Array,
+  store: ObjectStore,
+  options?: UnpackWithQuarantineOptions
+): Promise<UnpackResult> {
+  const quarantine = createQuarantine(store, options?.sessionId)
+
+  try {
+    // Unpack to quarantine
+    const result = await unpackObjects(packfile, quarantine.store, options)
+
+    if (!result.success) {
+      await quarantine.abort()
+      return result
+    }
+
+    // Success - commit quarantined objects to main store
+    await quarantine.commit(store)
+
+    return {
+      ...result,
+      unpackedShas: quarantine.getObjectShas(),
+    }
+  } catch (error) {
+    // Clean up quarantine on error
+    await quarantine.abort()
+    return {
+      success: false,
+      objectsUnpacked: 0,
+      unpackedShas: [],
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
 // ============================================================================
 // Ref Validation
 // ============================================================================
@@ -1372,6 +1660,85 @@ function matchPattern(str: string, pattern: string): boolean {
 }
 
 // ============================================================================
+// Ref Validation Helpers
+// ============================================================================
+
+/**
+ * Validation context for a single command.
+ * @internal
+ */
+interface CommandValidationContext {
+  command: RefUpdateCommand
+  store: ObjectStore
+  capabilities: ReceivePackCapabilities
+  forcePush?: boolean
+}
+
+/**
+ * Validate a single ref update command.
+ *
+ * @description
+ * Centralizes all validation logic for a ref update command:
+ * - Ref name validity
+ * - Current ref state matches expected old SHA
+ * - Fast-forward constraints (unless force push)
+ * - Delete-refs capability for deletions
+ *
+ * @internal
+ */
+async function validateCommand(ctx: CommandValidationContext): Promise<RefUpdateResult> {
+  const { command: cmd, store, capabilities, forcePush } = ctx
+
+  // Validate ref name
+  if (!validateRefName(cmd.refName)) {
+    return {
+      refName: cmd.refName,
+      success: false,
+      error: 'invalid ref name',
+    }
+  }
+
+  // Check current ref state
+  const currentRef = await store.getRef(cmd.refName)
+  const currentSha = currentRef?.sha || ZERO_SHA
+
+  // Verify old SHA matches (atomic check for concurrent updates)
+  if (cmd.type !== 'create' && currentSha !== cmd.oldSha) {
+    return {
+      refName: cmd.refName,
+      success: false,
+      error: 'lock failed: ref has been updated',
+    }
+  }
+
+  // Handle delete
+  if (cmd.type === 'delete') {
+    if (!capabilities.deleteRefs) {
+      return {
+        refName: cmd.refName,
+        success: false,
+        error: 'delete-refs not enabled',
+      }
+    }
+    return { refName: cmd.refName, success: true }
+  }
+
+  // Check fast-forward for updates
+  if (cmd.type === 'update' && !forcePush) {
+    const isFF = await validateFastForward(cmd.oldSha, cmd.newSha, store)
+    if (!isFF) {
+      return {
+        refName: cmd.refName,
+        success: false,
+        error: 'non-fast-forward update',
+      }
+    }
+  }
+
+  return { refName: cmd.refName, success: true }
+}
+
+// ============================================================================
 // Ref Updates
 // ============================================================================
 
@@ -1411,58 +1778,13 @@ export async function processCommands(
   const results: RefUpdateResult[] = []
 
   for (const cmd of commands) {
-    // Validate ref name
-    if (!validateRefName(cmd.refName)) {
-      results.push({
-        refName: cmd.refName,
-        success: false,
-        error: 'invalid ref name',
-      })
-      continue
-    }
-
-    // Check current ref state
-    const currentRef = await store.getRef(cmd.refName)
-    const currentSha = currentRef?.sha || ZERO_SHA
-
-    // Verify old SHA matches (atomic check for concurrent updates)
-    if (cmd.type !== 'create' && currentSha !== cmd.oldSha) {
-      results.push({
-        refName: cmd.refName,
-        success: false,
-        error: 'lock failed: ref has been updated',
-      })
-      continue
-    }
-
-    // Handle delete
-    if (cmd.type === 'delete') {
-      if (!session.capabilities.deleteRefs) {
-        results.push({
-          refName: cmd.refName,
-          success: false,
-          error: 'delete-refs not enabled',
-        })
-        continue
-      }
-      results.push({ refName: cmd.refName, success: true })
-      continue
-    }
-
-    // Check fast-forward for updates
-    if (cmd.type === 'update' && !options?.forcePush) {
-      const isFF = await validateFastForward(cmd.oldSha, cmd.newSha, store)
-      if (!isFF) {
-        results.push({
-          refName: cmd.refName,
-          success: false,
-          error: 'non-fast-forward update',
-        })
-        continue
-      }
-    }
-
-    results.push({ refName: cmd.refName, success: true })
+    const result = await validateCommand({
+      command: cmd,
+      store,
+      capabilities: session.capabilities,
+      forcePush: options?.forcePush,
+    })
+    results.push(result)
   }
 
   return { results }
@@ -1558,7 +1880,8 @@ export async function atomicRefUpdate(
     return { success: true, results }
   } catch (error) {
     // Rollback on failure
-    for (const [refName, originalSha] of originalRefs) {
+    const refEntries = Array.from(originalRefs.entries())
+    for (const [refName, originalSha] of refEntries) {
       if (originalSha === null) {
         await store.deleteRef(refName)
       } else {
@@ -1581,11 +1904,33 @@ export async function atomicRefUpdate(
 // Hook Execution
 // ============================================================================
 
+/**
+ * Pre-receive hook function signature.
+ *
+ * Called before any refs are updated. Can reject the entire push by
+ * returning `{ success: false }`.
+ *
+ * @param commands - Array of ref update commands to be executed
+ * @param env - Environment variables (e.g., GIT_PUSH_OPTION_*)
+ * @returns Hook result indicating success or failure
+ */
 type PreReceiveHookFn = (
   commands: RefUpdateCommand[],
   env: Record<string, string>
 ) => Promise<HookResult>
 
+/**
+ * Update hook function signature.
+ *
+ * Called once for each ref being updated. Can reject individual refs
+ * by returning `{ success: false }`.
+ *
+ * @param refName - Full ref name being updated (e.g., 'refs/heads/main')
+ * @param oldSha - Current SHA of the ref (ZERO_SHA for new refs)
+ * @param newSha - New SHA for the ref (ZERO_SHA for deletions)
+ * @param env - Environment variables
+ * @returns Hook result indicating success or failure
+ */
 type UpdateHookFn = (
   refName: string,
   oldSha: string,
@@ -1593,12 +1938,32 @@ type UpdateHookFn = (
   env: Record<string, string>
 ) => Promise<HookResult>
 
+/**
+ * Post-receive hook function signature.
+ *
+ * Called after all refs have been updated. Cannot affect the push result
+ * but useful for notifications, CI triggers, etc.
+ *
+ * @param commands - Array of ref update commands that were executed
+ * @param results - Results for each ref update
+ * @param env - Environment variables (includes GIT_PUSH_OPTION_* if enabled)
+ * @returns Hook result (failure does not affect push success)
+ */
 type PostReceiveHookFn = (
   commands: RefUpdateCommand[],
   results: RefUpdateResult[],
   env: Record<string, string>
 ) => Promise<HookResult>
 
+/**
+ * Post-update hook function signature.
+ *
+ * Simplified version of post-receive that only receives ref names.
+ * Called after refs are updated.
+ *
+ * @param refNames - Array of successfully updated ref names
+ * @returns Hook result
+ */
 type PostUpdateHookFn = (refNames: string[]) => Promise<HookResult>
 
 /**
@@ -1736,17 +2101,13 @@ export async function executePostReceiveHook(
   hookFn: PostReceiveHookFn,
   options?: HookOptions
 ): Promise<{ pushSuccess: boolean; hookSuccess: boolean }> {
-  // Filter to only successful updates
-  const successfulCommands = commands.filter((_cmd, idx) => results[idx]?.success)
+  // Filter to only successful updates by matching commands with their results
+  const successfulCommands = commands.filter(
+    (_, index) => results[index]?.success === true
+  )
 
   // Build environment with push options
-  const env: Record<string, string> = {}
-  if (options?.pushOptions && options.pushOptions.length > 0) {
-    env.GIT_PUSH_OPTION_COUNT = String(options.pushOptions.length)
-    options.pushOptions.forEach((opt, idx) => {
-      env[`GIT_PUSH_OPTION_${idx}`] = opt
-    })
-  }
+  const env = buildPushOptionsEnv(options?.pushOptions)
 
   const hookResult = await hookFn(successfulCommands, results, env)
 
@@ -1754,6 +2115,29 @@ export async function executePostReceiveHook(
     pushSuccess: true, // post-receive doesn't affect push success
     hookSuccess: hookResult.success,
   }
+}
+
+/**
+ * Builds environment variables from push options.
+ *
+ * Git push options are passed to hooks via environment variables:
+ * - GIT_PUSH_OPTION_COUNT: Number of options
+ * - GIT_PUSH_OPTION_0, GIT_PUSH_OPTION_1, etc.: Individual options
+ *
+ * @param pushOptions - Array of push option strings
+ * @returns Environment variable object
+ */
+function buildPushOptionsEnv(pushOptions?: string[]): Record<string, string> {
+  const env: Record<string, string> = {}
+
+  if (pushOptions && pushOptions.length > 0) {
+    env.GIT_PUSH_OPTION_COUNT = String(pushOptions.length)
+    pushOptions.forEach((option, index) => {
+      env[`GIT_PUSH_OPTION_${index}`] = option
+    })
+  }
+
+  return env
 }
 
 /**
@@ -2008,67 +2392,29 @@ export async function handleReceivePack(
     unpackStatus = 'ok'
   }
 
-  // Process commands
+  // Process commands - validate first, then apply
   const refResults: RefUpdateResult[] = []
 
   for (const cmd of parsed.commands) {
-    // Validate ref name
-    if (!validateRefName(cmd.refName)) {
-      refResults.push({
-        refName: cmd.refName,
-        success: false,
-        error: 'invalid ref name',
-      })
+    // Validate using shared helper
+    const validationResult = await validateCommand({
+      command: cmd,
+      store,
+      capabilities: session.capabilities,
+    })
+
+    // If validation failed, add result and continue
+    if (!validationResult.success) {
+      refResults.push(validationResult)
       continue
     }
 
-    // Check current ref state
-    const currentRef = await store.getRef(cmd.refName)
-    const currentSha = currentRef?.sha || ZERO_SHA
-
-    // For updates and deletes, verify old SHA matches
-    if (cmd.type !== 'create') {
-      if (currentSha !== cmd.oldSha) {
-        refResults.push({
-          refName: cmd.refName,
-          success: false,
-          error: 'lock failed: ref has been updated',
-        })
-        continue
-      }
-    }
-
-    // Handle delete
+    // Apply the update (validation passed)
     if (cmd.type === 'delete') {
-      if (!session.capabilities.deleteRefs) {
-        refResults.push({
-          refName: cmd.refName,
-          success: false,
-          error: 'delete-refs not enabled',
-        })
-        continue
-      }
       await store.deleteRef(cmd.refName)
-      refResults.push({ refName: cmd.refName, success: true })
-      continue
+    } else {
+      await store.setRef(cmd.refName, cmd.newSha)
     }
-
-    // Handle create/update
-    if (cmd.type === 'update') {
-      // Check fast-forward
-      const isFF = await validateFastForward(cmd.oldSha, cmd.newSha, store)
-      if (!isFF) {
-        refResults.push({
-          refName: cmd.refName,
-          success: false,
-          error: 'non-fast-forward update',
-        })
-        continue
-      }
-    }
-
-    // Apply the update
-    await store.setRef(cmd.refName, cmd.newSha)
     refResults.push({ refName: cmd.refName, success: true })
   }
 

@@ -31,8 +31,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   ObjectStore,
   StoredObject
-} from '../../src/durable-object/object-store'
-import { DurableObjectStorage } from '../../src/durable-object/schema'
+} from '../../src/do/object-store'
+import { DurableObjectStorage } from '../../src/do/schema'
 import {
   Author,
   TagObject,

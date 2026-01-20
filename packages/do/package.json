@@ -52,7 +52,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@dotdo/gitx": "workspace:*",
+    "@dotdo/gitx": "*",
     "hono": "^4.11.3",
     "pako": "^2.1.0"
   },

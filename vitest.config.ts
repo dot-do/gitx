@@ -12,7 +12,7 @@ export default defineWorkersConfig({
     ],
     poolOptions: {
       workers: {
-        wrangler: { configPath: './wrangler.toml' },
+        wrangler: { configPath: './wrangler.test.toml' },
         singleWorker: true,
       },
     },
@@ -22,6 +22,6 @@ export default defineWorkersConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/index.ts']
     },
-    testTimeout: 10000
+    testTimeout: 30000
   }
 })

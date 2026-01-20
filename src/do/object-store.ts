@@ -14,11 +14,11 @@
  * - Metrics and logging infrastructure
  * - Typed accessors for each Git object type
  *
- * @module durable-object/object-store
+ * @module do/object-store
  *
  * @example
  * ```typescript
- * import { ObjectStore } from './durable-object/object-store'
+ * import { ObjectStore } from './do/object-store'
  *
  * const store = new ObjectStore(durableObjectStorage, {
  *   cacheMaxCount: 1000,

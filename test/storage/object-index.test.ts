@@ -11,7 +11,7 @@ import {
   batchLookup,
   getStats
 } from '../../src/storage/object-index'
-import { DurableObjectStorage } from '../../src/durable-object/schema'
+import { DurableObjectStorage } from '../../src/do/schema'
 
 // Helper functions
 function createTestSha(prefix: string): string {

@@ -42,6 +42,54 @@ import { encodePktLine, FLUSH_PKT } from './pkt-line'
 import * as pako from 'pako'
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Text encoder for converting strings to bytes */
+const encoder = new TextEncoder()
+
+/** Text decoder for converting bytes to strings */
+const decoder = new TextDecoder()
+
+/** SHA-1 regex pattern for validation */
+const SHA1_REGEX = /^[0-9a-f]{40}$/i
+
+/** Packfile magic signature bytes "PACK" */
+const PACK_SIGNATURE = new Uint8Array([0x50, 0x41, 0x43, 0x4b]) // P A C K
+
+/** Packfile version number */
+const PACK_VERSION = 2
+
+/** Packfile header size in bytes */
+const PACK_HEADER_SIZE = 12
+
+/**
+ * Git object type numbers for packfile encoding.
+ * @see https://git-scm.com/docs/pack-format
+ */
+const PackObjectType = {
+  COMMIT: 1,
+  TREE: 2,
+  BLOB: 3,
+  TAG: 4,
+  OFS_DELTA: 6,
+  REF_DELTA: 7
+} as const
+
+/**
+ * Mapping from Git object type names to packfile type numbers.
+ */
+const OBJECT_TYPE_MAP: Record<ObjectType, number> = {
+  commit: PackObjectType.COMMIT,
+  tree: PackObjectType.TREE,
+  blob: PackObjectType.BLOB,
+  tag: PackObjectType.TAG
+}
+
+/** Default server agent string */
+const DEFAULT_AGENT = 'gitx.do/1.0'
+
+// ============================================================================
 // Types and Interfaces
 // ============================================================================
 
@@ -327,14 +375,64 @@ export interface ShallowInfo {
 }
 
 // ============================================================================
-// Helper Constants
+// Buffer Utilities
 // ============================================================================
 
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
+/**
+ * Concatenate multiple Uint8Array buffers into a single buffer.
+ *
+ * @param parts - Array of Uint8Array buffers to concatenate
+ * @returns Single Uint8Array containing all input buffers
+ *
+ * @example
+ * ```typescript
+ * const header = new Uint8Array([0x50, 0x41])
+ * const data = new Uint8Array([0x43, 0x4b])
+ * const result = concatenateBuffers([header, data])
+ * // result: Uint8Array([0x50, 0x41, 0x43, 0x4b])
+ * ```
+ */
+function concatenateBuffers(parts: Uint8Array[]): Uint8Array {
+  let totalLength = 0
+  for (const part of parts) {
+    totalLength += part.length
+  }
 
-/** SHA-1 regex for validation */
-const SHA1_REGEX = /^[0-9a-f]{40}$/i
+  const result = new Uint8Array(totalLength)
+  let offset = 0
+  for (const part of parts) {
+    result.set(part, offset)
+    offset += part.length
+  }
+
+  return result
+}
+
+/**
+ * Calculate SHA-1 hash using Web Crypto API.
+ *
+ * @param data - Data to hash
+ * @returns SHA-1 hash as Uint8Array (20 bytes)
+ *
+ * @internal
+ */
+async function sha1(data: Uint8Array): Promise<Uint8Array> {
+  // Create a copy as ArrayBuffer to satisfy BufferSource type
+  const buffer = new ArrayBuffer(data.length)
+  new Uint8Array(buffer).set(data)
+  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
+  return new Uint8Array(hashBuffer)
+}
+
+/**
+ * Validate a SHA-1 hash string.
+ *
+ * @param sha - String to validate
+ * @returns true if valid SHA-1 format (40 hex characters)
+ */
+function isValidSha1(sha: string): boolean {
+  return SHA1_REGEX.test(sha)
+}
 
 // ============================================================================
 // Capability Functions
@@ -516,7 +614,7 @@ export function parseWantLine(
   const parts = rest.split(/\s+/)
   const sha = parts[0].toLowerCase()
 
-  if (!SHA1_REGEX.test(sha)) {
+  if (!isValidSha1(sha)) {
     throw new Error(`Invalid SHA in want line: ${sha}`)
   }
 
@@ -554,7 +652,7 @@ export function parseHaveLine(line: string): string {
 
   const sha = trimmed.slice(5).trim().toLowerCase()
 
-  if (!SHA1_REGEX.test(sha)) {
+  if (!isValidSha1(sha)) {
     throw new Error(`Invalid SHA in have line: ${sha}`)
   }
 
@@ -606,7 +704,7 @@ export async function advertiseRefs(
     shallow: capabilities?.shallow ?? true,
     includeTag: true,
     multiAckDetailed: true,
-    agent: 'gitx.do/1.0'
+    agent: DEFAULT_AGENT
   }
 
   // Merge with provided capabilities
@@ -853,6 +951,57 @@ export async function processHaves(
 }
 
 // ============================================================================
+// Object Parsing Helpers
+// ============================================================================
+
+/**
+ * Extract the tree SHA from a commit object.
+ *
+ * @param commitData - Raw commit data
+ * @returns Tree SHA or null if not found
+ *
+ * @internal
+ */
+function extractTreeFromCommit(commitData: Uint8Array): string | null {
+  const commitStr = decoder.decode(commitData)
+  const match = commitStr.match(/^tree ([0-9a-f]{40})/m)
+  return match ? match[1] : null
+}
+
+/**
+ * Extract parent commit SHAs from a commit object.
+ *
+ * @param commitData - Raw commit data
+ * @returns Array of parent SHAs (empty for root commits)
+ *
+ * @internal
+ */
+function extractParentsFromCommit(commitData: Uint8Array): string[] {
+  const commitStr = decoder.decode(commitData)
+  const parents: string[] = []
+  const regex = /^parent ([0-9a-f]{40})/gm
+  let match
+  while ((match = regex.exec(commitStr)) !== null) {
+    parents.push(match[1])
+  }
+  return parents
+}
+
+/**
+ * Extract the target object SHA from a tag object.
+ *
+ * @param tagData - Raw tag data
+ * @returns Target object SHA or null if not found
+ *
+ * @internal
+ */
+function extractObjectFromTag(tagData: Uint8Array): string | null {
+  const tagStr = decoder.decode(tagData)
+  const match = tagStr.match(/^object ([0-9a-f]{40})/m)
+  return match ? match[1] : null
+}
+
+// ============================================================================
 // Object Calculation
 // ============================================================================
 
@@ -910,30 +1059,25 @@ export async function calculateMissingObjects(
     if (!obj) return
 
     if (obj.type === 'commit') {
-      // Parse commit to get tree and parents directly from data
-      const commitStr = decoder.decode(obj.data)
-
-      // Walk tree
-      const treeMatch = commitStr.match(/^tree ([0-9a-f]{40})/m)
-      if (treeMatch) {
-        await walkObject(treeMatch[1])
+      // Walk tree referenced by commit
+      const treeSha = extractTreeFromCommit(obj.data)
+      if (treeSha) {
+        await walkObject(treeSha)
       }
 
-      // Walk parent commits - parse from commit data directly
-      const parentRegex = /^parent ([0-9a-f]{40})/gm
-      let parentMatch
-      while ((parentMatch = parentRegex.exec(commitStr)) !== null) {
-        await walkObject(parentMatch[1])
+      // Walk parent commits
+      const parents = extractParentsFromCommit(obj.data)
+      for (const parentSha of parents) {
+        await walkObject(parentSha)
       }
     } else if (obj.type === 'tree') {
-      // Parse tree entries (simplified - trees have binary format)
-      // For now, just rely on getReachableObjects for tree contents
+      // Tree contents are handled by getReachableObjects
+      // Binary tree format parsing could be added here for optimization
     } else if (obj.type === 'tag') {
       // Walk to tagged object
-      const tagStr = decoder.decode(obj.data)
-      const objectMatch = tagStr.match(/^object ([0-9a-f]{40})/m)
-      if (objectMatch) {
-        await walkObject(objectMatch[1])
+      const targetSha = extractObjectFromTag(obj.data)
+      if (targetSha) {
+        await walkObject(targetSha)
       }
     }
   }
@@ -1204,15 +1348,12 @@ export async function generatePackfile(
 
   // Handle empty wants
   if (wants.length === 0) {
-    // Return minimal empty packfile
+    // Return minimal empty packfile (header + checksum only)
     const emptyPack = createPackfileHeader(0)
     const checksum = await sha1(emptyPack)
-    const result = new Uint8Array(emptyPack.length + 20)
-    result.set(emptyPack)
-    result.set(checksum, emptyPack.length)
 
     return {
-      packfile: result,
+      packfile: concatenateBuffers([emptyPack, checksum]),
       objectCount: 0,
       includedObjects: []
     }
@@ -1313,34 +1454,30 @@ export async function generateThinPack(
 // ============================================================================
 
 /**
- * Object type to packfile type number mapping.
- * @internal
- */
-const OBJECT_TYPE_MAP: Record<ObjectType, number> = {
-  commit: 1,
-  tree: 2,
-  blob: 3,
-  tag: 4
-}
-
-/**
  * Create packfile header.
+ *
+ * @description
+ * Creates a 12-byte packfile header containing:
+ * - 4 bytes: "PACK" magic signature
+ * - 4 bytes: Version number (2) in big-endian
+ * - 4 bytes: Object count in big-endian
+ *
+ * @param objectCount - Number of objects in the packfile
+ * @returns 12-byte header
+ *
  * @internal
  */
 function createPackfileHeader(objectCount: number): Uint8Array {
-  const header = new Uint8Array(12)
+  const header = new Uint8Array(PACK_HEADER_SIZE)
 
   // PACK signature
-  header[0] = 0x50 // P
-  header[1] = 0x41 // A
-  header[2] = 0x43 // C
-  header[3] = 0x4b // K
+  header.set(PACK_SIGNATURE, 0)
 
-  // Version 2
+  // Version (big-endian 32-bit)
   header[4] = 0
   header[5] = 0
   header[6] = 0
-  header[7] = 2
+  header[7] = PACK_VERSION
 
   // Object count (big-endian 32-bit)
   header[8] = (objectCount >> 24) & 0xff
@@ -1353,6 +1490,17 @@ function createPackfileHeader(objectCount: number): Uint8Array {
 
 /**
  * Encode object header in packfile format.
+ *
+ * @description
+ * Encodes the object type and uncompressed size using Git's variable-length
+ * encoding. The format is:
+ * - First byte: bits 4-6 contain type, bits 0-3 contain size LSBs
+ * - Subsequent bytes: 7 bits of size each, MSB set if more bytes follow
+ *
+ * @param type - Object type number (1=commit, 2=tree, 3=blob, 4=tag)
+ * @param size - Uncompressed data size in bytes
+ * @returns Variable-length encoded header
+ *
  * @internal
  */
 function encodePackfileObjectHeader(type: number, size: number): Uint8Array {
@@ -1362,18 +1510,31 @@ function encodePackfileObjectHeader(type: number, size: number): Uint8Array {
   let byte = ((type & 0x7) << 4) | (size & 0x0f)
   size >>= 4
 
+  // Continue encoding size in 7-bit chunks
   while (size > 0) {
-    bytes.push(byte | 0x80) // Set MSB to indicate more bytes
+    bytes.push(byte | 0x80) // Set MSB to indicate more bytes follow
     byte = size & 0x7f
     size >>= 7
   }
 
-  bytes.push(byte)
+  bytes.push(byte) // Final byte (MSB clear)
   return new Uint8Array(bytes)
 }
 
 /**
  * Build complete packfile from objects.
+ *
+ * @description
+ * Assembles a complete Git packfile from the given objects:
+ * 1. Creates 12-byte header (signature + version + count)
+ * 2. Encodes each object with type/size header + zlib-compressed data
+ * 3. Appends 20-byte SHA-1 checksum of all preceding data
+ *
+ * @param objects - Array of objects to include in the packfile
+ * @param _onProgress - Progress callback (reserved for future delta compression progress)
+ * @param _clientHasObjects - Objects client has (reserved for future thin pack support)
+ * @returns Complete packfile as Uint8Array
+ *
  * @internal
  */
 async function buildPackfile(
@@ -1386,54 +1547,27 @@ async function buildPackfile(
   // Header
   parts.push(createPackfileHeader(objects.length))
 
-  // Objects
-  for (let i = 0; i < objects.length; i++) {
-    const obj = objects[i]
+  // Encode each object
+  for (const obj of objects) {
     const typeNum = OBJECT_TYPE_MAP[obj.type]
 
     // Compress data using zlib
     const compressed = pako.deflate(obj.data)
 
-    // Object header
+    // Object header (variable-length encoding of type and size)
     const header = encodePackfileObjectHeader(typeNum, obj.data.length)
     parts.push(header)
     parts.push(compressed)
   }
 
   // Concatenate all parts (without checksum yet)
-  let totalLength = 0
-  for (const part of parts) {
-    totalLength += part.length
-  }
-
-  const packData = new Uint8Array(totalLength)
-  let offset = 0
-  for (const part of parts) {
-    packData.set(part, offset)
-    offset += part.length
-  }
+  const packData = concatenateBuffers(parts)
 
   // Calculate SHA-1 checksum of pack data
   const checksum = await sha1(packData)
 
-  // Final packfile with checksum
-  const result = new Uint8Array(packData.length + 20)
-  result.set(packData)
-  result.set(checksum, packData.length)
-
-  return result
-}
-
-/**
- * Calculate SHA-1 hash using Web Crypto API.
- * @internal
- */
-async function sha1(data: Uint8Array): Promise<Uint8Array> {
-  // Create a copy as ArrayBuffer to satisfy BufferSource type
-  const buffer = new ArrayBuffer(data.length)
-  new Uint8Array(buffer).set(data)
-  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
-  return new Uint8Array(hashBuffer)
+  // Final packfile with checksum appended
+  return concatenateBuffers([packData, checksum])
 }
 
 // ============================================================================
@@ -1552,18 +1686,6 @@ export async function handleFetch(
     }
   }
 
-  // Concatenate all parts
-  let totalLength = 0
-  for (const part of parts) {
-    totalLength += part.length
-  }
-
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  for (const part of parts) {
-    result.set(part, offset)
-    offset += part.length
-  }
-
-  return result
+  // Concatenate all response parts
+  return concatenateBuffers(parts)
 }

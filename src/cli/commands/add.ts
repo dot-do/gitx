@@ -161,7 +161,7 @@ async function findGitDir(cwd: string): Promise<string | null> {
       // Worktree - read the actual gitdir
       const content = await fs.readFile(gitPath, 'utf8')
       const match = content.match(/^gitdir:\s*(.+)$/m)
-      if (match) {
+      if (match && match[1]) {
         return path.resolve(cwd, match[1].trim())
       }
     }
@@ -200,7 +200,7 @@ async function getTrackedFiles(gitDir: string): Promise<Map<string, { sha: strin
     for (const line of content.split('\n')) {
       if (!line.trim()) continue
       const match = line.match(/^([0-9a-f]{40})\s+(\d+)\s+(.+)$/)
-      if (match) {
+      if (match && match[1] && match[2] && match[3]) {
         const [, sha, modeStr, filePath] = match
         tracked.set(filePath, { sha, mode: parseInt(modeStr, 8) })
       }
@@ -224,7 +224,7 @@ async function getStagedFiles(gitDir: string): Promise<Map<string, { sha: string
     for (const line of content.split('\n')) {
       if (!line.trim()) continue
       const match = line.match(/^([0-9a-f]{40})\s+(\d+)\s+(.+)$/)
-      if (match) {
+      if (match && match[1] && match[2] && match[3]) {
         const [, sha, modeStr, filePath] = match
         staged.set(filePath, { sha, mode: parseInt(modeStr, 8) })
       }
@@ -452,7 +452,7 @@ export async function addCommand(ctx: CommandContext): Promise<void> {
   let { args } = ctx
 
   // Handle --help flag
-  if (options.help || options.h) {
+  if (options['help'] || options['h']) {
     stdout(`gitx add - Add file contents to the index
 
 Usage: gitx add [options] [--] <pathspec>...
@@ -475,50 +475,50 @@ Options:
     throw new Error('fatal: not a git repository (or any of the parent directories): .git')
   }
 
-  const verbose = options.verbose || options.v
+  const verbose = options['verbose'] || options['v']
 
   // For add command, -n/--dry-run means dry-run
   // The CLI parser may consume the next argument as a value, so handle that case
   let dryRun = false
 
   // Handle --dry-run (may have consumed file.txt as its value)
-  if (options.dryRun !== undefined) {
-    if (typeof options.dryRun === 'string') {
-      args = [options.dryRun, ...args]
+  if (options['dryRun'] !== undefined) {
+    if (typeof options['dryRun'] === 'string') {
+      args = [options['dryRun'], ...args]
       dryRun = true
-    } else if (options.dryRun === true) {
+    } else if (options['dryRun'] === true) {
       dryRun = true
     }
   }
 
   // Handle -n (may have consumed file.txt as its value)
-  if (options.n !== undefined) {
-    if (typeof options.n === 'string') {
-      args = [options.n, ...args]
+  if (options['n'] !== undefined) {
+    if (typeof options['n'] === 'string') {
+      args = [options['n'], ...args]
       dryRun = true
-    } else if (options.n === null || options.n === true) {
+    } else if (options['n'] === null || options['n'] === true) {
       dryRun = true
     }
   }
 
-  const force = options.force || options.f
+  const force = options['force'] || options['f']
 
   // Handle -N/--intent-to-add (may have consumed file.txt as its value)
   let intentToAdd = false
   let intentArg: string | null = null
-  if (options.intentToAdd !== undefined) {
-    if (typeof options.intentToAdd === 'string') {
-      intentArg = options.intentToAdd
+  if (options['intentToAdd'] !== undefined) {
+    if (typeof options['intentToAdd'] === 'string') {
+      intentArg = options['intentToAdd']
       intentToAdd = true
-    } else if (options.intentToAdd === true) {
+    } else if (options['intentToAdd'] === true) {
       intentToAdd = true
     }
   }
-  if (options.N !== undefined) {
-    if (typeof options.N === 'string') {
-      intentArg = options.N
+  if (options['N'] !== undefined) {
+    if (typeof options['N'] === 'string') {
+      intentArg = options['N']
       intentToAdd = true
-    } else if (options.N === null || options.N === true) {
+    } else if (options['N'] === null || options['N'] === true) {
       intentToAdd = true
     }
   }
@@ -526,10 +526,10 @@ Options:
     args = [intentArg, ...args]
   }
 
-  const update = options.update || options.u
-  const all = options.all || options.A
-  const refresh = options.refresh
-  const patch = options.patch || options.p
+  const update = options['update'] || options['u']
+  const all = options['all'] || options['A']
+  const refresh = options['refresh']
+  const patch = options['patch'] || options['p']
 
   // Handle --refresh flag
   if (refresh) {
@@ -1112,10 +1112,10 @@ export function matchGlobPattern(filePath: string, pattern: string): boolean {
   // Handle brace expansion {a,b,c}
   if (normalizedPattern.includes('{') && normalizedPattern.includes('}')) {
     const braceMatch = normalizedPattern.match(/\{([^}]+)\}/)
-    if (braceMatch) {
-      const options = braceMatch[1].split(',')
-      for (const option of options) {
-        const expandedPattern = normalizedPattern.replace(braceMatch[0], option)
+    if (braceMatch && braceMatch[1]) {
+      const opts = braceMatch[1].split(',')
+      for (const opt of opts) {
+        const expandedPattern = normalizedPattern.replace(braceMatch[0], opt)
         if (matchGlobPattern(filePath, expandedPattern)) {
           return true
         }

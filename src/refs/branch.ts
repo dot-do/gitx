@@ -31,11 +31,23 @@
 
 import { RefStorage, isValidSha } from './storage'
 
+// Import shared validation utilities
+import {
+  validateBranchName as sharedValidateBranchName,
+  isValidBranchName as sharedIsValidBranchName,
+  normalizeBranchName as sharedNormalizeBranchName,
+  getBranchRefName as sharedGetBranchRefName,
+  type BranchValidationResult as SharedBranchValidationResult
+} from '../utils/branch-validation'
+
 // Reserved for future ref validation
 import type { Ref as _RefType } from './storage'
 import { isValidRefName as _isValidRefName } from './storage'
 void _isValidRefName
 export type { _RefType as BranchRefType } // Preserve for future use
+
+// Re-export shared validation types with proper aliasing
+export type BranchValidationResult = SharedBranchValidationResult
 
 // ============================================================================
 // Types and Interfaces
@@ -210,21 +222,7 @@ export interface SetUpstreamOptions {
   unset?: boolean
 }
 
-/**
- * Result of branch name validation.
- *
- * @description
- * Provides detailed validation result including the normalized
- * form of the branch name if valid.
- */
-export interface BranchValidationResult {
-  /** Whether the name passes validation */
-  valid: boolean
-  /** Error message explaining why validation failed */
-  error?: string
-  /** Normalized branch name (cleaned up form) */
-  normalized?: string
-}
+// BranchValidationResult is re-exported from shared utilities above
 
 /**
  * Error thrown when a branch operation fails.
@@ -976,7 +974,7 @@ export class BranchManager {
 }
 
 // ============================================================================
-// Validation Functions
+// Validation Functions (delegating to shared utilities)
 // ============================================================================
 
 /**
@@ -984,7 +982,8 @@ export class BranchManager {
  *
  * @description
  * Checks if a branch name is valid and returns detailed validation results
- * including the normalized form of the name.
+ * including the normalized form of the name. Delegates to shared validation
+ * utilities for consistent behavior across the codebase.
  *
  * @param name - Branch name to validate
  * @returns Validation result with valid flag, error message, and normalized name
@@ -1001,60 +1000,14 @@ export class BranchManager {
  * }
  * ```
  */
-export function validateBranchName(name: string): BranchValidationResult {
-  // Empty name is invalid
-  if (!name || name.length === 0) {
-    return { valid: false, error: 'Branch name cannot be empty' }
-  }
-
-  // HEAD is not a valid branch name
-  if (name === 'HEAD') {
-    return { valid: false, error: 'HEAD is not a valid branch name' }
-  }
-
-  // Cannot start with dash
-  if (name.startsWith('-')) {
-    return { valid: false, error: 'Branch name cannot start with a dash' }
-  }
-
-  // Cannot contain spaces
-  if (name.includes(' ')) {
-    return { valid: false, error: 'Branch name cannot contain spaces' }
-  }
-
-  // Cannot contain double dots
-  if (name.includes('..')) {
-    return { valid: false, error: 'Branch name cannot contain double dots (..)' }
-  }
-
-  // Cannot end with .lock
-  if (name.endsWith('.lock')) {
-    return { valid: false, error: 'Branch name cannot end with .lock' }
-  }
-
-  // Cannot contain control characters (ASCII 0-31, 127)
-  const controlCharRegex = /[\x00-\x1f\x7f]/
-  if (controlCharRegex.test(name)) {
-    return { valid: false, error: 'Branch name cannot contain control characters' }
-  }
-
-  // Cannot contain ~, ^, :, ?, *, [, ], \
-  const invalidChars = /[~^:?*[\]\\]/
-  if (invalidChars.test(name)) {
-    return { valid: false, error: 'Branch name contains invalid characters (~, ^, :, ?, *, [, ], \\)' }
-  }
-
-  // Normalize the name (strip refs/heads/ if present)
-  const normalized = normalizeBranchName(name)
-
-  return { valid: true, normalized }
-}
+export const validateBranchName = sharedValidateBranchName
 
 /**
  * Check if a string is a valid branch name.
  *
  * @description
  * Simple boolean check for branch name validity.
+ * Delegates to shared validation utilities.
  *
  * @param name - Branch name to check
  * @returns True if valid
@@ -1066,15 +1019,14 @@ export function validateBranchName(name: string): BranchValidationResult {
  * }
  * ```
  */
-export function isValidBranchName(name: string): boolean {
-  return validateBranchName(name).valid
-}
+export const isValidBranchName = sharedIsValidBranchName
 
 /**
  * Normalize a branch name.
  *
  * @description
  * Removes refs/heads/ prefix if present, cleans up the name.
+ * Delegates to shared normalization utilities.
  *
  * @param name - Branch name or ref
  * @returns Normalized short branch name
@@ -1085,18 +1037,14 @@ export function isValidBranchName(name: string): boolean {
  * normalizeBranchName('main')              // 'main'
  * ```
  */
-export function normalizeBranchName(name: string): string {
-  if (name.startsWith('refs/heads/')) {
-    return name.slice('refs/heads/'.length)
-  }
-  return name
-}
+export const normalizeBranchName = sharedNormalizeBranchName
 
 /**
  * Get the full ref name for a branch.
  *
  * @description
  * Adds refs/heads/ prefix if not present.
+ * Delegates to shared utilities.
  *
  * @param name - Short branch name
  * @returns Full ref name
@@ -1107,12 +1055,7 @@ export function normalizeBranchName(name: string): string {
  * getBranchRefName('refs/heads/main') // 'refs/heads/main'
  * ```
  */
-export function getBranchRefName(name: string): string {
-  if (name.startsWith('refs/heads/')) {
-    return name
-  }
-  return `refs/heads/${name}`
-}
+export const getBranchRefName = sharedGetBranchRefName
 
 // ============================================================================
 // Convenience Functions

@@ -225,25 +225,32 @@ function levenshteinDistance(a: string, b: string): number {
     matrix[i] = [i]
   }
 
-  for (let j = 0; j <= a.length; j++) {
-    matrix[0][j] = j
+  const row0 = matrix[0]
+  if (row0) {
+    for (let j = 0; j <= a.length; j++) {
+      row0[j] = j
+    }
   }
 
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
+      const currentRow = matrix[i]
+      const prevRow = matrix[i - 1]
+      if (!currentRow || !prevRow) continue
+
       if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1]
+        currentRow[j] = prevRow[j - 1] ?? 0
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
+        currentRow[j] = Math.min(
+          (prevRow[j - 1] ?? 0) + 1,
+          (currentRow[j - 1] ?? 0) + 1,
+          (prevRow[j] ?? 0) + 1
         )
       }
     }
   }
 
-  return matrix[b.length][a.length]
+  return matrix[b.length]?.[a.length] ?? Infinity
 }
 
 /**
@@ -629,7 +636,7 @@ export async function checkoutCommand(ctx: CommandContext): Promise<void> {
   const { cwd, args, options, rawArgs, stdout, stderr } = ctx
 
   // Handle --help flag
-  if (options.help || options.h) {
+  if (options['help'] || options['h']) {
     stdout(`gitx checkout - Switch branches or restore working tree files
 
 Usage: gitx checkout [options] <branch>
@@ -655,12 +662,12 @@ Options:
     throw new Error('not a git repository')
   }
 
-  const quiet = options.quiet || options.q
-  const force = options.force || options.f
+  const quiet = options['quiet'] || options['q']
+  const force = options['force'] || options['f']
 
   // Handle --orphan flag
-  if (options.orphan) {
-    const branchName = options.orphan as string
+  if (options['orphan']) {
+    const branchName = options['orphan'] as string
     if (!isValidBranchName(branchName)) {
       stderr(`fatal: '${branchName}' is not a valid branch name`)
       throw new Error(`'${branchName}' is not a valid branch name`)
@@ -674,13 +681,13 @@ Options:
   }
 
   // Handle -b flag (create new branch)
-  if (options.b) {
+  if (options['b']) {
     // Handle case where -b is followed by something that looks like a flag (e.g., -b -invalid)
-    // In this case, options.b might be true (boolean) instead of a string
+    // In this case, options['b'] might be true (boolean) instead of a string
     let branchName: string
-    if (typeof options.b === 'string') {
-      branchName = options.b
-    } else if (typeof options.b === 'boolean') {
+    if (typeof options['b'] === 'string') {
+      branchName = options['b']
+    } else if (typeof options['b'] === 'boolean') {
       // -b was parsed as boolean, branch name might be in args or was parsed as flags
       if (args.length > 0) {
         branchName = args.shift()!
@@ -688,7 +695,7 @@ Options:
         // Check if the intended branch name started with a dash and got parsed as flags
         // This happens with e.g., `-b -invalid` where `-invalid` becomes `-i -n -v -a -l -i -d`
         // In this case, we should error that branch names starting with dash are invalid
-        if (options.i !== undefined) {
+        if (options['i'] !== undefined) {
           stderr(`fatal: '-invalid' is not a valid branch name`)
           throw new Error(`'-invalid' is not a valid branch name`)
         }
@@ -707,7 +714,7 @@ Options:
 
     const startPoint = args[0]
     try {
-      const result = await createAndSwitch(cwd, branchName, startPoint, { force, quiet })
+      const result = await createAndSwitch(cwd, branchName, startPoint, { force: Boolean(force), quiet: Boolean(quiet) })
       if (!quiet && result.success) {
         stdout(`Switched to a new branch '${branchName}'`)
       }
@@ -720,12 +727,12 @@ Options:
   }
 
   // Handle -B flag (create/reset branch)
-  if (options.B) {
+  if (options['B']) {
     // Handle case where -B is followed by something that looks like a flag
     let branchName: string
-    if (typeof options.B === 'string') {
-      branchName = options.B
-    } else if (typeof options.B === 'boolean' && args.length > 0) {
+    if (typeof options['B'] === 'string') {
+      branchName = options['B']
+    } else if (typeof options['B'] === 'boolean' && args.length > 0) {
       branchName = args.shift()!
     } else {
       stderr('fatal: You must specify a branch name with -B')
@@ -739,7 +746,7 @@ Options:
 
     const startPoint = args[0]
     try {
-      const result = await createAndSwitch(cwd, branchName, startPoint, { force, quiet, reset: true })
+      const result = await createAndSwitch(cwd, branchName, startPoint, { force: Boolean(force), quiet: Boolean(quiet), reset: true })
       if (!quiet && result.success) {
         stdout(`Switched to and reset branch '${branchName}'`)
       }
@@ -755,7 +762,7 @@ Options:
   if (rawArgs.length > 0) {
     const source = args.length > 0 ? args[0] : undefined
     try {
-      const result = await checkoutFiles(cwd, rawArgs, source, { force, quiet })
+      const result = await checkoutFiles(cwd, rawArgs, source, { force: Boolean(force), quiet: Boolean(quiet) })
       if (!quiet && result.success && result.modifiedFiles) {
         stdout(`Updated ${result.modifiedFiles.length} path(s) from ${result.target}`)
       }
@@ -773,14 +780,14 @@ Options:
     throw new Error('No branch specified')
   }
 
-  const target = args[0]
+  const target = args[0] ?? ''
 
   // Try to checkout the target
   try {
     const currentHead = await getCurrentHead(cwd)
 
     // Check if trying to checkout the same branch
-    if (currentHead.branch === target && !options.detach) {
+    if (currentHead.branch === target && !options['detach']) {
       if (!quiet) {
         stdout(`Already on '${target}'`)
       }
@@ -790,9 +797,9 @@ Options:
     // Check if target is a branch
     const branchSha = await readBranchSha(cwd, target)
     if (branchSha) {
-      if (options.detach) {
+      if (options['detach']) {
         // Detach HEAD at the branch's commit
-        await checkoutDetached(cwd, branchSha, { force, quiet })
+        await checkoutDetached(cwd, branchSha, { force: Boolean(force), quiet: Boolean(quiet) })
         if (!quiet) {
           stdout(`Note: switching to '${target}'.`)
           stdout('')
@@ -803,7 +810,7 @@ Options:
         return
       }
 
-      const switchResult = await switchBranch(cwd, target, { force, quiet })
+      const switchResult = await switchBranch(cwd, target, { force: Boolean(force), quiet: Boolean(quiet) })
       if (!quiet && switchResult.success) {
         stdout(`Switched to branch '${target}'`)
       }
@@ -813,7 +820,7 @@ Options:
     // Check if target is a tag
     const tagSha = await readTagSha(cwd, target)
     if (tagSha) {
-      await checkoutDetached(cwd, tagSha, { force, quiet })
+      await checkoutDetached(cwd, tagSha, { force: Boolean(force), quiet: Boolean(quiet) })
       if (!quiet) {
         stdout(`Note: switching to '${target}'.`)
         stdout('')
@@ -826,7 +833,7 @@ Options:
 
     // Check if target looks like a SHA
     if (looksLikeSha(target)) {
-      await checkoutDetached(cwd, target, { force, quiet })
+      await checkoutDetached(cwd, target, { force: Boolean(force), quiet: Boolean(quiet) })
       if (!quiet) {
         stdout(`Note: switching to '${target}'.`)
         stdout('')

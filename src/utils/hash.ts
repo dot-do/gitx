@@ -122,19 +122,28 @@ export class HashCache {
   /**
    * Generates a cache key for the given data.
    *
-   * @description Uses length + first 32 bytes (if available) to create a unique key.
-   * This is fast while providing good collision resistance.
+   * @description Uses length + full content hash as key. For data up to 256 bytes (typical
+   * for small Git objects like tags and commits), we use the entire content to avoid
+   * any possibility of collision. For larger data, we sample strategically.
    *
    * @param {Uint8Array} data - Data to generate key for
    * @returns {string} Cache key
    * @internal
    */
   private generateKey(data: Uint8Array): string {
-    // Use length + first 32 bytes as key (fast and reasonably unique)
-    const prefix = data.length <= 32
-      ? localBytesToHex(data)
-      : localBytesToHex(data.subarray(0, 32))
-    return `${data.length}:${prefix}`
+    // For small data (up to 256 bytes), use the entire content to avoid any collisions
+    // This is the safest approach for Git objects like commits and tags which are
+    // typically small but have similar prefixes
+    if (data.length <= 256) {
+      return `${data.length}:${localBytesToHex(data)}`
+    }
+
+    // For larger data, sample from beginning, middle, and end
+    // This provides good collision resistance while keeping key size manageable
+    const prefix = localBytesToHex(data.subarray(0, 64))
+    const middle = localBytesToHex(data.subarray(Math.floor(data.length / 2) - 32, Math.floor(data.length / 2) + 32))
+    const suffix = localBytesToHex(data.subarray(data.length - 64))
+    return `${data.length}:${prefix}:${middle}:${suffix}`
   }
 
   /**

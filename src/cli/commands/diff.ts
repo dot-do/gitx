@@ -285,8 +285,8 @@ void _BINARY_EXTENSIONS // Preserve for future use
 export async function diffCommand(ctx: CommandContext): Promise<void> {
   // Basic implementation for CLI integration
   const options: DiffOptions = {
-    staged: ctx.options.staged || ctx.options.cached,
-    noColor: ctx.options.noColor,
+    staged: Boolean(ctx.options['staged'] || ctx.options['cached']),
+    noColor: Boolean(ctx.options['noColor']),
   }
 
   // If help is requested, it's handled by CLI

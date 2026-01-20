@@ -830,7 +830,7 @@ describe('GitModule Database Integration', () => {
 describe('Schema Integration', () => {
   it('should use correct table names matching schema.ts', () => {
     // This test documents the expected table names
-    // that should exist in src/durable-object/schema.ts
+    // that should exist in src/do/schema.ts
     const expectedTables = ['git', 'git_branches', 'git_content']
     expect(expectedTables).toContain('git')
     expect(expectedTables).toContain('git_branches')

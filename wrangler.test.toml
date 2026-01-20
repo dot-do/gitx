@@ -1,0 +1,28 @@
+# Wrangler configuration for gitx-do tests
+# This config is used by vitest-pool-workers during testing
+name = "gitx-do-test"
+main = "src/worker.ts"
+compatibility_date = "2024-12-18"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects
+[durable_objects]
+bindings = [
+  { name = "GITX", class_name = "GitRepoDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GitRepoDO"]
+
+# R2 buckets for git object storage (mocked in tests)
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "gitx-objects"
+
+[[r2_buckets]]
+binding = "PACK_STORAGE"
+bucket_name = "gitx-packs"
+
+# Note: Service bindings (FSX, BASHX) are not included for testing
+# as they require external services. Tests should mock these bindings.

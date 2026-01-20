@@ -11,11 +11,11 @@
  * - WAL truncation after successful checkpoints
  * - Unflushed entry recovery for crash recovery
  *
- * @module durable-object/wal
+ * @module do/wal
  *
  * @example
  * ```typescript
- * import { WALManager } from './durable-object/wal'
+ * import { WALManager } from './do/wal'
  *
  * const wal = new WALManager(storage)
  *

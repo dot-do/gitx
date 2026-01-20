@@ -56,7 +56,19 @@
 import pako from 'pako'
 import { PackObjectType, encodeTypeAndSize } from './format'
 import { createDelta } from './delta'
-import { sha1 } from '../utils/sha1'
+import {
+  concatArrays,
+  createPackHeader,
+  computePackChecksum,
+  encodeOffset,
+  calculateSimilarity,
+  TYPE_ORDER,
+  DEPENDENCY_TYPE_ORDER,
+  DEFAULT_WINDOW_SIZE,
+  DEFAULT_MAX_DELTA_DEPTH,
+  DEFAULT_COMPRESSION_LEVEL,
+  DEFAULT_MIN_DELTA_SIZE
+} from './utils'
 
 // ============================================================================
 // Types and Interfaces
@@ -365,111 +377,7 @@ export interface DeltaChainStats {
   totalChains: number
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Compute SHA-1 checksum of pack content
- */
-function computePackChecksum(data: Uint8Array): Uint8Array {
-  return sha1(data)
-}
-
-/**
- * Create pack file header
- */
-function createPackHeader(objectCount: number): Uint8Array {
-  const header = new Uint8Array(12)
-  header[0] = 0x50 // P
-  header[1] = 0x41 // A
-  header[2] = 0x43 // C
-  header[3] = 0x4b // K
-  header[4] = 0
-  header[5] = 0
-  header[6] = 0
-  header[7] = 2
-  header[8] = (objectCount >> 24) & 0xff
-  header[9] = (objectCount >> 16) & 0xff
-  header[10] = (objectCount >> 8) & 0xff
-  header[11] = objectCount & 0xff
-
-  return header
-}
-
-/**
- * Encode offset for OFS_DELTA
- */
-function encodeOffset(offset: number): Uint8Array {
-  const bytes: number[] = []
-
-  bytes.push(offset & 0x7f)
-  offset >>>= 7
-
-  while (offset > 0) {
-    offset -= 1
-    bytes.unshift((offset & 0x7f) | 0x80)
-    offset >>>= 7
-  }
-
-  return new Uint8Array(bytes)
-}
-
-/**
- * Concatenate multiple Uint8Arrays
- */
-function concatArrays(arrays: Uint8Array[]): Uint8Array {
-  let totalLength = 0
-  for (const arr of arrays) {
-    totalLength += arr.length
-  }
-
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  for (const arr of arrays) {
-    result.set(arr, offset)
-    offset += arr.length
-  }
-
-  return result
-}
-
-/**
- * Calculate similarity between two byte arrays
- */
-function calculateSimilarity(a: Uint8Array, b: Uint8Array): number {
-  if (a.length === 0 || b.length === 0) return 0
-
-  const windowSize = 4
-  if (a.length < windowSize || b.length < windowSize) {
-    let matches = 0
-    const minLen = Math.min(a.length, b.length)
-    for (let i = 0; i < minLen; i++) {
-      if (a[i] === b[i]) matches++
-    }
-    return matches / Math.max(a.length, b.length)
-  }
-
-  const hashes = new Set<number>()
-  for (let i = 0; i <= a.length - windowSize; i++) {
-    let hash = 0
-    for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + a[i + j]) | 0
-    }
-    hashes.add(hash)
-  }
-
-  let matches = 0
-  for (let i = 0; i <= b.length - windowSize; i++) {
-    let hash = 0
-    for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + b[i + j]) | 0
-    }
-    if (hashes.has(hash)) matches++
-  }
-
-  return matches / Math.max(a.length - windowSize + 1, b.length - windowSize + 1)
-}
+// Helper functions are imported from ./utils
 
 // ============================================================================
 // Main Functions
@@ -552,16 +460,8 @@ export function applyOrderingStrategy(
 
   switch (strategy) {
     case PackOrderingStrategy.TYPE_FIRST: {
-      const typeOrder: Record<PackObjectType, number> = {
-        [PackObjectType.OBJ_COMMIT]: 0,
-        [PackObjectType.OBJ_TREE]: 1,
-        [PackObjectType.OBJ_BLOB]: 2,
-        [PackObjectType.OBJ_TAG]: 3,
-        [PackObjectType.OBJ_OFS_DELTA]: 4,
-        [PackObjectType.OBJ_REF_DELTA]: 5
-      }
       orderedObjects.sort((a, b) => {
-        const typeCompare = typeOrder[a.type] - typeOrder[b.type]
+        const typeCompare = TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
         if (typeCompare !== 0) return typeCompare
         if (config?.secondaryStrategy === PackOrderingStrategy.SIZE_DESCENDING) {
           return b.data.length - a.data.length
@@ -782,17 +682,8 @@ export function computeObjectDependencies(objects: PackableObject[]): ObjectDepe
 
       // Sort objects by type to ensure stable ordering:
       // blobs first, then trees, then commits (dependencies before dependents)
-      const typeOrder: Record<PackObjectType, number> = {
-        [PackObjectType.OBJ_BLOB]: 0,
-        [PackObjectType.OBJ_TREE]: 1,
-        [PackObjectType.OBJ_TAG]: 2,
-        [PackObjectType.OBJ_COMMIT]: 3,
-        [PackObjectType.OBJ_OFS_DELTA]: 4,
-        [PackObjectType.OBJ_REF_DELTA]: 5
-      }
-
       const sortedObjects = [...objects].sort((a, b) => {
-        return typeOrder[a.type] - typeOrder[b.type]
+        return DEPENDENCY_TYPE_ORDER[a.type] - DEPENDENCY_TYPE_ORDER[b.type]
       })
 
       for (const obj of sortedObjects) {
@@ -1084,9 +975,9 @@ export class FullPackGenerator {
   constructor(options?: FullPackOptions) {
     this.options = {
       enableDeltaCompression: options?.enableDeltaCompression ?? false,
-      maxDeltaDepth: options?.maxDeltaDepth ?? 50,
-      windowSize: options?.windowSize ?? 10,
-      compressionLevel: options?.compressionLevel ?? 6,
+      maxDeltaDepth: options?.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH,
+      windowSize: options?.windowSize ?? DEFAULT_WINDOW_SIZE,
+      compressionLevel: options?.compressionLevel ?? DEFAULT_COMPRESSION_LEVEL,
       orderingStrategy: options?.orderingStrategy
     }
   }
@@ -1166,10 +1057,14 @@ export class FullPackGenerator {
 
         this.reportProgress('compressing', i, ordered.objects.length, currentOffset, obj.sha)
 
+        // Get configured options with defaults
+        const windowSize = this.options.windowSize ?? DEFAULT_WINDOW_SIZE
+        const maxDepth = this.options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH
+
         // Skip small objects
-        if (obj.data.length < 50) {
+        if (obj.data.length < DEFAULT_MIN_DELTA_SIZE) {
           window.push(obj)
-          if (window.length > (this.options.windowSize ?? 10)) {
+          if (window.length > windowSize) {
             window.shift()
           }
           continue
@@ -1184,7 +1079,7 @@ export class FullPackGenerator {
           if (candidate.type !== obj.type) continue
 
           const candidateDepth = depthMap.get(candidate.sha) ?? 0
-          if (candidateDepth >= (this.options.maxDeltaDepth ?? 50)) continue
+          if (candidateDepth >= maxDepth) continue
 
           const delta = createDelta(candidate.data, obj.data)
           const savings = obj.data.length - delta.length
@@ -1204,7 +1099,7 @@ export class FullPackGenerator {
         }
 
         window.push(obj)
-        if (window.length > (this.options.windowSize ?? 10)) {
+        if (window.length > windowSize) {
           window.shift()
         }
       }
@@ -1324,9 +1219,9 @@ export class DeltaChainOptimizer {
 
   constructor(config?: DeltaChainConfig) {
     this.config = {
-      maxDepth: config?.maxDepth ?? 50,
+      maxDepth: config?.maxDepth ?? DEFAULT_MAX_DELTA_DEPTH,
       minSavingsThreshold: config?.minSavingsThreshold ?? 0.1,
-      windowSize: config?.windowSize ?? 10,
+      windowSize: config?.windowSize ?? DEFAULT_WINDOW_SIZE,
       minMatchLength: config?.minMatchLength ?? 4
     }
   }

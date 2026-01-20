@@ -209,7 +209,7 @@ async function parseGitConfig(cwd: string): Promise<Map<string, { remote: string
 
     for (const line of lines) {
       const branchMatch = line.match(/^\[branch "(.+)"\]$/)
-      if (branchMatch) {
+      if (branchMatch && branchMatch[1]) {
         // Save previous branch config if complete
         if (currentBranch && currentConfig.remote && currentConfig.merge) {
           trackingInfo.set(currentBranch, {
@@ -224,12 +224,12 @@ async function parseGitConfig(cwd: string): Promise<Map<string, { remote: string
 
       if (currentBranch) {
         const remoteMatch = line.match(/^\s*remote\s*=\s*(.+)$/)
-        if (remoteMatch) {
+        if (remoteMatch && remoteMatch[1]) {
           currentConfig.remote = remoteMatch[1]
         }
 
         const mergeMatch = line.match(/^\s*merge\s*=\s*(.+)$/)
-        if (mergeMatch) {
+        if (mergeMatch && mergeMatch[1]) {
           currentConfig.merge = mergeMatch[1]
         }
       }
@@ -285,8 +285,8 @@ async function getAheadBehind(cwd: string, branchName: string): Promise<{ ahead:
     const aheadMatch = content.match(/ahead=(\d+)/)
     const behindMatch = content.match(/behind=(\d+)/)
     return {
-      ahead: aheadMatch ? parseInt(aheadMatch[1], 10) : 0,
-      behind: behindMatch ? parseInt(behindMatch[1], 10) : 0
+      ahead: aheadMatch && aheadMatch[1] ? parseInt(aheadMatch[1], 10) : 0,
+      behind: behindMatch && behindMatch[1] ? parseInt(behindMatch[1], 10) : 0
     }
   } catch {
     return null
@@ -352,26 +352,26 @@ export async function branchCommand(ctx: CommandContext): Promise<void> {
   // Handle -m (rename) flag
   // Note: -m is defined as `-m <message>` in CLI for commit, but for branch it means rename
   // When options.m has a string value, it captured the first arg (old name)
-  if (options.m !== undefined && options.m !== false) {
-    // When -m captures a value, the old name is in options.m and new name is in args[0]
+  if (options['m'] !== undefined && options['m'] !== false) {
+    // When -m captures a value, the old name is in options['m'] and new name is in args[0]
     // When -m doesn't capture (just boolean), both names are in args
     let oldName: string
     let newName: string
 
-    if (typeof options.m === 'string') {
+    if (typeof options['m'] === 'string') {
       // -m captured the old name as its value
-      oldName = options.m
+      oldName = options['m']
       if (args.length < 1) {
         throw new Error('Usage: gitx branch -m <old-name> <new-name>')
       }
-      newName = args[0]
+      newName = args[0] ?? ''
     } else {
       // -m is boolean true, both names in args
       if (args.length < 2) {
         throw new Error('Usage: gitx branch -m <old-name> <new-name>')
       }
-      oldName = args[0]
-      newName = args[1]
+      oldName = args[0] ?? ''
+      newName = args[1] ?? ''
     }
 
     await renameBranch(cwd, oldName, newName)
@@ -380,30 +380,30 @@ export async function branchCommand(ctx: CommandContext): Promise<void> {
   }
 
   // Handle -d (delete) flag
-  if (options.d) {
+  if (options['d']) {
     if (args.length < 1) {
       throw new Error('Usage: gitx branch -d <branch-name>')
     }
-    const branchName = args[0]
+    const branchName = args[0] ?? ''
     await deleteBranch(cwd, branchName, { force: false })
     stdout(`Deleted branch ${branchName}`)
     return
   }
 
   // Handle -D (force delete) flag
-  if (options.D) {
+  if (options['D']) {
     if (args.length < 1) {
       throw new Error('Usage: gitx branch -D <branch-name>')
     }
-    const branchName = args[0]
+    const branchName = args[0] ?? ''
     await deleteBranch(cwd, branchName, { force: true })
     stdout(`Deleted branch ${branchName}`)
     return
   }
 
   // Handle branch creation (when args provided without flags)
-  if (args.length > 0 && !options.list) {
-    const branchName = args[0]
+  if (args.length > 0 && !options['list']) {
+    const branchName = args[0] ?? ''
     const startPoint = args[1]
     await createBranch(cwd, branchName, startPoint)
     return
@@ -411,14 +411,14 @@ export async function branchCommand(ctx: CommandContext): Promise<void> {
 
   // Default: list branches
   // Note: -vv is parsed as -v -v by cac, resulting in verbose being an array [true, true]
-  const isVeryVerbose = options.vv ||
-    (Array.isArray(options.v) && options.v.length >= 2) ||
-    (Array.isArray(options.verbose) && options.verbose.length >= 2)
-  const isVerbose = options.verbose || options.v
+  const isVeryVerbose = options['vv'] ||
+    (Array.isArray(options['v']) && options['v'].length >= 2) ||
+    (Array.isArray(options['verbose']) && options['verbose'].length >= 2)
+  const isVerbose = options['verbose'] || options['v']
 
   const listOptions: BranchListOptions = {
-    verbose: isVerbose,
-    veryVerbose: isVeryVerbose
+    verbose: Boolean(isVerbose),
+    veryVerbose: Boolean(isVeryVerbose)
   }
 
   let branches: BranchInfo[]

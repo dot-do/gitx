@@ -195,7 +195,7 @@ export async function statusCommand(ctx: CommandContext): Promise<void> {
   const { cwd, options, stdout } = ctx
 
   try {
-    if (options.branch && !options.short) {
+    if (options['branch'] && !options['short']) {
       const branchInfo = await getBranchInfo(cwd)
       stdout(formatBranchOnly(branchInfo))
       return
@@ -203,8 +203,8 @@ export async function statusCommand(ctx: CommandContext): Promise<void> {
 
     const result = await getStatus(cwd)
 
-    if (options.short) {
-      if (options.branch) {
+    if (options['short']) {
+      if (options['branch']) {
         // Both --short and --branch: show branch line + short file status
         stdout(formatBranchOnly(result.branch))
         const shortOutput = formatStatusShort(result)
@@ -277,7 +277,7 @@ export async function getStatus(cwd: string): Promise<StatusResult> {
     for (const line of mockStatus.split('\n')) {
       if (!line.trim()) continue
       const renameMatch = line.match(/^(.)(.) (.+?) -> (.+)$/)
-      if (renameMatch) {
+      if (renameMatch && renameMatch[1] && renameMatch[2] && renameMatch[3] && renameMatch[4]) {
         const [, indexStatus, workingTreeStatus, origPath, newPath] = renameMatch
         files.push({
           path: newPath,
@@ -287,7 +287,7 @@ export async function getStatus(cwd: string): Promise<StatusResult> {
         })
       } else {
         const match = line.match(/^(.)(.) (.+)$/)
-        if (match) {
+        if (match && match[1] && match[2] && match[3]) {
           const [, indexStatus, workingTreeStatus, filePath] = match
           files.push({
             path: filePath,
@@ -433,7 +433,7 @@ export async function getBranchInfo(cwd: string): Promise<BranchInfo> {
       const aheadBehindPath = path.join(gitDir, 'mock-ahead-behind')
       const content = await fs.readFile(aheadBehindPath, 'utf8')
       const match = content.match(/ahead=(\d+)\s+behind=(\d+)/)
-      if (match) {
+      if (match && match[1] && match[2]) {
         ahead = parseInt(match[1], 10)
         behind = parseInt(match[2], 10)
       }

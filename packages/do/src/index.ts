@@ -22,12 +22,84 @@
  * ```
  */
 
+// =============================================================================
 // Re-export core git types from @dotdo/gitx
+// =============================================================================
+
 export * from '@dotdo/gitx'
 
-// Note: The actual DO implementations will be moved here from src/do/
-// For now, this serves as a placeholder for the package structure.
-// The full migration will move:
+// =============================================================================
+// Cloudflare-specific Schema Management
+// =============================================================================
+
+export {
+  SchemaManager,
+  SCHEMA_VERSION,
+  SCHEMA_SQL,
+  type DurableObjectStorage,
+} from './do/schema'
+
+// =============================================================================
+// Cloudflare-specific Types
+// =============================================================================
+
+export {
+  // Core DO types
+  type DOState,
+  type DOStorage,
+  type ServiceBinding,
+  type DONamespaceBinding,
+  type DOStub,
+
+  // Environment bindings
+  type R2Binding,
+  type R2Object,
+  type KVBinding,
+  type PipelineBinding,
+  type BaseEnv,
+  type GitRepoDOEnv,
+
+  // Repository options
+  type InitializeOptions,
+  type ForkOptions,
+  type ForkResult,
+  type CompactResult,
+
+  // Workflow types
+  type WorkflowContext,
+  type StoreAccessor,
+  type TypedStoreAccessor,
+
+  // FS Capability
+  type FsCapability,
+
+  // Error types
+  GitRepoDOErrorCode,
+  GitRepoDOError,
+
+  // Logging types
+  LogLevel,
+  type LogEntry,
+  type Logger,
+
+  // Health check
+  type HealthCheckResponse,
+} from './do/types'
+
+// =============================================================================
+// Logger utilities
+// =============================================================================
+
+export {
+  createLogger,
+  createChildLogger,
+  noopLogger,
+  type LoggerOptions,
+} from './do/logger'
+
+// =============================================================================
+// TODO: Additional exports to be added as migration continues
+// =============================================================================
 // - GitRepoDO
 // - GitModule
 // - FsModule
@@ -36,4 +108,3 @@ export * from '@dotdo/gitx'
 // - ObjectStore
 // - WAL
 // - Container executor
-// - Schema management

@@ -55,7 +55,19 @@
 import pako from 'pako'
 import { PackObjectType, encodeTypeAndSize } from './format'
 import { createDelta } from './delta'
-import { sha1 } from '../utils/sha1'
+import {
+  concatArrays,
+  hexToBytes,
+  createPackHeader,
+  computePackChecksum,
+  encodeOffset,
+  calculateSimilarity,
+  TYPE_ORDER,
+  DEFAULT_WINDOW_SIZE,
+  DEFAULT_MAX_DELTA_DEPTH,
+  DEFAULT_COMPRESSION_LEVEL,
+  DEFAULT_MIN_DELTA_SIZE
+} from './utils'
 
 // ============================================================================
 // Types and Interfaces
@@ -243,171 +255,8 @@ export interface ThinPackResult {
   stats: PackGenerationStats
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Computes the SHA-1 checksum of pack content.
- *
- * @description Calculates the 20-byte SHA-1 hash that serves as the pack's
- * checksum/trailer. This checksum is appended to the pack and also used
- * in the corresponding .idx file.
- *
- * @param {Uint8Array} data - The pack data to checksum
- * @returns {Uint8Array} 20-byte SHA-1 checksum
- *
- * @example
- * const packWithoutChecksum = generatePackContent(objects);
- * const checksum = computePackChecksum(packWithoutChecksum);
- * // Append checksum to create complete packfile
- */
-export function computePackChecksum(data: Uint8Array): Uint8Array {
-  return sha1(data)
-}
-
-/**
- * Creates the 12-byte pack file header.
- *
- * @param {number} objectCount - Number of objects in the pack
- * @returns {Uint8Array} 12-byte header (signature + version + count)
- * @internal
- */
-function createPackHeader(objectCount: number): Uint8Array {
-  const header = new Uint8Array(12)
-  // Signature: "PACK"
-  header[0] = 0x50 // P
-  header[1] = 0x41 // A
-  header[2] = 0x43 // C
-  header[3] = 0x4b // K
-  // Version: 2 (big-endian)
-  header[4] = 0
-  header[5] = 0
-  header[6] = 0
-  header[7] = 2
-  // Object count (big-endian)
-  header[8] = (objectCount >> 24) & 0xff
-  header[9] = (objectCount >> 16) & 0xff
-  header[10] = (objectCount >> 8) & 0xff
-  header[11] = objectCount & 0xff
-
-  return header
-}
-
-/**
- * Encodes an offset for OFS_DELTA using Git's variable-length format.
- *
- * @description Uses a special encoding where each byte after the first
- * must subtract 1 before shifting to avoid ambiguity.
- *
- * @param {number} offset - The byte offset to encode
- * @returns {Uint8Array} Encoded offset bytes
- * @internal
- */
-function encodeOffset(offset: number): Uint8Array {
-  const bytes: number[] = []
-
-  // First byte: 7 bits of offset (no continuation)
-  bytes.push(offset & 0x7f)
-  offset >>>= 7
-
-  // Subsequent bytes: continuation bit + 7 bits, but we need to subtract 1
-  // to avoid ambiguity
-  while (offset > 0) {
-    offset -= 1
-    bytes.unshift((offset & 0x7f) | 0x80)
-    offset >>>= 7
-  }
-
-  return new Uint8Array(bytes)
-}
-
-/**
- * Converts a hexadecimal string to bytes.
- *
- * @param {string} hex - Hex string to convert
- * @returns {Uint8Array} Decoded bytes
- * @internal
- */
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
-  }
-  return bytes
-}
-
-/**
- * Concatenates multiple Uint8Arrays into one.
- *
- * @param {Uint8Array[]} arrays - Arrays to concatenate
- * @returns {Uint8Array} Combined array
- * @internal
- */
-function concatArrays(arrays: Uint8Array[]): Uint8Array {
-  let totalLength = 0
-  for (const arr of arrays) {
-    totalLength += arr.length
-  }
-
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  for (const arr of arrays) {
-    result.set(arr, offset)
-    offset += arr.length
-  }
-
-  return result
-}
-
-/**
- * Calculates similarity between two byte arrays using hash-based comparison.
- *
- * @description Uses a simple approach: counts matching 4-byte sequences between
- * the arrays. For small arrays, falls back to byte-by-byte comparison.
- *
- * @param {Uint8Array} a - First byte array
- * @param {Uint8Array} b - Second byte array
- * @returns {number} Similarity score between 0 and 1
- * @internal
- */
-function calculateSimilarity(a: Uint8Array, b: Uint8Array): number {
-  if (a.length === 0 || b.length === 0) return 0
-
-  // Use a simple approach: count matching 4-byte sequences
-  const windowSize = 4
-  if (a.length < windowSize || b.length < windowSize) {
-    // For small objects, compare byte by byte
-    let matches = 0
-    const minLen = Math.min(a.length, b.length)
-    for (let i = 0; i < minLen; i++) {
-      if (a[i] === b[i]) matches++
-    }
-    return matches / Math.max(a.length, b.length)
-  }
-
-  // Build hash set from 'a'
-  const hashes = new Set<number>()
-  for (let i = 0; i <= a.length - windowSize; i++) {
-    let hash = 0
-    for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + a[i + j]) | 0
-    }
-    hashes.add(hash)
-  }
-
-  // Count matches in 'b'
-  let matches = 0
-  for (let i = 0; i <= b.length - windowSize; i++) {
-    let hash = 0
-    for (let j = 0; j < windowSize; j++) {
-      hash = ((hash << 5) - hash + b[i + j]) | 0
-    }
-    if (hashes.has(hash)) matches++
-  }
-
-  return matches / Math.max(a.length - windowSize + 1, b.length - windowSize + 1)
-}
+// Re-export computePackChecksum for backward compatibility
+export { computePackChecksum } from './utils'
 
 // ============================================================================
 // Object Ordering
@@ -432,19 +281,9 @@ function calculateSimilarity(a: Uint8Array, b: Uint8Array): number {
  * // Use ordered array for pack generation
  */
 export function orderObjectsForCompression(objects: PackableObject[]): PackableObject[] {
-  // Define type order: commits, trees, blobs, tags
-  const typeOrder: Record<PackObjectType, number> = {
-    [PackObjectType.OBJ_COMMIT]: 0,
-    [PackObjectType.OBJ_TREE]: 1,
-    [PackObjectType.OBJ_BLOB]: 2,
-    [PackObjectType.OBJ_TAG]: 3,
-    [PackObjectType.OBJ_OFS_DELTA]: 4,
-    [PackObjectType.OBJ_REF_DELTA]: 5
-  }
-
   return [...objects].sort((a, b) => {
-    // First, sort by type
-    const typeCompare = typeOrder[a.type] - typeOrder[b.type]
+    // First, sort by type using shared TYPE_ORDER
+    const typeCompare = TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
     if (typeCompare !== 0) return typeCompare
 
     // Within same type, sort by path if available (groups similar files)
@@ -577,9 +416,9 @@ export class PackfileGenerator {
   constructor(options: GeneratorOptions = {}) {
     this.options = {
       enableDeltaCompression: options.enableDeltaCompression ?? false,
-      maxDeltaDepth: options.maxDeltaDepth ?? 50,
-      windowSize: options.windowSize ?? 10,
-      compressionLevel: options.compressionLevel ?? 6,
+      maxDeltaDepth: options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH,
+      windowSize: options.windowSize ?? DEFAULT_WINDOW_SIZE,
+      compressionLevel: options.compressionLevel ?? DEFAULT_COMPRESSION_LEVEL,
       useRefDelta: options.useRefDelta ?? false,
       minDeltaSize: options.minDeltaSize ?? 0  // Default to 0, use caller-specified value if set
     }
@@ -698,9 +537,13 @@ export class PackfileGenerator {
         const internalObj = this.objects.get(obj.sha)!
 
         // Skip small objects
-        if (obj.data.length < (this.options.minDeltaSize ?? 50)) {
+        const minSize = this.options.minDeltaSize ?? DEFAULT_MIN_DELTA_SIZE
+        const windowSize = this.options.windowSize ?? DEFAULT_WINDOW_SIZE
+        const maxDepth = this.options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH
+
+        if (obj.data.length < minSize) {
           window.push(internalObj)
-          if (window.length > (this.options.windowSize ?? 10)) {
+          if (window.length > windowSize) {
             window.shift()
           }
           continue
@@ -716,7 +559,7 @@ export class PackfileGenerator {
 
           // Check depth limit
           const candidateDepth = depthMap.get(candidate.sha) ?? 0
-          if (candidateDepth >= (this.options.maxDeltaDepth ?? 50)) continue
+          if (candidateDepth >= maxDepth) continue
 
           const delta = createDelta(candidate.data, obj.data)
           const savings = obj.data.length - delta.length
@@ -736,7 +579,7 @@ export class PackfileGenerator {
         }
 
         window.push(internalObj)
-        if (window.length > (this.options.windowSize ?? 10)) {
+        if (window.length > windowSize) {
           window.shift()
         }
       }

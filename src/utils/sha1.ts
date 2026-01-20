@@ -105,7 +105,7 @@ export function sha1(data: Uint8Array): Uint8Array {
 
     // Extend the sixteen 32-bit words into eighty 32-bit words
     for (let i = 16; i < 80; i++) {
-      w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1)
+      w[i] = rotl((w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0), 1)
     }
 
     // Initialize working variables
@@ -137,7 +137,7 @@ export function sha1(data: Uint8Array): Uint8Array {
         k = 0xca62c1d6
       }
 
-      const temp = (rotl(a, 5) + f + e + k + w[i]) >>> 0
+      const temp = (rotl(a, 5) + f + e + k + (w[i] ?? 0)) >>> 0
       e = d
       d = c
       c = rotl(b, 30)
@@ -191,7 +191,7 @@ export function sha1Hex(data: Uint8Array): string {
   const hash = sha1(data)
   let hex = ''
   for (let i = 0; i < hash.length; i++) {
-    hex += hash[i].toString(16).padStart(2, '0')
+    hex += (hash[i] ?? 0).toString(16).padStart(2, '0')
   }
   return hex
 }
@@ -270,7 +270,7 @@ export function sha1Verify(data: Uint8Array, expected: Uint8Array): boolean {
 export function bytesToHex(bytes: Uint8Array): string {
   let hex = ''
   for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, '0')
+    hex += (bytes[i] ?? 0).toString(16).padStart(2, '0')
   }
   return hex
 }
@@ -349,15 +349,15 @@ function processChunk(
 
   // Extend the sixteen 32-bit words into eighty 32-bit words
   for (let i = 16; i < 80; i++) {
-    w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1)
+    w[i] = rotl((w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0), 1)
   }
 
   // Initialize working variables
-  let a = h[0]
-  let b = h[1]
-  let c = h[2]
-  let d = h[3]
-  let e = h[4]
+  let a = h[0] ?? 0
+  let b = h[1] ?? 0
+  let c = h[2] ?? 0
+  let d = h[3] ?? 0
+  let e = h[4] ?? 0
 
   // Main loop - 80 rounds
   for (let i = 0; i < 80; i++) {
@@ -365,19 +365,19 @@ function processChunk(
 
     if (i < 20) {
       f = (b & c) | (~b & d)
-      k = SHA1_K[0]
+      k = SHA1_K[0] ?? 0
     } else if (i < 40) {
       f = b ^ c ^ d
-      k = SHA1_K[1]
+      k = SHA1_K[1] ?? 0
     } else if (i < 60) {
       f = (b & c) | (b & d) | (c & d)
-      k = SHA1_K[2]
+      k = SHA1_K[2] ?? 0
     } else {
       f = b ^ c ^ d
-      k = SHA1_K[3]
+      k = SHA1_K[3] ?? 0
     }
 
-    const temp = (rotl(a, 5) + f + e + k + w[i]) >>> 0
+    const temp = (rotl(a, 5) + f + e + k + (w[i] ?? 0)) >>> 0
     e = d
     d = c
     c = rotl(b, 30)
@@ -386,11 +386,11 @@ function processChunk(
   }
 
   // Add this chunk's hash to result so far
-  h[0] = (h[0] + a) >>> 0
-  h[1] = (h[1] + b) >>> 0
-  h[2] = (h[2] + c) >>> 0
-  h[3] = (h[3] + d) >>> 0
-  h[4] = (h[4] + e) >>> 0
+  h[0] = ((h[0] ?? 0) + a) >>> 0
+  h[1] = ((h[1] ?? 0) + b) >>> 0
+  h[2] = ((h[2] ?? 0) + c) >>> 0
+  h[3] = ((h[3] ?? 0) + d) >>> 0
+  h[4] = ((h[4] ?? 0) + e) >>> 0
 }
 
 /**

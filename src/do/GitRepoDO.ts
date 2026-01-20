@@ -23,139 +23,25 @@
 import { Hono } from 'hono'
 
 // ============================================================================
-// Types and Interfaces
+// Type Imports
 // ============================================================================
 
-/**
- * Durable Object state interface.
- */
-interface DOState {
-  id: { toString(): string }
-  storage: {
-    get(key: string): Promise<unknown>
-    put(key: string, value: unknown): Promise<void>
-    delete(key: string): Promise<boolean>
-    list(options?: { prefix?: string }): Promise<Map<string, unknown>>
-    sql: {
-      exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
-    }
-  }
-  waitUntil(promise: Promise<unknown>): void
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>
-}
-
-/**
- * Service binding interface for cross-worker communication.
- */
-interface ServiceBinding {
-  fetch(request: Request | string, init?: RequestInit): Promise<Response>
-}
-
-/**
- * Environment interface for GitRepoDO.
- */
-interface GitRepoDOEnv {
-  DO?: {
-    idFromName(name: string): unknown
-    idFromString(id: string): unknown
-    newUniqueId(options?: { locationHint?: string }): unknown
-    get(id: unknown): { fetch(request: Request | string, init?: RequestInit): Promise<Response> }
-  }
-  R2?: {
-    put(key: string, data: string | ArrayBuffer): Promise<unknown>
-    get(key: string): Promise<{ text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> } | null>
-    list(options?: { prefix?: string }): Promise<{ objects: Array<{ key: string }> }>
-  }
-  KV?: {
-    get(key: string): Promise<string | null>
-    put(key: string, value: string): Promise<void>
-  }
-  PIPELINE?: {
-    send(events: unknown[]): Promise<void>
-  }
-  /**
-   * FSX service binding for filesystem operations.
-   * Bound via wrangler.toml [[services]] configuration.
-   */
-  FSX?: ServiceBinding
-  /**
-   * BASHX service binding for shell command execution.
-   * Bound via wrangler.toml [[services]] configuration.
-   */
-  BASHX?: ServiceBinding
-}
-
-/**
- * Initialize options for GitRepoDO.
- */
-interface InitializeOptions {
-  ns: string
-  parent?: string
-}
-
-/**
- * Fork options for GitRepoDO.
- */
-interface ForkOptions {
-  to: string
-  branch?: string
-}
-
-/**
- * Fork result.
- */
-interface ForkResult {
-  ns: string
-  doId: string
-}
-
-/**
- * Compact result.
- */
-interface CompactResult {
-  thingsCompacted: number
-  actionsArchived: number
-  eventsArchived: number
-}
-
-/**
- * Workflow context interface (the $ API).
- */
-interface WorkflowContext {
-  send(event: string, data?: unknown): void
-  try<T>(action: string, data?: unknown): Promise<T>
-  do<T>(action: string, data?: unknown): Promise<T>
-  on: Record<string, Record<string, (handler: unknown) => void>>
-  every: Record<string, { at: (time: string) => (handler: unknown) => void }>
-  branch(name: string): Promise<void>
-  checkout(ref: string): Promise<void>
-  merge(branch: string): Promise<void>
-  [key: string]: unknown
-}
-
-/**
- * Store accessor interface.
- */
-interface StoreAccessor {
-  get(id: string): Promise<unknown>
-  set(id: string, value: unknown): Promise<void>
-  delete(id: string): Promise<boolean>
-  list(options?: { prefix?: string }): Promise<Map<string, unknown>>
-}
-
-/**
- * Filesystem capability interface for FSX service binding integration.
- * Wraps the FSX service binding to provide filesystem operations.
- */
-interface FsCapability {
-  readFile(path: string): Promise<string | Buffer>
-  writeFile(path: string, content: string | Buffer): Promise<void>
-  readDir(path: string): Promise<string[]>
-  exists(path: string): Promise<boolean>
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
-  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>
-  getFileId?(path: string): Promise<number | null>
-}
+import type {
+  DOState,
+  ServiceBinding,
+  GitRepoDOEnv,
+  InitializeOptions,
+  ForkOptions,
+  ForkResult,
+  CompactResult,
+  WorkflowContext,
+  StoreAccessor,
+  FsCapability,
+  Logger,
+} from './types'
+import { GitRepoDOError, GitRepoDOErrorCode } from './types'
+import { createLogger } from './logger'
+import { setupRoutes, type GitRepoDOInstance } from './routes'
 
 /**
  * Creates an FsCapability adapter that uses the FSX service binding.
@@ -305,6 +191,14 @@ class DO {
   }
 
   /**
+   * Get the capabilities set.
+   * Used by route handlers to access capabilities.
+   */
+  getCapabilities(): Set<string> {
+    return this._capabilities
+  }
+
+  /**
    * Convert to JSON representation.
    */
   toJSON(): Record<string, unknown> {
@@ -341,10 +235,10 @@ class DO {
  * await repo.things.set('file-1', { content: '...' })
  * ```
  */
-export class GitRepoDO extends DO {
+export class GitRepoDO extends DO implements GitRepoDOInstance {
   static override $type = 'GitRepoDO'
 
-  private _router: Hono
+  private _router: Hono<{ Bindings: Record<string, unknown> }>
   private _$: WorkflowContext
   private _db: unknown
   private _things: StoreAccessor
@@ -352,9 +246,20 @@ export class GitRepoDO extends DO {
   private _actions: StoreAccessor
   private _events: StoreAccessor
   private _fs?: FsCapability
+  private _logger: Logger
+
+  /** Start time for uptime tracking */
+  readonly _startTime: number = Date.now()
 
   constructor(state: DOState, env: GitRepoDOEnv) {
     super(state, env)
+
+    // Initialize logger
+    this._logger = createLogger({
+      ns: state.id.toString(),
+      $type: GitRepoDO.$type,
+    })
+    this._logger.debug('GitRepoDO instance created', { doId: state.id.toString() })
 
     // GitRepoDO has git capability by default
     this._capabilities.add('git')
@@ -364,11 +269,12 @@ export class GitRepoDO extends DO {
       this._capabilities.add('fs')
       // Use the DO ID as the namespace for FSX operations
       this._fs = createFsxAdapter(env.FSX, state.id.toString())
+      this._logger.debug('FSX adapter initialized')
     }
 
-    // Initialize router
+    // Initialize router with extracted route handlers
     this._router = new Hono()
-    this._setupRoutes()
+    setupRoutes(this._router, this)
 
     // Initialize workflow context
     this._$ = this._createWorkflowContext()
@@ -381,6 +287,8 @@ export class GitRepoDO extends DO {
 
     // Initialize db (placeholder for Drizzle integration)
     this._db = { sql: state.storage.sql }
+
+    this._logger.info('GitRepoDO initialized')
   }
 
   /**
@@ -448,14 +356,22 @@ export class GitRepoDO extends DO {
 
   /**
    * Initialize the GitRepoDO with namespace and optional parent.
+   * @throws {GitRepoDOError} If namespace URL is invalid
    */
   async initialize(options: InitializeOptions): Promise<void> {
+    this._logger.debug('Initializing GitRepoDO', { ns: options.ns, parent: options.parent })
+
     // Validate namespace URL
     let url: URL
     try {
       url = new URL(options.ns)
     } catch {
-      throw new Error(`Invalid namespace URL: ${options.ns}`)
+      this._logger.error('Invalid namespace URL', { ns: options.ns })
+      throw new GitRepoDOError(
+        `Invalid namespace URL: ${options.ns}`,
+        GitRepoDOErrorCode.INVALID_NAMESPACE,
+        { ns: options.ns }
+      )
     }
 
     this._ns = options.ns
@@ -490,21 +406,36 @@ export class GitRepoDO extends DO {
         ns: options.ns,
       })
     }
+
+    this._logger.info('GitRepoDO namespace initialized', { ns: options.ns })
   }
 
   /**
    * Fork this DO to create a new instance with copied state.
+   * @throws {GitRepoDOError} If DO not initialized or target URL is invalid
    */
   async fork(options: ForkOptions): Promise<ForkResult> {
+    this._logger.debug('Forking GitRepoDO', { to: options.to, branch: options.branch })
+
     if (!this._initialized || !this._ns) {
-      throw new Error('Cannot fork: DO not initialized')
+      this._logger.error('Cannot fork: DO not initialized')
+      throw new GitRepoDOError(
+        'Cannot fork: DO not initialized',
+        GitRepoDOErrorCode.NOT_INITIALIZED,
+        { ns: this._ns }
+      )
     }
 
     // Validate target namespace URL
     try {
       new URL(options.to)
     } catch {
-      throw new Error(`Invalid fork target URL: ${options.to}`)
+      this._logger.error('Invalid fork target URL', { to: options.to })
+      throw new GitRepoDOError(
+        `Invalid fork target URL: ${options.to}`,
+        GitRepoDOErrorCode.INVALID_NAMESPACE,
+        { to: options.to }
+      )
     }
 
     // Create a new DO ID for the fork
@@ -513,16 +444,27 @@ export class GitRepoDO extends DO {
 
     // If we have the DO binding, create the forked instance
     if (this.env.DO) {
-      const forkedDO = this.env.DO.get(doId)
-      await forkedDO.fetch(new Request('https://internal/fork', {
-        method: 'POST',
-        body: JSON.stringify({
-          ns: options.to,
-          parent: this._ns,
-          branch: options.branch,
-        }),
-      }))
+      try {
+        const forkedDO = this.env.DO.get(doId)
+        await forkedDO.fetch(new Request('https://internal/fork', {
+          method: 'POST',
+          body: JSON.stringify({
+            ns: options.to,
+            parent: this._ns,
+            branch: options.branch,
+          }),
+        }))
+      } catch (error) {
+        this._logger.error('Fork operation failed', { error, to: options.to })
+        throw new GitRepoDOError(
+          `Fork failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          GitRepoDOErrorCode.FORK_FAILED,
+          { to: options.to, error }
+        )
+      }
     }
+
+    this._logger.info('GitRepoDO forked successfully', { from: this._ns, to: options.to, doId: doIdStr })
 
     return {
       ns: options.to,
@@ -532,10 +474,18 @@ export class GitRepoDO extends DO {
 
   /**
    * Compact the DO's data, archiving old things, actions, and events.
+   * @throws {GitRepoDOError} If DO not initialized or nothing to compact
    */
   async compact(): Promise<CompactResult> {
+    this._logger.debug('Starting compaction')
+
     if (!this._initialized) {
-      throw new Error('Cannot compact: DO not initialized')
+      this._logger.error('Cannot compact: DO not initialized')
+      throw new GitRepoDOError(
+        'Cannot compact: DO not initialized',
+        GitRepoDOErrorCode.NOT_INITIALIZED,
+        { ns: this._ns }
+      )
     }
 
     // Check if there's anything to compact
@@ -545,15 +495,27 @@ export class GitRepoDO extends DO {
 
     const totalItems = thingsList.size + actionsList.size + eventsList.size
     if (totalItems === 0) {
-      throw new Error('Nothing to compact')
+      this._logger.warn('Nothing to compact')
+      throw new GitRepoDOError(
+        'Nothing to compact',
+        GitRepoDOErrorCode.NOTHING_TO_COMPACT,
+        { ns: this._ns }
+      )
     }
 
-    // For now, return counts without actual archiving
-    return {
+    const result: CompactResult = {
       thingsCompacted: thingsList.size,
       actionsArchived: actionsList.size,
       eventsArchived: eventsList.size,
     }
+
+    this._logger.info('Compaction completed', {
+      thingsCompacted: result.thingsCompacted,
+      actionsArchived: result.actionsArchived,
+      eventsArchived: result.eventsArchived,
+    })
+
+    return result
   }
 
   // ===========================================================================
@@ -564,6 +526,8 @@ export class GitRepoDO extends DO {
    * Handle incoming HTTP requests.
    */
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url)
+    this._logger.debug('Handling request', { method: request.method, path: url.pathname })
     return this._router.fetch(request)
   }
 
@@ -571,6 +535,7 @@ export class GitRepoDO extends DO {
    * Handle alarm callbacks.
    */
   async alarm(): Promise<void> {
+    this._logger.debug('Alarm triggered')
     // Default alarm handler - can be overridden
   }
 
@@ -604,24 +569,6 @@ export class GitRepoDO extends DO {
   // ===========================================================================
   // Private Methods
   // ===========================================================================
-
-  private _setupRoutes(): void {
-    // Health check endpoint
-    this._router.get('/health', (c) => {
-      return c.json({
-        status: 'ok',
-        ns: this._ns,
-        $type: this.$type,
-      })
-    })
-
-    // Fork endpoint (internal)
-    this._router.post('/fork', async (c) => {
-      const body = await c.req.json()
-      await this.initialize({ ns: body.ns, parent: body.parent })
-      return c.json({ success: true })
-    })
-  }
 
   private _createWorkflowContext(): WorkflowContext {
     const self = this
