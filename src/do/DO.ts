@@ -81,12 +81,15 @@ export class DO<TEnv extends BaseEnv = BaseEnv> {
    */
   getTypeHierarchy(): string[] {
     const hierarchy: string[] = []
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let current: any = this.constructor
+    // Interface for constructors with $type static property
+    interface ConstructorWithType {
+      $type?: string
+    }
+    let current: ConstructorWithType | null = this.constructor as ConstructorWithType
 
     while (current && current.$type) {
       hierarchy.push(current.$type)
-      current = Object.getPrototypeOf(current)
+      current = Object.getPrototypeOf(current) as ConstructorWithType | null
     }
 
     return hierarchy
