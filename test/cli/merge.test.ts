@@ -1222,6 +1222,7 @@ describe('gitx merge command', () => {
 
       // Simulate resolved conflicts
       await fs.writeFile(path.join(tempDir, 'file.txt'), 'resolved content')
+      // Best-effort cleanup: file may not exist, safe to ignore
       await fs.unlink(path.join(tempDir, '.git', 'mock-conflicts')).catch(() => {})
 
       const result = await continueMerge(tempDir)

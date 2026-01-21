@@ -1413,6 +1413,7 @@ export class TierMigrator {
         await this.storage.updateLocation(sha, { tier: targetTier, packId, offset })
       } catch (error) {
         // Rollback: clean up warm tier
+        // Best-effort cleanup during rollback: if this fails, we're already in error recovery
         await this.storage.deleteFromWarm(sha).catch(() => {})
         this.recordHistory(sha, sourceTier, targetTier, 'rolled_back')
         return {
