@@ -174,7 +174,7 @@ export interface CompressionProvider {
  */
 export interface ValidationResult {
   valid: boolean
-  error?: string
+  error?: string | undefined
 }
 
 /**
@@ -182,6 +182,6 @@ export interface ValidationResult {
  */
 export interface OperationResult<T = void> {
   success: boolean
-  data?: T
-  error?: string
+  data?: T | undefined
+  error?: string | undefined
 }

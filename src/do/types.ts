@@ -29,7 +29,7 @@ export interface DOStorage {
   get(key: string): Promise<unknown>
   put(key: string, value: unknown): Promise<void>
   delete(key: string): Promise<boolean>
-  list(options?: { prefix?: string }): Promise<Map<string, unknown>>
+  list(options?: { prefix?: string | undefined }): Promise<Map<string, unknown>>
   sql: {
     exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
   }
@@ -52,7 +52,7 @@ export interface ServiceBinding {
 export interface DONamespaceBinding {
   idFromName(name: string): unknown
   idFromString(id: string): unknown
-  newUniqueId(options?: { locationHint?: string }): unknown
+  newUniqueId(options?: { locationHint?: string | undefined }): unknown
   get(id: unknown): DOStub
 }
 
@@ -69,7 +69,7 @@ export interface DOStub {
 export interface R2Binding {
   put(key: string, data: string | ArrayBuffer): Promise<unknown>
   get(key: string): Promise<R2Object | null>
-  list(options?: { prefix?: string }): Promise<{ objects: Array<{ key: string }> }>
+  list(options?: { prefix?: string | undefined }): Promise<{ objects: Array<{ key: string }> }>
 }
 
 /**
@@ -103,10 +103,10 @@ export interface PipelineBinding {
  * Base environment interface for all DOs.
  */
 export interface BaseEnv {
-  DO?: DONamespaceBinding
-  R2?: R2Binding
-  KV?: KVBinding
-  PIPELINE?: PipelineBinding
+  DO?: DONamespaceBinding | undefined
+  R2?: R2Binding | undefined
+  KV?: KVBinding | undefined
+  PIPELINE?: PipelineBinding | undefined
 }
 
 /**
@@ -118,12 +118,12 @@ export interface GitRepoDOEnv extends BaseEnv {
    * FSX service binding for filesystem operations.
    * Bound via wrangler.toml [[services]] configuration.
    */
-  FSX?: ServiceBinding
+  FSX?: ServiceBinding | undefined
   /**
    * BASHX service binding for shell command execution.
    * Bound via wrangler.toml [[services]] configuration.
    */
-  BASHX?: ServiceBinding
+  BASHX?: ServiceBinding | undefined
 }
 
 // ============================================================================
@@ -135,7 +135,7 @@ export interface GitRepoDOEnv extends BaseEnv {
  */
 export interface InitializeOptions {
   ns: string
-  parent?: string
+  parent?: string | undefined
 }
 
 /**
@@ -143,7 +143,7 @@ export interface InitializeOptions {
  */
 export interface ForkOptions {
   to: string
-  branch?: string
+  branch?: string | undefined
 }
 
 /**
@@ -204,7 +204,7 @@ export interface StoreAccessor {
   get(id: string): Promise<unknown>
   set(id: string, value: unknown): Promise<void>
   delete(id: string): Promise<boolean>
-  list(options?: { prefix?: string }): Promise<Map<string, unknown>>
+  list(options?: { prefix?: string | undefined }): Promise<Map<string, unknown>>
 }
 
 /**
@@ -228,8 +228,8 @@ export interface FsCapability {
   writeFile(path: string, content: string | Buffer): Promise<void>
   readDir(path: string): Promise<string[]>
   exists(path: string): Promise<boolean>
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
-  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>
+  mkdir(path: string, options?: { recursive?: boolean | undefined }): Promise<void>
+  rm(path: string, options?: { recursive?: boolean | undefined; force?: boolean | undefined }): Promise<void>
   getFileId?(path: string): Promise<number | null>
 }
 
@@ -301,7 +301,7 @@ export interface LogEntry {
   level: LogLevel
   message: string
   timestamp: number
-  context?: Record<string, unknown>
+  context?: Record<string, unknown> | undefined
 }
 
 /**
@@ -323,8 +323,8 @@ export interface Logger {
  */
 export interface HealthCheckResponse {
   status: 'ok' | 'degraded' | 'unhealthy'
-  ns?: string
+  ns?: string | undefined
   $type: string
-  uptime?: number
-  capabilities?: string[]
+  uptime?: number | undefined
+  capabilities?: string[] | undefined
 }

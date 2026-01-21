@@ -218,7 +218,7 @@ export interface StorageBackend {
   /**
    * Create a directory.
    */
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
+  mkdir(path: string, options?: { recursive?: boolean | undefined }): Promise<void>
 }
 
 // ============================================================================
@@ -283,7 +283,7 @@ export interface CompressionProvider {
  */
 export interface ValidationResult {
   isValid: boolean
-  error?: string
+  error?: string | undefined
 }
 
 /**
@@ -291,8 +291,8 @@ export interface ValidationResult {
  */
 export interface OperationResult<T = void> {
   success: boolean
-  data?: T
-  error?: string
+  data?: T | undefined
+  error?: string | undefined
 }
 
 /**
@@ -300,9 +300,9 @@ export interface OperationResult<T = void> {
  */
 export interface WalkOptions {
   /** Maximum depth to traverse (-1 for unlimited) */
-  maxDepth?: number
+  maxDepth?: number | undefined
   /** Filter function for entries */
-  filter?: (entry: { path: string; type: string }) => boolean
+  filter?: ((entry: { path: string; type: string }) => boolean) | undefined
 }
 
 /**
@@ -336,7 +336,7 @@ export interface DiffEntry {
   /** Type of change */
   status: 'added' | 'deleted' | 'modified' | 'renamed' | 'copied'
   /** For renames/copies: similarity percentage */
-  similarity?: number
+  similarity?: number | undefined
   /** For renames/copies: old path */
-  oldPath?: string
+  oldPath?: string | undefined
 }
