@@ -476,11 +476,16 @@ export function createPackIndex(
     entries = providedEntries
   } else {
     // Extract object info from packfile if available (attached by test helpers)
-    const objectInfo = (packData as any)?.__objectInfo as Array<{
-      id: string
-      offset: number
-      compressedData: Uint8Array
-    }> | undefined
+    // Type assertion to access test helper metadata
+    interface PackDataWithObjectInfo extends Uint8Array {
+      __objectInfo?: Array<{
+        id: string
+        offset: number
+        compressedData: Uint8Array
+      }>
+    }
+    const packDataWithInfo = packData as PackDataWithObjectInfo
+    const objectInfo = packDataWithInfo.__objectInfo
 
     // Build entries from object info or empty if none
     entries = []

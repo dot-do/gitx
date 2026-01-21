@@ -678,10 +678,11 @@ export async function addFiles(
         result.files.push({ path: file.path, sha, mode })
         indexEntries.push({ path: file.path, sha, mode })
       }
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
+    } catch (err: unknown) {
+      const nodeErr = err as NodeJS.ErrnoException
+      if (nodeErr.code === 'ENOENT') {
         errors.push(`fatal: pathspec '${file.path}' does not exist (file not found)`)
-      } else if (err.code === 'EACCES' || err.code === 'EPERM') {
+      } else if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {
         throw new Error(`error: open("${file.path}"): Permission denied`)
       } else {
         throw err
@@ -1078,8 +1079,9 @@ export async function getFilesToAdd(
             result.push({ path: pathSpec, sha: '', mode: 0 })
           }
         }
-      } catch (err: any) {
-        if (err.code === 'ENOENT') {
+      } catch (err: unknown) {
+        const nodeErr = err as NodeJS.ErrnoException
+        if (nodeErr.code === 'ENOENT') {
           // File doesn't exist - still add to list for error handling later
           if (!seen.has(pathSpec)) {
             seen.add(pathSpec)

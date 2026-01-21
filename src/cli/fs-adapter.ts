@@ -823,13 +823,14 @@ class FSIndexImpl implements FSIndex {
     try {
       const data = await fs.readFile(indexPath)
       this.parseIndex(new Uint8Array(data))
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
+    } catch (error: unknown) {
+      const nodeErr = error as NodeJS.ErrnoException
+      if (nodeErr.code === 'ENOENT') {
         this.entries = []
         return
       }
       throw new FSAdapterError(
-        `Failed to read index: ${error.message}`,
+        `Failed to read index: ${nodeErr.message ?? String(error)}`,
         'CORRUPT_INDEX',
         indexPath
       )
@@ -1167,9 +1168,10 @@ class FSPackReaderImpl implements FSPackReader {
       const index = parsePackIndex(new Uint8Array(data))
       this.packIndices.set(packName, index)
       return index
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error)
       throw new FSAdapterError(
-        `Failed to read pack index: ${error.message}`,
+        `Failed to read pack index: ${errMsg}`,
         'CORRUPT_PACK',
         idxPath
       )
@@ -1184,9 +1186,10 @@ class FSPackReaderImpl implements FSPackReader {
         offset: e.offset,
         crc32: e.crc32
       }))
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Return empty array if pack doesn't exist
-      if (error.message?.includes('ENOENT')) {
+      const errMsg = error instanceof Error ? error.message : ''
+      if (errMsg.includes('ENOENT')) {
         return []
       }
       throw error
@@ -1205,7 +1208,7 @@ class FSPackReaderImpl implements FSPackReader {
 
       // Read object at offset
       return this.readObjectAtOffset(data, offset, packName)
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof FSAdapterError) throw error
       return null
     }
@@ -1475,10 +1478,11 @@ class FSAdapterImpl implements FSAdapter {
         data,
         source: 'loose'
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof FSAdapterError) throw error
-      if (error.code === 'ENOENT') return null
-      if (error.code === 'EACCES' || error.code === 'EPERM') {
+      const nodeErr = error as NodeJS.ErrnoException
+      if (nodeErr.code === 'ENOENT') return null
+      if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {
         throw new FSAdapterError(
           `Permission denied reading object: ${sha}`,
           'READ_ERROR',
@@ -1486,7 +1490,7 @@ class FSAdapterImpl implements FSAdapter {
         )
       }
       throw new FSAdapterError(
-        `Failed to read object ${sha}: ${error.message}`,
+        `Failed to read object ${sha}: ${nodeErr.message ?? String(error)}`,
         'CORRUPT_OBJECT',
         objPath
       )
@@ -1925,7 +1929,7 @@ export async function createFSAdapter(
           repoPath
         )
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof FSAdapterError) throw error
 
       // Check if repoPath itself is the gitDir (bare repo with explicit gitDir)
