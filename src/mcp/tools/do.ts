@@ -31,10 +31,21 @@ function validateSecurity(code: string): { valid: boolean; error?: string } {
 
 /**
  * Check for syntax errors in code
+ *
+ * SECURITY NOTE: new Function() is used here ONLY for syntax validation.
+ * The code is NOT executed - we only check if JavaScript can parse it.
+ * The actual code execution happens in evaluateWithMiniflare() which
+ * runs code in a sandboxed Miniflare environment.
+ *
+ * Code flow:
+ * 1. validateUserCode() - blocks dangerous patterns (eval, Function, etc.)
+ * 2. validateSecurity() - additional security checks
+ * 3. checkSyntax() - validates JS syntax (this function, uses new Function)
+ * 4. evaluateWithMiniflare() - executes in sandbox
  */
 function checkSyntax(code: string): { valid: boolean; error?: string } {
   try {
-    // Try to parse the code as an async function body to support await
+    // Syntax check only - code is NOT executed here
     new Function(`return (async () => { ${code} })()`)
     return { valid: true }
   } catch (e) {
