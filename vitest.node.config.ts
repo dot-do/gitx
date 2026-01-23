@@ -15,6 +15,7 @@ export default defineConfig({
       'test/cli/**/*.test.ts',
       'test/mcp/**/*.test.ts',
       'test/core/**/*.test.ts',
+      'test/do/rpc.test.ts',
     ],
     environment: 'node',
     testTimeout: 30000,

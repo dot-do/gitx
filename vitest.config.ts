@@ -16,6 +16,7 @@ export default defineWorkersConfig({
     exclude: [
       'test/cli/**/*.test.ts',
       'test/mcp/**/*.test.ts',
+      'test/do/rpc.test.ts',
     ],
     poolOptions: {
       workers: {
