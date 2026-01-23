@@ -92,7 +92,7 @@ import {
   PktLineError,
   CapabilityError,
   NegotiationError,
-} from '../../../core/protocol'
+} from '@dotdo/gitx/protocol'
 
 // =============================================================================
 // Test Data

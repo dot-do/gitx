@@ -274,7 +274,10 @@ export function formatRefAdvertisement(refs, capabilities) {
     }
     else {
         for (let i = 0; i < refs.length; i++) {
-            const { sha, ref } = refs[i];
+            const refEntry = refs[i];
+            if (!refEntry)
+                continue;
+            const { sha, ref } = refEntry;
             let line = `${sha} ${ref}`;
             if (i === 0 && capabilities) {
                 line += '\0' + formatCapabilities(capabilities);
@@ -712,6 +715,8 @@ export function formatUploadPackRequest(request) {
     // Wants (capabilities on first)
     for (let i = 0; i < request.wants.length; i++) {
         const sha = request.wants[i];
+        if (!sha)
+            continue;
         const caps = i === 0 ? request.capabilities : undefined;
         lines.push(encodePktLine(formatWantLine(sha, caps)));
     }

@@ -121,10 +121,10 @@ export function parsePackHeader(data: Uint8Array, offset = 0): PackHeader {
 
   // Check magic signature
   const magic = String.fromCharCode(
-    data[offset],
-    data[offset + 1],
-    data[offset + 2],
-    data[offset + 3]
+    data[offset]!,
+    data[offset + 1]!,
+    data[offset + 2]!,
+    data[offset + 3]!
   )
 
   if (magic !== PACK_MAGIC) {
@@ -133,10 +133,10 @@ export function parsePackHeader(data: Uint8Array, offset = 0): PackHeader {
 
   // Parse version (big-endian)
   const version =
-    (data[offset + 4] << 24) |
-    (data[offset + 5] << 16) |
-    (data[offset + 6] << 8) |
-    data[offset + 7]
+    (data[offset + 4]! << 24) |
+    (data[offset + 5]! << 16) |
+    (data[offset + 6]! << 8) |
+    data[offset + 7]!
 
   if (version !== 2) {
     throw new Error(`Unsupported pack version: ${version} (only version 2 is supported)`)
@@ -144,10 +144,10 @@ export function parsePackHeader(data: Uint8Array, offset = 0): PackHeader {
 
   // Parse object count (big-endian)
   const objectCount =
-    ((data[offset + 8] << 24) |
-      (data[offset + 9] << 16) |
-      (data[offset + 10] << 8) |
-      data[offset + 11]) >>>
+    ((data[offset + 8]! << 24) |
+      (data[offset + 9]! << 16) |
+      (data[offset + 10]! << 8) |
+      data[offset + 11]!) >>>
     0
 
   return { magic, version, objectCount }
@@ -233,7 +233,7 @@ export function decodeVariableLengthSize(
       throw new Error('Truncated varint - end of data')
     }
 
-    const byte = data[offset + bytesRead]
+    const byte = data[offset + bytesRead]!
     bytesRead++
 
     value |= (byte & 0x7f) << shift
@@ -297,19 +297,19 @@ export function decodeObjectHeader(
     throw new Error('Offset beyond buffer bounds')
   }
 
-  const firstByte = data[offset]
+  const firstByte = data[offset]!
   const type = (firstByte >> 4) & 0x07
   let size = firstByte & 0x0f
   let bytesRead = 1
   let shift = 4
 
   // Continue reading if continuation bit is set
-  while (data[offset + bytesRead - 1] & 0x80) {
+  while (data[offset + bytesRead - 1]! & 0x80) {
     if (offset + bytesRead >= data.length) {
       throw new Error('Truncated object header')
     }
 
-    const byte = data[offset + bytesRead]
+    const byte = data[offset + bytesRead]!
     size |= (byte & 0x7f) << shift
     shift += 7
     bytesRead++
@@ -382,7 +382,7 @@ function sha1(data: Uint8Array): Uint8Array {
 
     // Extend the sixteen 32-bit words into eighty 32-bit words
     for (let i = 16; i < 80; i++) {
-      const val = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]
+      const val = w[i - 3]! ^ w[i - 8]! ^ w[i - 14]! ^ w[i - 16]!
       w[i] = (val << 1) | (val >>> 31) // Left rotate by 1
     }
 
@@ -412,7 +412,7 @@ function sha1(data: Uint8Array): Uint8Array {
         k = 0xca62c1d6
       }
 
-      const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) >>> 0
+      const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]!) >>> 0
       e = d
       d = c
       c = ((b << 30) | (b >>> 2)) >>> 0
@@ -468,7 +468,7 @@ export function createFanoutTable(entries: PackIndexEntry[]): FanoutTable {
   for (let i = 0; i < 256; i++) {
     while (
       count < entries.length &&
-      parseInt(entries[count].sha!.slice(0, 2), 16) <= i
+      parseInt(entries[count]!.sha!.slice(0, 2), 16) <= i
     ) {
       count++
     }
@@ -485,8 +485,8 @@ export function getFanoutRange(
   fanout: FanoutTable,
   firstByte: number
 ): { start: number; end: number } {
-  const start = firstByte === 0 ? 0 : fanout[firstByte - 1]
-  const end = fanout[firstByte]
+  const start: number = firstByte === 0 ? 0 : fanout[firstByte - 1]!
+  const end: number = fanout[firstByte]!
   return { start, end }
 }
 
@@ -523,12 +523,12 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
 
   // Validate fanout is monotonically non-decreasing
   for (let i = 1; i < 256; i++) {
-    if (fanout[i] < fanout[i - 1]) {
+    if (fanout[i]! < fanout[i - 1]!) {
       throw new Error(`Invalid fanout table: non-monotonic at index ${i}`)
     }
   }
 
-  const objectCount = fanout[255]
+  const objectCount = fanout[255]!
 
   // Calculate section offsets
   let offset = 8 + 256 * 4 // After header and fanout
@@ -549,7 +549,7 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
   const largeOffsetCount = countLargeOffsets(
     data,
     offsetListStart,
-    objectCount
+    objectCount!
   )
   const largeOffsetStart = offset
   offset += largeOffsetCount * 8
@@ -565,7 +565,7 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
   // Parse entries
   const entries: PackIndexEntry[] = []
 
-  for (let i = 0; i < objectCount; i++) {
+  for (let i = 0; i < objectCount!; i++) {
     // SHA
     const shaBytes = data.slice(shaListStart + i * 20, shaListStart + (i + 1) * 20)
     const sha = Array.from(shaBytes)
@@ -589,7 +589,7 @@ export function parsePackIndex(data: Uint8Array): PackIndex {
 
   return {
     version,
-    objectCount,
+    objectCount: objectCount!,
     fanout,
     entries,
     packChecksum: data.slice(packChecksumStart, packChecksumStart + 20),
@@ -642,7 +642,7 @@ export function createPackIndex(
   // Fanout table
   const fanout = createFanoutTable(sortedEntries)
   for (let i = 0; i < 256; i++) {
-    view.setUint32(offset, fanout[i], false)
+    view.setUint32(offset, fanout[i]!, false)
     offset += 4
   }
 
@@ -664,7 +664,7 @@ export function createPackIndex(
   const offsetListStart = offset
 
   for (let i = 0; i < objectCount; i++) {
-    const entry = sortedEntries[i]
+    const entry = sortedEntries[i]!
 
     if (isLargeOffset(entry.offset)) {
       // Mark as large offset and record index
@@ -723,14 +723,14 @@ export function lookupObjectInIndex(
 
   while (lo < hi) {
     const mid = (lo + hi) >>> 1
-    const entrySha = index.entries[mid].sha!
+    const entrySha = index.entries[mid]!.sha!
 
     if (entrySha < normalizedSha) {
       lo = mid + 1
     } else if (entrySha > normalizedSha) {
       hi = mid
     } else {
-      return index.entries[mid]
+      return index.entries[mid] ?? null
     }
   }
 
@@ -763,7 +763,7 @@ export function calculateCRC32(data: Uint8Array): number {
   let crc = 0xffffffff
 
   for (let i = 0; i < data.length; i++) {
-    crc = CRC32_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8)
+    crc = CRC32_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8)
   }
 
   return (crc ^ 0xffffffff) >>> 0
@@ -819,7 +819,7 @@ export function parseDeltaOffset(
   data: Uint8Array,
   pos: number
 ): { offset: number; bytesRead: number } {
-  let byte = data[pos]
+  let byte = data[pos]!
   let offset = byte & 0x7f
   let bytesRead = 1
 
@@ -829,7 +829,7 @@ export function parseDeltaOffset(
     }
     offset += 1
     offset <<= 7
-    byte = data[pos + bytesRead]
+    byte = data[pos + bytesRead]!
     offset |= byte & 0x7f
     bytesRead++
   }

@@ -1124,7 +1124,7 @@ export function parseReceivePackRequest(
       throw new WireProtocolError(`Invalid command line: "${line}"`)
     }
 
-    const [oldSha, newSha, ref] = parts
+    const [oldSha, newSha, ref] = parts as [string, string, string]
 
     commands.push({
       oldSha: oldSha.toLowerCase(),
@@ -1159,7 +1159,7 @@ export function formatReceivePackRequest(request: ReceivePackRequest): string {
 
   // Commands (capabilities on first)
   for (let i = 0; i < request.commands.length; i++) {
-    const cmd = request.commands[i]
+    const cmd = request.commands[i]!
     let line = `${cmd.oldSha} ${cmd.newSha} ${cmd.ref}`
 
     if (i === 0 && request.capabilities.size > 0) {

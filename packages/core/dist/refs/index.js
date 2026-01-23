@@ -794,6 +794,9 @@ export function parseReflogLine(line) {
         if (!altMatch)
             return null;
         const [, oldSha, newSha, name, email, ts, tz, message] = altMatch;
+        // These are guaranteed to exist by the regex match
+        if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined)
+            return null;
         return {
             oldSha: oldSha.toLowerCase(),
             newSha: newSha.toLowerCase(),
@@ -804,6 +807,9 @@ export function parseReflogLine(line) {
         };
     }
     const [, oldSha, newSha, name, email, ts, tz, message] = match;
+    // These are guaranteed to exist by the regex match
+    if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined)
+        return null;
     return {
         oldSha: oldSha.toLowerCase(),
         newSha: newSha.toLowerCase(),

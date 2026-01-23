@@ -431,7 +431,7 @@ export function parsePackIndex(data) {
     }
     return {
         version,
-        objectCount,
+        objectCount: objectCount,
         fanout,
         entries,
         packChecksum: data.slice(packChecksumStart, packChecksumStart + 20),
@@ -544,7 +544,7 @@ export function lookupObjectInIndex(index, sha) {
             hi = mid;
         }
         else {
-            return index.entries[mid];
+            return index.entries[mid] ?? null;
         }
     }
     return null;

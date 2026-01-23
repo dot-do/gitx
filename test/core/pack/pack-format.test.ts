@@ -88,7 +88,7 @@ import {
   readLargeOffset,
   writeLargeOffset,
   isLargeOffset,
-} from '../../../core/pack'
+} from '@dotdo/gitx/pack'
 
 
 // =============================================================================

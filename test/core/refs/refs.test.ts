@@ -88,7 +88,7 @@ import {
   isRefLocked,
   LockTimeoutError,
   StaleLockError
-} from '../../../core/refs'
+} from '@dotdo/gitx/refs'
 
 // ============================================================================
 // Test Constants

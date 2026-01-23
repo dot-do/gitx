@@ -141,7 +141,7 @@ function rawDeflate(data: Uint8Array): Uint8Array {
 
     // Data
     for (let i = 0; i < blockSize; i++) {
-      chunks.push(data[offset + i])
+      chunks.push(data[offset + i]!)
     }
 
     offset += blockSize
@@ -165,8 +165,8 @@ function rawInflate(data: Uint8Array): Uint8Array {
   let pos = 0
 
   if (data.length >= 2) {
-    const cmf = data[0]
-    const flg = data[1]
+    const cmf = data[0]!
+    const flg = data[1]!
 
     // Verify zlib header
     if ((cmf & 0x0f) === 8 && ((cmf * 256 + flg) % 31) === 0) {
@@ -184,17 +184,17 @@ function rawInflate(data: Uint8Array): Uint8Array {
   // Process deflate blocks
   let bfinal = 0
   while (!bfinal && pos < data.length - 4) {
-    const header = data[pos++]
+    const header = data[pos++]!
     bfinal = header & 0x01
     const btype = (header >> 1) & 0x03
 
     if (btype === 0) {
       // Stored (uncompressed) block
-      const len = data[pos] | (data[pos + 1] << 8)
+      const len = data[pos]! | (data[pos + 1]! << 8)
       pos += 4 // Skip LEN and NLEN
 
       for (let i = 0; i < len && pos < data.length; i++) {
-        result.push(data[pos++])
+        result.push(data[pos++]!)
       }
     } else if (btype === 1 || btype === 2) {
       // Compressed block - need full huffman decoder
@@ -217,7 +217,7 @@ function computeAdler32(data: Uint8Array): number {
   const MOD = 65521
 
   for (let i = 0; i < data.length; i++) {
-    a = (a + data[i]) % MOD
+    a = (a + data[i]!) % MOD
     b = (b + a) % MOD
   }
 

@@ -112,7 +112,7 @@ export interface HeadState {
 /** Ref lock */
 export interface RefLock {
     refName: string;
-    owner?: string;
+    owner?: string | undefined;
     isHeld(): boolean;
 }
 /** Lock backend interface */

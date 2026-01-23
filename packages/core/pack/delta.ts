@@ -97,7 +97,7 @@ export function parseDeltaHeader(
       throw new Error('Truncated varint in delta header')
     }
 
-    const byte = data[offset + bytesRead]
+    const byte = data[offset + bytesRead]!
     bytesRead++
 
     size += (byte & 0x7f) * multiplier
@@ -208,22 +208,22 @@ export function decodeCopyInstruction(
   data: Uint8Array,
   pos: number
 ): { offset: number; size: number; bytesRead: number } {
-  const cmd = data[pos]
+  const cmd = data[pos]!
   let bytesRead = 1
 
   // Decode offset (little-endian, bytes selected by bits 0-3)
   let offset = 0
   if (cmd & 0x01) {
-    offset |= data[pos + bytesRead++]
+    offset |= data[pos + bytesRead++]!
   }
   if (cmd & 0x02) {
-    offset |= data[pos + bytesRead++] << 8
+    offset |= data[pos + bytesRead++]! << 8
   }
   if (cmd & 0x04) {
-    offset |= data[pos + bytesRead++] << 16
+    offset |= data[pos + bytesRead++]! << 16
   }
   if (cmd & 0x08) {
-    offset |= data[pos + bytesRead++] << 24
+    offset |= data[pos + bytesRead++]! << 24
   }
   // Handle unsigned 32-bit
   offset = offset >>> 0
@@ -231,13 +231,13 @@ export function decodeCopyInstruction(
   // Decode size (little-endian, bytes selected by bits 4-6)
   let size = 0
   if (cmd & 0x10) {
-    size |= data[pos + bytesRead++]
+    size |= data[pos + bytesRead++]!
   }
   if (cmd & 0x20) {
-    size |= data[pos + bytesRead++] << 8
+    size |= data[pos + bytesRead++]! << 8
   }
   if (cmd & 0x40) {
-    size |= data[pos + bytesRead++] << 16
+    size |= data[pos + bytesRead++]! << 16
   }
 
   // Size of 0 means 0x10000
@@ -294,7 +294,7 @@ export function decodeInsertInstruction(
   data: Uint8Array,
   pos: number
 ): { size: number; data: Uint8Array; bytesRead: number } {
-  const size = data[pos] & 0x7f
+  const size = data[pos]! & 0x7f
 
   if (pos + 1 + size > data.length) {
     throw new Error('Truncated insert instruction data')
@@ -336,7 +336,7 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
 
   // Process instructions
   while (pos < delta.length) {
-    const cmd = delta[pos]
+    const cmd = delta[pos]!
 
     if (cmd === 0) {
       throw new Error('Invalid delta instruction: reserved opcode 0x00')
@@ -463,7 +463,7 @@ function buildMatchIndex(base: Uint8Array): Map<number, number[]> {
 
   for (let i = 0; i <= base.length - 4; i++) {
     const key =
-      (base[i] << 24) | (base[i + 1] << 16) | (base[i + 2] << 8) | base[i + 3]
+      (base[i]! << 24) | (base[i + 1]! << 16) | (base[i + 2]! << 8) | base[i + 3]!
     const positions = index.get(key) || []
     positions.push(i)
     index.set(key, positions)
@@ -486,10 +486,10 @@ function findMatch(
   }
 
   const key =
-    (target[targetPos] << 24) |
-    (target[targetPos + 1] << 16) |
-    (target[targetPos + 2] << 8) |
-    target[targetPos + 3]
+    (target[targetPos]! << 24) |
+    (target[targetPos + 1]! << 16) |
+    (target[targetPos + 2]! << 8) |
+    target[targetPos + 3]!
 
   const positions = index.get(key)
   if (!positions) {
@@ -560,7 +560,7 @@ export function decodeOfsDelta(
   data: Uint8Array,
   pos: number
 ): { offset: number; bytesRead: number } {
-  let byte = data[pos]
+  let byte = data[pos]!
   let offset = byte & 0x7f
   let bytesRead = 1
 
@@ -570,7 +570,7 @@ export function decodeOfsDelta(
     }
     offset += 1
     offset <<= 7
-    byte = data[pos + bytesRead]
+    byte = data[pos + bytesRead]!
     offset |= byte & 0x7f
     bytesRead++
   }

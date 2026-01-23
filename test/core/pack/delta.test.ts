@@ -54,7 +54,7 @@ import {
   type DeltaHeader,
   type OfsDeltaHeader,
   type RefDeltaHeader,
-} from '../../../core/pack/delta'
+} from '@dotdo/gitx/pack/delta'
 
 // =============================================================================
 // Helper Functions

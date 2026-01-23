@@ -1,6 +1,13 @@
 import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config'
+import path from 'path'
 
 export default defineWorkersConfig({
+  resolve: {
+    alias: {
+      '@dotdo/gitx': path.resolve(__dirname, './packages/core'),
+      'core': path.resolve(__dirname, './packages/core'),
+    },
+  },
   test: {
     globals: true,
     include: ['test/**/*.test.ts'],
