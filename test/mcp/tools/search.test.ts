@@ -2,8 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   searchToolDefinition,
   createSearchHandler,
-  SearchInput
+  SearchInput,
+  SearchResult
 } from '../../../src/mcp/tools/search'
+import type { SearchResult as BaseSearchResult } from '@dotdo/mcp'
 import type { GitBinding } from '../../../src/mcp/tools/do'
 
 describe('MCP search Tool', () => {
@@ -97,7 +99,7 @@ describe('MCP search Tool', () => {
       // Should find the feature branch
       const featureBranch = parsed.find((r: { ref: string }) => r.ref.includes('feature'))
       expect(featureBranch).toBeDefined()
-      expect(featureBranch.type).toBe('branch')
+      expect(featureBranch.gitType).toBe('branch')
     })
 
     it('should search commits', async () => {
@@ -135,6 +137,60 @@ describe('MCP search Tool', () => {
       expect(result.isError).toBe(true)
       const parsed = JSON.parse(result.content[0].text)
       expect(parsed.error).toBeDefined()
+    })
+  })
+
+  describe('SearchResult type compliance', () => {
+    it('should extend base SearchResult with id, title, description', async () => {
+      const git = createMockGit()
+      const handler = createSearchHandler(git)
+
+      const input: SearchInput = { query: 'feature', type: 'branches' }
+      const result = await handler(input)
+      const parsed: SearchResult[] = JSON.parse(result.content[0].text)
+
+      // Search results should have base SearchResult fields
+      for (const item of parsed) {
+        expect(item).toHaveProperty('id')
+        expect(item).toHaveProperty('title')
+        expect(item).toHaveProperty('description')
+        expect(typeof item.id).toBe('string')
+        expect(typeof item.title).toBe('string')
+        expect(typeof item.description).toBe('string')
+      }
+    })
+
+    it('should have git-specific fields as extensions', async () => {
+      const git = createMockGit()
+      const handler = createSearchHandler(git)
+
+      const input: SearchInput = { query: 'feat', type: 'commits' }
+      const result = await handler(input)
+      const parsed: SearchResult[] = JSON.parse(result.content[0].text)
+
+      // Git-specific extensions should be present
+      for (const item of parsed) {
+        expect(item).toHaveProperty('gitType')
+        expect(['commit', 'branch', 'tag']).toContain(item.gitType)
+        expect(item).toHaveProperty('ref')
+      }
+    })
+
+    it('SearchResult should be assignable to base SearchResult', () => {
+      // This test verifies type compatibility at compile time
+      const gitResult: SearchResult = {
+        id: 'abc123',
+        title: 'main',
+        description: 'Main branch',
+        gitType: 'branch',
+        ref: 'refs/heads/main'
+      }
+
+      // Should be assignable to base type
+      const baseResult: BaseSearchResult = gitResult
+      expect(baseResult.id).toBe('abc123')
+      expect(baseResult.title).toBe('main')
+      expect(baseResult.description).toBe('Main branch')
     })
   })
 })

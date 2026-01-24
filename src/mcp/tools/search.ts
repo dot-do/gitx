@@ -6,7 +6,7 @@
  * @module mcp/tools/search
  */
 
-import type { ToolResponse } from '@dotdo/mcp'
+import type { ToolResponse, SearchResult as BaseSearchResult } from '@dotdo/mcp'
 import type { GitBinding } from './do'
 
 // Re-export ToolResponse for consumers
@@ -30,15 +30,36 @@ export interface SearchOptions {
 }
 
 /**
- * Search result item (git-specific, different from @dotdo/mcp's generic SearchResult)
+ * Git object type
  */
-export interface SearchResult {
-  type: 'commit' | 'branch' | 'tag'
+export type GitObjectType = 'commit' | 'branch' | 'tag'
+
+/**
+ * Search result item extending @dotdo/mcp base SearchResult with git-specific fields.
+ *
+ * Base fields (from @dotdo/mcp):
+ * - id: Unique identifier (maps to sha or ref)
+ * - title: Display title (maps to branch name or commit summary)
+ * - description: Description (maps to commit message or branch info)
+ *
+ * Git-specific extensions:
+ * - gitType: The type of git object (commit, branch, tag)
+ * - ref: Git reference string
+ * - sha: Full commit SHA (optional)
+ * - author: Commit author (optional)
+ * - date: Commit date (optional)
+ */
+export interface SearchResult extends BaseSearchResult {
+  /** Git object type (commit, branch, or tag) */
+  gitType: GitObjectType
+  /** Git reference string */
   ref: string
-  message?: string
-  author?: string
-  date?: string
+  /** Full commit SHA (when available) */
   sha?: string
+  /** Commit author (for commits) */
+  author?: string
+  /** Commit date (for commits) */
+  date?: string
 }
 
 /**
@@ -71,6 +92,46 @@ export const searchToolDefinition = {
 }
 
 /**
+ * Create a SearchResult for a branch
+ */
+function createBranchResult(branch: { name: string; sha?: string }): SearchResult {
+  return {
+    // Base SearchResult fields
+    id: branch.sha ?? branch.name,
+    title: branch.name,
+    description: `Branch: ${branch.name}${branch.sha ? ` @ ${branch.sha.slice(0, 7)}` : ''}`,
+    // Git-specific extensions
+    gitType: 'branch',
+    ref: branch.name,
+    sha: branch.sha
+  }
+}
+
+/**
+ * Create a SearchResult for a commit
+ */
+function createCommitResult(commit: {
+  sha: string
+  message?: string
+  author?: string
+  date?: string
+}): SearchResult {
+  const summary = commit.message?.split('\n')[0] ?? commit.sha.slice(0, 7)
+  return {
+    // Base SearchResult fields
+    id: commit.sha,
+    title: summary,
+    description: commit.message ?? `Commit ${commit.sha.slice(0, 7)}`,
+    // Git-specific extensions
+    gitType: 'commit',
+    ref: commit.sha,
+    sha: commit.sha,
+    author: commit.author,
+    date: commit.date
+  }
+}
+
+/**
  * Search across commits, branches, and tags
  */
 async function searchAll(
@@ -86,11 +147,7 @@ async function searchAll(
   if (branches.branches) {
     for (const branch of branches.branches) {
       if (branch.name.toLowerCase().includes(queryLower)) {
-        results.push({
-          type: 'branch',
-          ref: branch.name,
-          sha: branch.sha
-        })
+        results.push(createBranchResult(branch))
       }
       if (results.length >= limit) break
     }
@@ -102,14 +159,7 @@ async function searchAll(
     if (log.commits) {
       for (const commit of log.commits) {
         if (results.length >= limit) break
-        results.push({
-          type: 'commit',
-          ref: commit.sha,
-          sha: commit.sha,
-          message: commit.message,
-          author: commit.author,
-          date: commit.date
-        })
+        results.push(createCommitResult(commit))
       }
     }
   }
@@ -128,14 +178,7 @@ async function searchCommits(
   const log = await git.log({ maxCount: limit, grep: query })
   if (!log.commits) return []
 
-  return log.commits.map(commit => ({
-    type: 'commit' as const,
-    ref: commit.sha,
-    sha: commit.sha,
-    message: commit.message,
-    author: commit.author,
-    date: commit.date
-  }))
+  return log.commits.map(commit => createCommitResult(commit))
 }
 
 /**
@@ -153,11 +196,7 @@ async function searchBranches(
   return branches.branches
     .filter(b => b.name.toLowerCase().includes(queryLower))
     .slice(0, limit)
-    .map(branch => ({
-      type: 'branch' as const,
-      ref: branch.name,
-      sha: branch.sha
-    }))
+    .map(branch => createBranchResult(branch))
 }
 
 /**

@@ -9,17 +9,23 @@
  * @module mcp/tools
  */
 
-import type { Tool as BaseTool, ToolHandler as BaseToolHandler, DoScope, DoPermissions } from '@dotdo/mcp'
+import type {
+  Tool as BaseTool,
+  ToolHandler as BaseToolHandler,
+  ToolResponse,
+  DoScope,
+  DoPermissions
+} from '@dotdo/mcp'
 
 export { searchTool, searchToolDefinition, createSearchHandler } from './search'
 export { fetchTool, fetchToolDefinition, createFetchHandler } from './fetch'
 export { executeDo, doToolDefinition, createDoHandler, createGitScope } from './do'
-export type { SearchInput, SearchResult, SearchOptions } from './search'
+export type { SearchInput, SearchResult, SearchOptions, GitObjectType } from './search'
 export type { FetchInput, FetchResult, FetchOptions, ResourceType } from './fetch'
 export type { DoToolInput, DoToolOutput, GitBinding, GitScope } from './do'
 
 // Re-export shared types from @dotdo/mcp for consumers
-export type { BaseTool, BaseToolHandler, DoScope, DoPermissions }
+export type { BaseTool, BaseToolHandler, ToolResponse, DoScope, DoPermissions }
 
 import { searchToolDefinition, createSearchHandler } from './search'
 import { fetchToolDefinition, createFetchHandler } from './fetch'
@@ -27,8 +33,14 @@ import { doToolDefinition, createDoHandler, createGitScope } from './do'
 import type { GitBinding } from './do'
 
 /**
+ * Generic MCP tool handler type.
+ * Accepts Record<string, unknown> to be compatible with any MCP input.
+ */
+export type MCPToolHandler = (params: Record<string, unknown>) => Promise<ToolResponse>
+
+/**
  * MCP Tool definition with handler.
- * Compatible with @dotdo/mcp's Tool interface but specialized for git operations.
+ * Uses ToolResponse from @dotdo/mcp for handler return type.
  */
 export interface MCPTool {
   name: string
@@ -38,18 +50,20 @@ export interface MCPTool {
     properties: Record<string, unknown>
     required?: string[]
   }
-  handler: (params: Record<string, unknown>) => Promise<MCPToolResult>
+  handler: MCPToolHandler
 }
 
 /**
- * MCP Tool result
+ * @deprecated Use ToolResponse from @dotdo/mcp instead
  */
-export interface MCPToolResult {
-  content: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image'; data: string; mimeType: string }
-  >
-  isError?: boolean
+export type MCPToolResult = ToolResponse
+
+/**
+ * Wrap a typed handler to accept Record<string, unknown> input.
+ * The handler validates input at runtime through its implementation.
+ */
+function wrapHandler<T>(handler: (input: T) => Promise<ToolResponse>): MCPToolHandler {
+  return (params: Record<string, unknown>) => handler(params as T)
 }
 
 /**
@@ -64,15 +78,15 @@ export function createGitTools(git: GitBinding): MCPTool[] {
   return [
     {
       ...searchToolDefinition,
-      handler: createSearchHandler(git) as unknown as MCPTool['handler']
+      handler: wrapHandler(createSearchHandler(git))
     },
     {
       ...fetchToolDefinition,
-      handler: createFetchHandler(git) as unknown as MCPTool['handler']
+      handler: wrapHandler(createFetchHandler(git))
     },
     {
       ...doToolDefinition,
-      handler: createDoHandler(scope) as unknown as MCPTool['handler']
+      handler: wrapHandler(createDoHandler(scope))
     }
   ]
 }
