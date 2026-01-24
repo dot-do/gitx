@@ -9,6 +9,8 @@
  * @module mcp/tools
  */
 
+import type { Tool as BaseTool, ToolHandler as BaseToolHandler, DoScope, DoPermissions } from '@dotdo/mcp'
+
 export { searchTool, searchToolDefinition, createSearchHandler } from './search'
 export { fetchTool, fetchToolDefinition, createFetchHandler } from './fetch'
 export { executeDo, doToolDefinition, createDoHandler, createGitScope } from './do'
@@ -16,13 +18,17 @@ export type { SearchInput, SearchResult, SearchOptions } from './search'
 export type { FetchInput, FetchResult, FetchOptions, ResourceType } from './fetch'
 export type { DoToolInput, DoToolOutput, GitBinding, GitScope } from './do'
 
+// Re-export shared types from @dotdo/mcp for consumers
+export type { BaseTool, BaseToolHandler, DoScope, DoPermissions }
+
 import { searchToolDefinition, createSearchHandler } from './search'
 import { fetchToolDefinition, createFetchHandler } from './fetch'
 import { doToolDefinition, createDoHandler, createGitScope } from './do'
 import type { GitBinding } from './do'
 
 /**
- * MCP Tool definition with handler
+ * MCP Tool definition with handler.
+ * Compatible with @dotdo/mcp's Tool interface but specialized for git operations.
  */
 export interface MCPTool {
   name: string
@@ -58,15 +64,15 @@ export function createGitTools(git: GitBinding): MCPTool[] {
   return [
     {
       ...searchToolDefinition,
-      handler: createSearchHandler(git)
+      handler: createSearchHandler(git) as unknown as MCPTool['handler']
     },
     {
       ...fetchToolDefinition,
-      handler: createFetchHandler(git)
+      handler: createFetchHandler(git) as unknown as MCPTool['handler']
     },
     {
       ...doToolDefinition,
-      handler: createDoHandler(scope)
+      handler: createDoHandler(scope) as unknown as MCPTool['handler']
     }
   ]
 }

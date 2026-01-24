@@ -6,6 +6,7 @@
  * @module mcp/tools/do
  */
 
+import type { DoScope, DoPermissions, ToolResponse } from '@dotdo/mcp'
 import { validateUserCode } from '../sandbox/template'
 import { evaluateWithMiniflare } from '../sandbox/miniflare-evaluator'
 import { ObjectStoreProxy } from '../sandbox/object-store-proxy'
@@ -243,28 +244,20 @@ export interface GitBinding {
 }
 
 // =============================================================================
-// DoScope Types
+// DoScope Types (extends @dotdo/mcp DoScope with git-specific bindings)
 // =============================================================================
 
-/**
- * Permissions for the sandbox environment
- */
-export interface DoPermissions {
-  allowNetwork?: boolean
-  allowedHosts?: string[]
-}
+// DoPermissions is imported from @dotdo/mcp
+export type { DoPermissions }
 
 /**
- * DoScope configuration
+ * Git-specific DoScope configuration (extends DoScope with typed git binding)
  */
-export interface GitScope {
+export interface GitScope extends DoScope {
   bindings: {
     git: GitBinding
     [key: string]: unknown
   }
-  types: string
-  timeout?: number
-  permissions?: DoPermissions
 }
 
 // =============================================================================
@@ -284,13 +277,8 @@ export interface DoToolOutput {
   duration: number
 }
 
-/**
- * MCP Tool result format
- */
-export interface ToolResponse {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-}
+// ToolResponse is imported from @dotdo/mcp
+export type { ToolResponse }
 
 // =============================================================================
 // Type Definitions for LLM Context

@@ -6,10 +6,14 @@
  * @module mcp/tools/search
  */
 
+import type { ToolResponse } from '@dotdo/mcp'
 import type { GitBinding } from './do'
 
+// Re-export ToolResponse for consumers
+export type { ToolResponse }
+
 /**
- * Search input parameters
+ * Search input parameters (git-specific, extends beyond @dotdo/mcp's generic SearchInput)
  */
 export interface SearchInput {
   query: string
@@ -18,7 +22,7 @@ export interface SearchInput {
 }
 
 /**
- * Search options
+ * Search options (git-specific)
  */
 export interface SearchOptions {
   type?: 'commits' | 'branches' | 'tags' | 'all'
@@ -26,7 +30,7 @@ export interface SearchOptions {
 }
 
 /**
- * Search result item
+ * Search result item (git-specific, different from @dotdo/mcp's generic SearchResult)
  */
 export interface SearchResult {
   type: 'commit' | 'branch' | 'tag'
@@ -35,14 +39,6 @@ export interface SearchResult {
   author?: string
   date?: string
   sha?: string
-}
-
-/**
- * MCP Tool result format
- */
-export interface ToolResponse {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
 }
 
 /**

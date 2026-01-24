@@ -6,15 +6,19 @@
  * @module mcp/tools/fetch
  */
 
+import type { ToolResponse } from '@dotdo/mcp'
 import type { GitBinding } from './do'
 
+// Re-export ToolResponse for consumers
+export type { ToolResponse }
+
 /**
- * Resource types that can be fetched
+ * Resource types that can be fetched (git-specific)
  */
 export type ResourceType = 'commit' | 'file' | 'diff' | 'tree' | 'blob'
 
 /**
- * Fetch input parameters
+ * Fetch input parameters (git-specific, extends beyond @dotdo/mcp's generic FetchInput)
  */
 export interface FetchInput {
   resource: string
@@ -22,27 +26,19 @@ export interface FetchInput {
 }
 
 /**
- * Fetch options
+ * Fetch options (git-specific)
  */
 export interface FetchOptions {
   format?: 'json' | 'text' | 'raw'
 }
 
 /**
- * Fetch result
+ * Fetch result (git-specific, different from @dotdo/mcp's generic FetchResult)
  */
 export interface FetchResult {
   type: ResourceType
   content: string
   metadata?: Record<string, unknown>
-}
-
-/**
- * MCP Tool result format
- */
-export interface ToolResponse {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
 }
 
 /**

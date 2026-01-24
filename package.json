@@ -1,6 +1,6 @@
 {
   "name": "gitx-monorepo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Git on Cloudflare - Monorepo containing @dotdo/gitx (core) and gitx.do (service)",
   "type": "module",
@@ -57,12 +57,13 @@
     "wrangler": "^3.99.0"
   },
   "dependencies": {
+    "@dotdo/mcp": "0.1.0",
     "@icons-pack/react-simple-icons": "^13.8.0",
     "@mdxui/beacon": "^0.2.0",
     "@mdxui/cockpit": "^0.2.0",
     "@opentui/core": "^0.1.0",
     "@opentui/react": "^0.1.0",
-    "fsx.do": "^0.1.0",
+    "fsx.do": "^0.1.2",
     "hono": "^4.11.3",
     "miniflare": "^3.20241106.0",
     "pako": "^2.1.0",
