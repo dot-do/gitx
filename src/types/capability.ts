@@ -35,6 +35,16 @@
 
 import type { Author, ObjectType } from './objects'
 
+/**
+ * Note: @dotdo/types/fn provides similar git types (GitStatus, GitRef, GitAuthor,
+ * MergeResult, DiffResult, Branch, Tag, etc.) for cross-package interoperability.
+ * The types in this module are optimized for gitx.do's Durable Object integration
+ * and have some variations (e.g., using SHA type aliases, different property names).
+ *
+ * For interop with other @dotdo packages, you can use types from @dotdo/types/fn:
+ *   import type { GitStatus, MergeResult, DiffResult } from '@dotdo/types/fn'
+ */
+
 // ============================================================================
 // Core Types
 // ============================================================================

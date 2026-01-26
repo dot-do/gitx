@@ -49,6 +49,66 @@
  */
 
 // =============================================================================
+// Shared Types from @dotdo/types - For cross-package interoperability
+// =============================================================================
+
+/**
+ * Re-exported types from @dotdo/types/fn for interoperability with other
+ * packages in the @dotdo ecosystem. These types provide a standardized
+ * interface for git operations across different packages.
+ *
+ * Note: gitx.do has its own type definitions (exported below) that are
+ * optimized for Durable Object integration. Use the shared types when
+ * interoperating with other @dotdo packages, and the gitx-specific types
+ * for internal gitx.do usage.
+ *
+ * @example
+ * ```typescript
+ * import type {
+ *   // Shared types for interop
+ *   SharedGitStatus,
+ *   SharedMergeResult,
+ *   SharedDiffResult,
+ *   // gitx-specific types
+ *   GitStatus,
+ *   MergeResult,
+ *   DiffResult,
+ * } from 'gitx.do'
+ * ```
+ */
+export type {
+  GitStatus as SharedGitStatus,
+  StatusFile as SharedStatusFile,
+  GitRef as SharedGitRef,
+  GitAuthor as SharedGitAuthor,
+  CommitObject as SharedCommitObject,
+  MergeResult as SharedMergeResult,
+  DiffResult as SharedDiffResult,
+  DiffFile as SharedDiffFile,
+  DiffHunk as SharedDiffHunk,
+  DiffLine as SharedDiffLine,
+  Branch as SharedBranch,
+  Tag as SharedTag,
+  PushResult as SharedPushResult,
+  FetchResult as SharedFetchResult,
+  // Option types
+  GitInitOptions as SharedGitInitOptions,
+  GitCloneOptions as SharedGitCloneOptions,
+  GitCommitOptions as SharedGitCommitOptions,
+  GitLogOptions as SharedGitLogOptions,
+  GitCheckoutOptions as SharedGitCheckoutOptions,
+  GitMergeOptions as SharedGitMergeOptions,
+  GitPushOptions as SharedGitPushOptions,
+  GitPullOptions as SharedGitPullOptions,
+  GitDiffOptions as SharedGitDiffOptions,
+  GitStashOptions as SharedGitStashOptions,
+  GitFetchOptions as SharedGitFetchOptions,
+  GitRebaseOptions as SharedGitRebaseOptions,
+  GitTagOptions as SharedGitTagOptions,
+  GitRemoteOptions as SharedGitRemoteOptions,
+} from '@dotdo/types/fn'
+
+// =============================================================================
 // Types - Core Git object types and interfaces
 // =============================================================================
 
