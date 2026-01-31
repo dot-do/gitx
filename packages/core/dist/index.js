@@ -88,4 +88,10 @@ export * from './refs';
 // Git Wire Protocol
 // =============================================================================
 export * from './protocol';
+// =============================================================================
+// GitX Function (AsyncFn pattern)
+// =============================================================================
+export { 
+// Main function and factory
+gitx, createGitX, } from './fn';
 //# sourceMappingURL=index.js.map

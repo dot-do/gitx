@@ -27,7 +27,8 @@
     "objects/**/*.ts",
     "pack/**/*.ts",
     "refs/**/*.ts",
-    "protocol/**/*.ts"
+    "protocol/**/*.ts",
+    "fn/**/*.ts"
   ],
   "exclude": [
     "node_modules",

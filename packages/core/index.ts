@@ -203,3 +203,40 @@ export {
   type ValidationResult,
   type OperationResult,
 } from './types'
+
+// =============================================================================
+// GitX Function (AsyncFn pattern)
+// =============================================================================
+
+export {
+  // Main function and factory
+  gitx,
+  createGitX,
+
+  // Types
+  type GitXFn,
+  type GitResult,
+  type GitOptions,
+  type GitContext,
+
+  // Re-exported from @dotdo/do/types
+  type AsyncFn,
+  type GitRepository,
+  type GitStatus,
+  type GitRef,
+  type GitAuthor,
+  type CommitObject as GitCommitObject,
+  type GitInitOptions,
+  type GitCloneOptions,
+  type GitCommitOptions,
+  type GitLogOptions,
+  type GitBranchOptions,
+  type GitCheckoutOptions,
+  type GitMergeOptions,
+  type GitFetchOptions,
+  type GitPullOptions,
+  type GitPushOptions,
+  type GitDiffOptions,
+  type MergeResult,
+  type StatusFile,
+} from './fn'

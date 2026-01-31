@@ -1,7 +1,7 @@
 {
   "name": "@dotdo/gitx",
-  "version": "0.1.1",
-  "description": "Pure Git implementation in TypeScript - object parsing, pack files, delta compression, refs. Zero dependencies.",
+  "version": "0.1.4",
+  "description": "Pure Git implementation in TypeScript - object parsing, pack files, delta compression, refs. With AsyncFn pattern support.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./fn": {
+      "types": "./dist/fn/index.d.ts",
+      "import": "./dist/fn/index.js"
     },
     "./objects": {
       "types": "./dist/objects/index.d.ts",
@@ -60,6 +64,16 @@
     "directory": "packages/core"
   },
   "devDependencies": {
+    "@dotdo/types": "file:../../../types",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@dotdo/do": "^0.1.4"
+  },
+  "peerDependencies": {
+    "@dotdo/types": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@dotdo/types": { "optional": true }
   }
 }

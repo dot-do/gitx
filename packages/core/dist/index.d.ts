@@ -37,4 +37,5 @@ export { PACK_MAGIC, PACK_VERSION, PACK_INDEX_MAGIC, PACK_INDEX_VERSION_2, LARGE
 export * from './refs';
 export * from './protocol';
 export { type StoredObjectResult, type BasicObjectStore, type RefObjectStore, type ObjectStore, type CommitInfo, type CommitProvider, type StorageBackend, type HashFunction, type CompressionProvider, type ValidationResult, type OperationResult, } from './types';
+export { gitx, createGitX, type GitXFn, type GitResult, type GitOptions, type GitContext, type AsyncFn, type GitRepository, type GitStatus, type GitRef, type GitAuthor, type CommitObject as GitCommitObject, type GitInitOptions, type GitCloneOptions, type GitCommitOptions, type GitLogOptions, type GitBranchOptions, type GitCheckoutOptions, type GitMergeOptions, type GitFetchOptions, type GitPullOptions, type GitPushOptions, type GitDiffOptions, type MergeResult, type StatusFile, } from './fn';
 //# sourceMappingURL=index.d.ts.map
