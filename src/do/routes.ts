@@ -16,6 +16,7 @@ import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
 import { ObjectStore } from './object-store'
 import { SchemaManager } from './schema'
+import { parquetWriteBuffer } from 'hyparquet-writer'
 import type {
   GitCommitData,
   GitRefData,
@@ -305,52 +306,53 @@ export async function handleExport(
 
     const results: ExportJobStatus['results'] = []
 
-    // Export commits as NDJSON (newline-delimited JSON)
-    // NDJSON is readable by DuckDB, Spark, Pandas, etc.
+    // Export commits to Parquet
     if (tables.includes('commits')) {
       const commits = await readCommitsFromStorage(objectStore)
       if (commits.length > 0) {
-        const ndjson = commits.map(c => JSON.stringify({
-          sha: c.sha,
-          tree_sha: c.treeSha,
-          parent_shas: c.parentShas,
-          author_name: c.author.name,
-          author_email: c.author.email,
-          author_date: c.author.date,
-          committer_name: c.committer.name,
-          committer_email: c.committer.email,
-          committer_date: c.committer.date,
-          message: c.message,
-          repository: repoName,
-        })).join('\n')
-        const buffer = new TextEncoder().encode(ndjson)
-        const path = `${repoName}/commits/${exportId}.ndjson`
+        const buffer = parquetWriteBuffer({
+          columnData: [
+            { name: 'sha', data: commits.map(c => c.sha), type: 'STRING' },
+            { name: 'tree_sha', data: commits.map(c => c.treeSha), type: 'STRING' },
+            { name: 'parent_shas', data: commits.map(c => JSON.stringify(c.parentShas)), type: 'JSON' },
+            { name: 'author_name', data: commits.map(c => c.author.name), type: 'STRING' },
+            { name: 'author_email', data: commits.map(c => c.author.email), type: 'STRING' },
+            { name: 'author_date', data: commits.map(c => new Date(c.author.date)), type: 'TIMESTAMP' },
+            { name: 'committer_name', data: commits.map(c => c.committer.name), type: 'STRING' },
+            { name: 'committer_email', data: commits.map(c => c.committer.email), type: 'STRING' },
+            { name: 'committer_date', data: commits.map(c => new Date(c.committer.date)), type: 'TIMESTAMP' },
+            { name: 'message', data: commits.map(c => c.message), type: 'STRING' },
+            { name: 'repository', data: commits.map(() => repoName), type: 'STRING' },
+          ],
+        })
+        const path = `${repoName}/commits/${exportId}.parquet`
         await bucket.put(path, buffer)
         results.push({
           table: 'commits',
           rowCount: commits.length,
-          fileSize: buffer.length,
+          fileSize: buffer.byteLength,
           path,
         })
       }
     }
 
-    // Export refs as NDJSON
+    // Export refs to Parquet
     if (tables.includes('refs')) {
       const refs = await readRefsFromStorage(storage)
       if (refs.length > 0) {
-        const ndjson = refs.map(r => JSON.stringify({
-          name: r.name,
-          target_sha: r.targetSha,
-          repository: repoName,
-        })).join('\n')
-        const buffer = new TextEncoder().encode(ndjson)
-        const path = `${repoName}/refs/${exportId}.ndjson`
+        const buffer = parquetWriteBuffer({
+          columnData: [
+            { name: 'name', data: refs.map(r => r.name), type: 'STRING' },
+            { name: 'target_sha', data: refs.map(r => r.targetSha), type: 'STRING' },
+            { name: 'repository', data: refs.map(() => repoName), type: 'STRING' },
+          ],
+        })
+        const path = `${repoName}/refs/${exportId}.parquet`
         await bucket.put(path, buffer)
         results.push({
           table: 'refs',
           rowCount: refs.length,
-          fileSize: buffer.length,
+          fileSize: buffer.byteLength,
           path,
         })
       }
@@ -362,7 +364,7 @@ export async function handleExport(
       repository: repoName,
       timestamp,
       results,
-      message: `Exported ${results.length} table(s) to NDJSON`,
+      message: `Exported ${results.length} table(s) to Parquet`,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Export failed'
