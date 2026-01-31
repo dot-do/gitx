@@ -124,6 +124,11 @@ export interface GitRepoDOEnv extends BaseEnv {
    * Bound via wrangler.toml [[services]] configuration.
    */
   BASHX?: ServiceBinding
+  /**
+   * R2 bucket for Parquet/analytics data export.
+   * Bound via wrangler.toml [[r2_buckets]] configuration.
+   */
+  ANALYTICS_BUCKET?: R2Bucket
 }
 
 // ============================================================================

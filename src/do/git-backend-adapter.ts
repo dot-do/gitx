@@ -22,10 +22,12 @@ import { SchemaManager, type DurableObjectStorage } from './schema'
 export class GitBackendAdapter implements GitBackend {
   private store: ObjectStore
   private schemaManager: SchemaManager
+  private storage: DurableObjectStorage
   private refs: Map<string, string> = new Map()
   private schemaInitialized = false
 
   constructor(storage: DurableObjectStorage) {
+    this.storage = storage
     this.schemaManager = new SchemaManager(storage)
     this.store = new ObjectStore(storage)
   }
@@ -81,7 +83,17 @@ export class GitBackendAdapter implements GitBackend {
    * Write a reference.
    */
   async writeRef(name: string, sha: string): Promise<void> {
-    this.refs.set(name, sha.toLowerCase())
+    const target = sha.toLowerCase()
+    this.refs.set(name, target)
+    // Persist to SQLite refs table
+    await this.ensureSchema()
+    this.storage.sql.exec(
+      'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
+      name,
+      target,
+      'sha',
+      Date.now()
+    )
   }
 
   /**

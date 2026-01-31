@@ -358,6 +358,14 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     return this.state.storage
   }
 
+  /**
+   * Get the R2 analytics bucket for Parquet export.
+   * Used by route handlers for export operations.
+   */
+  getAnalyticsBucket(): R2Bucket | undefined {
+    return this.env.ANALYTICS_BUCKET
+  }
+
   // ===========================================================================
   // Lifecycle Methods
   // ===========================================================================

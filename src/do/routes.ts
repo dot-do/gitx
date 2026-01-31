@@ -14,6 +14,12 @@ import type {
 import type { DurableObjectStorage } from './schema'
 import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
+import { ObjectStore } from './object-store'
+import { SchemaManager } from './schema'
+import type {
+  GitCommitData,
+  GitRefData,
+} from '../export/git-parquet'
 
 // ============================================================================
 // Sync/Export Types
@@ -45,6 +51,8 @@ interface ExportRequest {
   tables?: ('commits' | 'refs' | 'files')[]
   /** Force full export even if incremental is available */
   fullExport?: boolean
+  /** Repository name (e.g., "owner/repo") - used as fallback if DO ns not set */
+  repository?: string
 }
 
 /**
@@ -83,6 +91,8 @@ export interface GitRepoDOInstance {
   readonly _startTime: number
   /** Access to DO SQLite storage for sync operations */
   getStorage(): DurableObjectStorage
+  /** Access to R2 analytics bucket for Parquet export */
+  getAnalyticsBucket(): R2Bucket | undefined
 }
 
 /**
@@ -254,41 +264,228 @@ export async function handleSync(
 }
 
 /**
- * Export route handler - triggers Parquet export.
+ * Export route handler - exports git data to Parquet and uploads to R2.
  *
  * @param c - Hono context
- * @param _instance - GitRepoDO instance (unused, for future implementation)
- * @returns Export job response
+ * @param instance - GitRepoDO instance
+ * @returns Export result with file paths and row counts
  */
 export async function handleExport(
   c: RouteContext,
-  _instance: GitRepoDOInstance
+  instance: GitRepoDOInstance
 ): Promise<Response> {
   try {
     const body = await c.req.json<ExportRequest>().catch(() => ({} as ExportRequest))
-    const tables = body.tables ?? ['commits', 'refs', 'files']
+    const tables = body.tables ?? ['commits', 'refs']
+    const exportId = crypto.randomUUID()
+    const timestamp = Date.now()
 
-    // Create export job
-    const jobId = crypto.randomUUID()
+    // Get repository name from namespace or request body
+    const ns = instance.ns
+    let repoName = body.repository
+    if (ns) {
+      // Extract repo name from namespace (e.g., "github:owner/repo" -> "owner/repo")
+      repoName = ns.replace(/^github:/, '')
+    }
+    if (!repoName) {
+      return c.json({ success: false, error: 'Repository not specified (provide "repository" in request body)' }, 400)
+    }
 
-    // In a full implementation, this would:
-    // 1. Queue the export job
-    // 2. Read commit/ref/file data from storage
-    // 3. Write to Parquet using GitParquetExporter
-    // 4. Upload to ANALYTICS_BUCKET
-    // 5. Update Iceberg catalog
+    // Get R2 bucket
+    const bucket = instance.getAnalyticsBucket()
+    if (!bucket) {
+      return c.json({ success: false, error: 'Analytics bucket not available' }, 500)
+    }
 
-    // For now, return the job ID for status polling
+    // Initialize storage and schema
+    const storage = instance.getStorage()
+    const schemaManager = new SchemaManager(storage)
+    await schemaManager.initializeSchema()
+    const objectStore = new ObjectStore(storage)
+
+    const results: ExportJobStatus['results'] = []
+
+    // Export commits as NDJSON (newline-delimited JSON)
+    // NDJSON is readable by DuckDB, Spark, Pandas, etc.
+    if (tables.includes('commits')) {
+      const commits = await readCommitsFromStorage(objectStore)
+      if (commits.length > 0) {
+        const ndjson = commits.map(c => JSON.stringify({
+          sha: c.sha,
+          tree_sha: c.treeSha,
+          parent_shas: c.parentShas,
+          author_name: c.author.name,
+          author_email: c.author.email,
+          author_date: c.author.date,
+          committer_name: c.committer.name,
+          committer_email: c.committer.email,
+          committer_date: c.committer.date,
+          message: c.message,
+          repository: repoName,
+        })).join('\n')
+        const buffer = new TextEncoder().encode(ndjson)
+        const path = `${repoName}/commits/${exportId}.ndjson`
+        await bucket.put(path, buffer)
+        results.push({
+          table: 'commits',
+          rowCount: commits.length,
+          fileSize: buffer.length,
+          path,
+        })
+      }
+    }
+
+    // Export refs as NDJSON
+    if (tables.includes('refs')) {
+      const refs = await readRefsFromStorage(storage)
+      if (refs.length > 0) {
+        const ndjson = refs.map(r => JSON.stringify({
+          name: r.name,
+          target_sha: r.targetSha,
+          repository: repoName,
+        })).join('\n')
+        const buffer = new TextEncoder().encode(ndjson)
+        const path = `${repoName}/refs/${exportId}.ndjson`
+        await bucket.put(path, buffer)
+        results.push({
+          table: 'refs',
+          rowCount: refs.length,
+          fileSize: buffer.length,
+          path,
+        })
+      }
+    }
+
     return c.json({
       success: true,
-      jobId,
-      message: `Export job created for tables: ${tables.join(', ')}`,
-      statusUrl: `/export/status/${jobId}`,
+      exportId,
+      repository: repoName,
+      timestamp,
+      results,
+      message: `Exported ${results.length} table(s) to NDJSON`,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Export failed'
+    console.error('[Export] Error:', error)
     return c.json({ success: false, error: message }, 500)
   }
+}
+
+/**
+ * Read commits from ObjectStore and convert to GitCommitData format.
+ */
+async function readCommitsFromStorage(store: ObjectStore): Promise<GitCommitData[]> {
+  const commits: GitCommitData[] = []
+
+  // Query all commit objects from the objects table
+  // Note: This uses a raw SQL query since ObjectStore doesn't have a listByType method
+  const storage = (store as unknown as { storage: DurableObjectStorage }).storage
+  if (!storage?.sql) return commits
+
+  try {
+    const result = storage.sql.exec(
+      "SELECT sha, data FROM objects WHERE type = 'commit' ORDER BY created_at DESC LIMIT 10000"
+    )
+    const rows = result.toArray() as { sha: string; data: Uint8Array }[]
+
+    for (const row of rows) {
+      const commit = parseCommitObject(row.sha, row.data)
+      if (commit) {
+        commits.push(commit)
+      }
+    }
+  } catch (error) {
+    console.error('[Export] Error reading commits:', error)
+  }
+
+  return commits
+}
+
+/**
+ * Parse a raw git commit object into GitCommitData format.
+ */
+function parseCommitObject(sha: string, data: Uint8Array): GitCommitData | null {
+  try {
+    const content = new TextDecoder().decode(data)
+    const lines = content.split('\n')
+
+    let treeSha = ''
+    const parentShas: string[] = []
+    let author = { name: '', email: '', date: 0 }
+    let committer = { name: '', email: '', date: 0 }
+    let messageStartIndex = 0
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line === '') {
+        messageStartIndex = i + 1
+        break
+      }
+
+      if (line.startsWith('tree ')) {
+        treeSha = line.slice(5)
+      } else if (line.startsWith('parent ')) {
+        parentShas.push(line.slice(7))
+      } else if (line.startsWith('author ')) {
+        author = parseAuthorLine(line.slice(7))
+      } else if (line.startsWith('committer ')) {
+        committer = parseAuthorLine(line.slice(10))
+      }
+    }
+
+    const message = lines.slice(messageStartIndex).join('\n')
+
+    return {
+      sha,
+      treeSha,
+      parentShas,
+      author,
+      committer,
+      message,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse author/committer line: "Name <email> timestamp timezone"
+ */
+function parseAuthorLine(line: string): { name: string; email: string; date: number } {
+  const match = line.match(/^(.+) <(.+)> (\d+) ([+-]\d{4})$/)
+  if (!match) {
+    return { name: '', email: '', date: 0 }
+  }
+  return {
+    name: match[1]!,
+    email: match[2]!,
+    date: parseInt(match[3]!, 10) * 1000, // Convert to milliseconds
+  }
+}
+
+/**
+ * Read refs from storage.
+ */
+async function readRefsFromStorage(storage: DurableObjectStorage): Promise<GitRefData[]> {
+  const refs: GitRefData[] = []
+
+  try {
+    const result = storage.sql.exec(
+      "SELECT name, target FROM refs WHERE name LIKE 'refs/%' ORDER BY name"
+    )
+    const rows = result.toArray() as { name: string; target: string }[]
+
+    for (const row of rows) {
+      refs.push({
+        name: row.name,
+        targetSha: row.target,
+      })
+    }
+  } catch (error) {
+    console.error('[Export] Error reading refs:', error)
+  }
+
+  return refs
 }
 
 /**
