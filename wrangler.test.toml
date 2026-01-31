@@ -24,5 +24,9 @@ bucket_name = "gitx-objects"
 binding = "PACK_STORAGE"
 bucket_name = "gitx-packs"
 
+# Worker loaders for ai-evaluate sandbox execution
+[[worker_loaders]]
+binding = "LOADER"
+
 # Note: Service bindings (FSX, BASHX) are not included for testing
 # as they require external services. Tests should mock these bindings.

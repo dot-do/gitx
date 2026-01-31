@@ -39,6 +39,10 @@ binding = "BASHX"
 service = "bashx-do"
 environment = "production"
 
+# Worker loaders for ai-evaluate sandbox execution
+[[worker_loaders]]
+binding = "LOADER"
+
 # Production observability
 [observability]
 enabled = true

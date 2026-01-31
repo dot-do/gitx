@@ -2,11 +2,13 @@
  * @fileoverview Do Tool
  *
  * MCP tool for executing code in a sandboxed environment with access to git bindings.
+ * Uses @dotdo/mcp's createDoHandler with ai-evaluate for secure V8 sandbox execution.
  *
  * @module mcp/tools/do
  */
 
-import type { DoScope, DoPermissions, ToolResponse } from '@dotdo/mcp'
+import type { DoScope, DoPermissions, ToolResponse, SandboxEnv } from '@dotdo/mcp'
+import { createDoHandler as createBaseDoHandler } from '@dotdo/mcp'
 import { validateUserCode } from '../sandbox/template'
 import { evaluateWithMiniflare } from '../sandbox/miniflare-evaluator'
 import { ObjectStoreProxy } from '../sandbox/object-store-proxy'
@@ -562,143 +564,36 @@ export async function executeDo(
 
 /**
  * Create a do handler that uses the git scope
+ *
+ * Uses @dotdo/mcp's createDoHandler which leverages ai-evaluate for secure
+ * V8 sandbox execution. In Cloudflare Workers, pass env with LOADER binding.
+ * In Node.js/testing, ai-evaluate falls back to Miniflare automatically.
+ *
+ * @param scope - The GitScope with git binding and configuration
+ * @param env - Optional worker environment with LOADER binding (from cloudflare:workers)
+ * @returns Handler function for the do tool
  */
 export function createDoHandler(
-  scope: GitScope
+  scope: GitScope,
+  env?: SandboxEnv
 ): (input: DoToolInput) => Promise<ToolResponse> {
+  // Use @dotdo/mcp's createDoHandler which uses ai-evaluate internally
+  // The git binding is passed through scope.bindings and made available via RPC
+  const baseHandler = createBaseDoHandler(scope, env)
+
+  // Wrap to handle timeout parameter in DoToolInput
   return async (input: DoToolInput): Promise<ToolResponse> => {
-    const startTime = performance.now()
-    const timeout = input.timeout ?? scope.timeout ?? DEFAULT_TIMEOUT
-
-    // Validate empty code
-    if (!input.code || input.code.trim() === '') {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: 'Code is required and cannot be empty',
-            logs: [],
-            duration: performance.now() - startTime
-          }, null, 2)
-        }],
-        isError: true
+    // If a custom timeout is specified, create a new scope with that timeout
+    if (input.timeout !== undefined && input.timeout !== scope.timeout) {
+      const scopeWithTimeout: GitScope = {
+        ...scope,
+        timeout: input.timeout
       }
+      const handlerWithTimeout = createBaseDoHandler(scopeWithTimeout, env)
+      return handlerWithTimeout({ code: input.code })
     }
 
-    // Validate code for dangerous patterns
-    const validation = validateUserCode(input.code)
-    if (!validation.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: `Security: ${validation.error}`,
-            logs: [],
-            duration: performance.now() - startTime
-          }, null, 2)
-        }],
-        isError: true
-      }
-    }
-
-    // Additional security checks
-    const securityCheck = validateSecurity(input.code)
-    if (!securityCheck.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: `Security: ${securityCheck.error}`,
-            logs: [],
-            duration: performance.now() - startTime
-          }, null, 2)
-        }],
-        isError: true
-      }
-    }
-
-    // Check for syntax errors
-    const syntaxCheck = checkSyntax(input.code)
-    if (!syntaxCheck.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: syntaxCheck.error,
-            logs: [],
-            duration: performance.now() - startTime
-          }, null, 2)
-        }],
-        isError: true
-      }
-    }
-
-    try {
-      // Execute using the git binding from scope
-      const git = scope.bindings.git
-      const logs: string[] = []
-
-      // Create sandbox with git binding
-      const sandbox = {
-        git,
-        console: {
-          log: (...args: unknown[]) => logs.push(args.map(String).join(' ')),
-          error: (...args: unknown[]) => logs.push(`[ERROR] ${args.map(String).join(' ')}`),
-          warn: (...args: unknown[]) => logs.push(`[WARN] ${args.map(String).join(' ')}`),
-          info: (...args: unknown[]) => logs.push(`[INFO] ${args.map(String).join(' ')}`)
-        }
-      }
-
-      // Wrap code in async function to support top-level await
-      // The user code can use 'return' to return a value
-      const wrappedCode = `(async () => { return (async () => { ${input.code} })() })()`
-
-      // Execute with timeout
-      const fn = new Function(...Object.keys(sandbox), `return ${wrappedCode}`)
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Execution timeout exceeded')), timeout)
-      })
-
-      const result = await Promise.race([
-        fn(...Object.values(sandbox)),
-        timeoutPromise
-      ])
-
-      const duration = performance.now() - startTime
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            result,
-            logs,
-            duration
-          }, null, 2)
-        }]
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      const duration = performance.now() - startTime
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: errorMessage,
-            logs: [],
-            duration
-          }, null, 2)
-        }],
-        isError: true
-      }
-    }
+    return baseHandler({ code: input.code })
   }
 }
 

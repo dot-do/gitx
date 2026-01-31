@@ -332,3 +332,45 @@ export {
   type Transaction,
   type Checkpoint,
 }
+
+// ============================================================================
+// OAuth.do Integration Imports and Exports
+// ============================================================================
+
+import {
+  extractToken,
+  verifyJWT,
+  createOAuthMiddleware,
+  requireScope,
+  InMemorySessionCache,
+  parseGitScopes,
+  hasScope,
+  canPerformOperation,
+  shouldRefreshToken,
+  type GitScope,
+  type JWTVerifyOptions,
+  type JWTPayload,
+  type JWTVerifyResult,
+  type OAuthContext,
+  type SessionCache,
+  type OAuthMiddlewareOptions,
+} from './oauth'
+
+export {
+  extractToken,
+  verifyJWT,
+  createOAuthMiddleware,
+  requireScope,
+  InMemorySessionCache,
+  parseGitScopes,
+  hasScope,
+  canPerformOperation,
+  shouldRefreshToken,
+  type GitScope,
+  type JWTVerifyOptions,
+  type JWTPayload,
+  type JWTVerifyResult,
+  type OAuthContext,
+  type SessionCache,
+  type OAuthMiddlewareOptions,
+}
