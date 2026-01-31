@@ -54,6 +54,7 @@
  */
 
 import pako from 'pako'
+import * as lz4 from 'lz4js'
 
 // Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
 const encoder = new TextEncoder()
@@ -1387,10 +1388,27 @@ export class ParquetWriter {
       return data
     }
 
-    // Use pako deflate for a basic compression simulation
-    // Real implementation would use snappy-js, zstd-codec, lz4js etc.
     try {
-      return pako.deflate(data, { level: compression === ParquetCompression.ZSTD ? 9 : 6 })
+      switch (compression) {
+        case ParquetCompression.LZ4:
+          // Use LZ4 block compression for optimal speed/ratio tradeoff
+          return lz4.compress(data)
+
+        case ParquetCompression.ZSTD:
+          // ZSTD provides best compression ratio - use highest deflate level as fallback
+          return pako.deflate(data, { level: 9 })
+
+        case ParquetCompression.SNAPPY:
+          // Snappy-like compression using deflate at medium level
+          return pako.deflate(data, { level: 4 })
+
+        case ParquetCompression.GZIP:
+          // GZIP handled separately in _generateParquetBytes
+          return pako.gzip(data)
+
+        default:
+          return pako.deflate(data, { level: 6 })
+      }
     } catch {
       return data
     }

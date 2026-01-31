@@ -35,6 +35,9 @@ importers:
       hono:
         specifier: ^4.11.3
         version: 4.11.4
+      lz4js:
+        specifier: ^0.2.0
+        version: 0.2.0
       miniflare:
         specifier: ^3.20241106.0
         version: 3.20250718.3
@@ -3352,6 +3355,9 @@ packages:
     resolution: {integrity: sha512-Y59gMY38tl4/i0qewcqohPdEbieBy7SovpBL9IFebhc2mDd8x4PZSOsiFRkpPcOq6bj1r/mjH/Rk73gSlIJP2A==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  lz4js@0.2.0:
+    resolution: {integrity: sha512-gY2Ia9Lm7Ep8qMiuGRhvUq0Q7qUereeldZPP1PMEJxPtEWHJLqw9pgX68oHajBH0nzJK4MaZEA/YNV3jT8u8Bg==}
 
   magic-string@0.25.9:
     resolution: {integrity: sha512-RmF0AsMzgt25qzqqLc1+MbHmhdx0ojF2Fvs4XnOqz2ZOBXzzkEwc/dJQZCYHAn7v1jbVOjAZfK8msRn4BxO4VQ==}
@@ -7769,6 +7775,8 @@ snapshots:
   lucide-react@0.561.0(react@18.3.1):
     dependencies:
       react: 18.3.1
+
+  lz4js@0.2.0: {}
 
   magic-string@0.25.9:
     dependencies:

@@ -10,6 +10,7 @@
 
 import { Hono } from 'hono'
 import { GitRepoDO } from './do/GitRepoDO'
+import { GitHubWebhookHandler } from './webhooks'
 
 // ============================================================================
 // Environment Interface
@@ -22,10 +23,14 @@ interface Env {
   // R2 buckets
   R2: R2Bucket
   PACK_STORAGE: R2Bucket
+  ANALYTICS_BUCKET?: R2Bucket
 
   // Service bindings
   FSX?: Fetcher
   BASHX?: Fetcher
+
+  // Secrets
+  GITHUB_WEBHOOK_SECRET: string
 }
 
 // ============================================================================
@@ -41,6 +46,15 @@ app.get('/health', (c) => {
     service: 'gitx-do',
     timestamp: new Date().toISOString(),
   })
+})
+
+// GitHub webhook handler
+app.post('/webhooks/github', async (c) => {
+  const handler = new GitHubWebhookHandler({
+    GITX: c.env.GITX,
+    GITHUB_WEBHOOK_SECRET: c.env.GITHUB_WEBHOOK_SECRET,
+  })
+  return handler.handle(c.req.raw)
 })
 
 // Route to GitRepoDO by namespace
@@ -67,6 +81,7 @@ app.get('/', (c) => {
     description: 'Git implementation for Cloudflare Durable Objects',
     endpoints: {
       health: '/health',
+      webhooks: '/webhooks/github',
       repo: '/:namespace/*',
     },
   })

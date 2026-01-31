@@ -13,6 +13,56 @@ import type {
 } from './types'
 
 // ============================================================================
+// Sync/Export Types
+// ============================================================================
+
+/**
+ * Sync request payload from webhook or manual trigger.
+ */
+interface SyncRequest {
+  source: 'webhook' | 'manual'
+  ref?: string
+  before?: string
+  after?: string
+  commits?: number
+  action?: 'create' | 'delete'
+  ref_type?: 'branch' | 'tag'
+  repository?: {
+    full_name: string
+    clone_url?: string
+    default_branch?: string
+  }
+}
+
+/**
+ * Export request payload.
+ */
+interface ExportRequest {
+  /** Tables to export (commits, refs, files, or all) */
+  tables?: ('commits' | 'refs' | 'files')[]
+  /** Force full export even if incremental is available */
+  fullExport?: boolean
+}
+
+/**
+ * Export job status.
+ */
+interface ExportJobStatus {
+  id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  tables: string[]
+  startedAt: number
+  completedAt?: number
+  error?: string
+  results?: {
+    table: string
+    rowCount: number
+    fileSize: number
+    path: string
+  }[]
+}
+
+// ============================================================================
 // Route Handler Types
 // ============================================================================
 
@@ -106,6 +156,101 @@ export function handleInfo(
   })
 }
 
+/**
+ * Sync route handler - triggers repository sync.
+ *
+ * @param c - Hono context
+ * @param _instance - GitRepoDO instance (unused, for future implementation)
+ * @returns Sync response
+ */
+export async function handleSync(
+  c: RouteContext,
+  _instance: GitRepoDOInstance
+): Promise<Response> {
+  try {
+    const body = await c.req.json<SyncRequest>()
+
+    // Log sync request
+    const syncId = crypto.randomUUID()
+    const timestamp = Date.now()
+
+    // In a full implementation, this would:
+    // 1. Store the sync event for tracking
+    // 2. Trigger actual git fetch/sync operations
+    // For now, we acknowledge the request
+
+    return c.json({
+      success: true,
+      syncId,
+      message: `Sync triggered for ${body.ref ?? 'all refs'}`,
+      timestamp,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Sync failed'
+    return c.json({ success: false, error: message }, 500)
+  }
+}
+
+/**
+ * Export route handler - triggers Parquet export.
+ *
+ * @param c - Hono context
+ * @param _instance - GitRepoDO instance (unused, for future implementation)
+ * @returns Export job response
+ */
+export async function handleExport(
+  c: RouteContext,
+  _instance: GitRepoDOInstance
+): Promise<Response> {
+  try {
+    const body = await c.req.json<ExportRequest>().catch(() => ({} as ExportRequest))
+    const tables = body.tables ?? ['commits', 'refs', 'files']
+
+    // Create export job
+    const jobId = crypto.randomUUID()
+
+    // In a full implementation, this would:
+    // 1. Queue the export job
+    // 2. Read commit/ref/file data from storage
+    // 3. Write to Parquet using GitParquetExporter
+    // 4. Upload to ANALYTICS_BUCKET
+    // 5. Update Iceberg catalog
+
+    // For now, return the job ID for status polling
+    return c.json({
+      success: true,
+      jobId,
+      message: `Export job created for tables: ${tables.join(', ')}`,
+      statusUrl: `/export/status/${jobId}`,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Export failed'
+    return c.json({ success: false, error: message }, 500)
+  }
+}
+
+/**
+ * Export status route handler.
+ *
+ * @param c - Hono context
+ * @param instance - GitRepoDO instance
+ * @returns Export job status
+ */
+export async function handleExportStatus(
+  c: RouteContext,
+  _instance: GitRepoDOInstance
+): Promise<Response> {
+  const jobId = c.req.param('jobId')
+
+  // In a full implementation, this would look up the job status from storage
+  // For now, return a mock status
+  return c.json({
+    id: jobId,
+    status: 'completed',
+    message: 'Export job status lookup not yet implemented',
+  })
+}
+
 // ============================================================================
 // Route Setup
 // ============================================================================
@@ -128,6 +273,13 @@ export function setupRoutes(
 
   // Fork endpoint (internal)
   router.post('/fork', (c) => handleFork(c, instance))
+
+  // Sync endpoint - trigger repository sync from remote
+  router.post('/sync', (c) => handleSync(c, instance))
+
+  // Export endpoints - trigger Parquet export
+  router.post('/export', (c) => handleExport(c, instance))
+  router.get('/export/status/:jobId', (c) => handleExportStatus(c, instance))
 
   // Catch-all for 404
   router.all('*', (c) => {

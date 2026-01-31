@@ -28,6 +28,11 @@ bucket_name = "gitx-objects"
 binding = "PACK_STORAGE"
 bucket_name = "gitx-packs"
 
+# Analytics bucket for Parquet/Iceberg data
+[[r2_buckets]]
+binding = "ANALYTICS_BUCKET"
+bucket_name = "gitx-analytics"
+
 # Service bindings
 [[services]]
 binding = "FSX"
@@ -46,3 +51,6 @@ binding = "LOADER"
 # Production observability
 [observability]
 enabled = true
+
+# Note: Set GITHUB_WEBHOOK_SECRET via `wrangler secret put GITHUB_WEBHOOK_SECRET`
+# This secret is used to verify GitHub webhook signatures
