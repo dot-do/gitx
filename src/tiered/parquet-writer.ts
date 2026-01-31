@@ -54,7 +54,7 @@
  */
 
 import pako from 'pako'
-import * as lz4 from 'lz4js'
+import * as lz4 from 'lz4/lib/binding'
 
 // Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
 const encoder = new TextEncoder()
@@ -1390,9 +1390,17 @@ export class ParquetWriter {
 
     try {
       switch (compression) {
-        case ParquetCompression.LZ4:
-          // Use LZ4 block compression for optimal speed/ratio tradeoff
-          return lz4.compress(data)
+        case ParquetCompression.LZ4: {
+          // Use LZ4 raw block compression (no framing) for Parquet LZ4_RAW codec
+          const maxSize = lz4.compressBound(data.length)
+          const output = new Uint8Array(maxSize)
+          const compressedSize = lz4.compress(data, output)
+          // compressedSize === 0 means data is incompressible
+          if (compressedSize === 0) {
+            return data
+          }
+          return output.slice(0, compressedSize)
+        }
 
         case ParquetCompression.ZSTD:
           // ZSTD provides best compression ratio - use highest deflate level as fallback
