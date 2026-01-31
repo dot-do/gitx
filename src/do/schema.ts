@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS git (
   repo TEXT NOT NULL UNIQUE,
   path TEXT,
   branch TEXT NOT NULL DEFAULT 'main',
-  commit TEXT,
+  "commit" TEXT,
   last_sync INTEGER,
   object_prefix TEXT DEFAULT 'git/objects',
   created_at INTEGER,

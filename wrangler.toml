@@ -10,16 +10,22 @@ pattern = "gitx.do"
 custom_domain = true
 
 # Durable Objects
+# Using GitRepoDOSQL for SQLite-backed storage (~50x lower cost)
 [durable_objects]
 bindings = [
-  { name = "GITX", class_name = "GitRepoDO" }
+  { name = "GITX", class_name = "GitRepoDOSQL" }
 ]
 
-# Note: GitRepoDO requires SQLite storage. New instances will be created with SQLite.
-# Existing instances must be migrated or deleted to use SQLite.
+# Migration v1: Original non-SQLite class (deprecated)
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["GitRepoDO"]
+new_classes = ["GitRepoDO"]
+
+# Migration v2: Add new SQLite-backed class for production use
+# GitRepoDOSQL is the SQLite-backed version with 50x lower storage costs
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["GitRepoDOSQL"]
 
 # R2 buckets for git object storage
 [[r2_buckets]]

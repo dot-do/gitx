@@ -716,6 +716,36 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
 }
 
 // ============================================================================
+// SQLite-Backed Version
+// ============================================================================
+
+/**
+ * GitRepoDOSQL - SQLite-backed Git Repository Durable Object
+ *
+ * @description
+ * Identical to GitRepoDO but configured to use SQLite storage via wrangler.toml
+ * migrations. SQLite storage provides ~50x lower cost compared to key-value storage.
+ *
+ * Use this class for production deployments. The GitRepoDO class is maintained
+ * for backwards compatibility with existing deployments.
+ *
+ * @example
+ * ```typescript
+ * // In wrangler.toml:
+ * // [[migrations]]
+ * // tag = "v2"
+ * // new_sqlite_classes = ["GitRepoDOSQL"]
+ *
+ * // In worker:
+ * export { GitRepoDOSQL } from './do/GitRepoDO'
+ * ```
+ */
+export class GitRepoDOSQL extends GitRepoDO {
+  // Identical implementation - the SQLite backing is configured via wrangler.toml
+  // This class exists to enable migration from non-SQLite to SQLite DOs
+}
+
+// ============================================================================
 // Type Guard
 // ============================================================================
 

@@ -11,21 +11,9 @@ import type {
   HealthCheckResponse,
   InitializeOptions,
 } from './types'
+import type { DurableObjectStorage } from './schema'
 import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
-
-/**
- * Simple storage interface for DO key-value operations.
- * Works with both SQLite and non-SQLite DOs.
- */
-interface SimpleStorage {
-  get<T>(key: string): Promise<T | undefined>
-  get<T>(keys: string[]): Promise<Map<string, T>>
-  put<T>(key: string, value: T): Promise<void>
-  put<T>(entries: Record<string, T>): Promise<void>
-  delete(key: string): Promise<boolean>
-  list<T>(options?: { prefix?: string }): Promise<Map<string, T>>
-}
 
 // ============================================================================
 // Sync/Export Types
@@ -93,8 +81,8 @@ export interface GitRepoDOInstance {
   getCapabilities(): Set<string>
   /** Start time for uptime tracking */
   readonly _startTime: number
-  /** Access to DO storage for sync operations (simple key-value API) */
-  getStorage(): SimpleStorage
+  /** Access to DO SQLite storage for sync operations */
+  getStorage(): DurableObjectStorage
 }
 
 /**

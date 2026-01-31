@@ -9,7 +9,7 @@
  */
 
 import { Hono } from 'hono'
-import { GitRepoDO } from './do/GitRepoDO'
+import { GitRepoDO, GitRepoDOSQL } from './do/GitRepoDO'
 import { GitHubWebhookHandler } from './webhooks'
 
 // ============================================================================
@@ -94,4 +94,6 @@ app.get('/', (c) => {
 export default app
 
 // Export Durable Object classes for Wrangler
-export { GitRepoDO }
+// GitRepoDO: Original non-SQLite version (deprecated)
+// GitRepoDOSQL: SQLite-backed version with ~50x lower storage costs
+export { GitRepoDO, GitRepoDOSQL }
