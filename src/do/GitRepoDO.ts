@@ -350,6 +350,14 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     return this._fs
   }
 
+  /**
+   * Get the underlying Durable Object storage.
+   * Used by route handlers for sync operations.
+   */
+  getStorage(): DOState['storage'] {
+    return this.state.storage
+  }
+
   // ===========================================================================
   // Lifecycle Methods
   // ===========================================================================

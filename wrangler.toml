@@ -15,9 +15,11 @@ bindings = [
   { name = "GITX", class_name = "GitRepoDO" }
 ]
 
+# Note: GitRepoDO requires SQLite storage. New instances will be created with SQLite.
+# Existing instances must be migrated or deleted to use SQLite.
 [[migrations]]
 tag = "v1"
-new_classes = ["GitRepoDO"]
+new_sqlite_classes = ["GitRepoDO"]
 
 # R2 buckets for git object storage
 [[r2_buckets]]

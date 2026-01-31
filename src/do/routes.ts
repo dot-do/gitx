@@ -11,6 +11,21 @@ import type {
   HealthCheckResponse,
   InitializeOptions,
 } from './types'
+import { clone, discoverRefs } from '../ops/clone'
+import { createGitBackendAdapter } from './git-backend-adapter'
+
+/**
+ * Simple storage interface for DO key-value operations.
+ * Works with both SQLite and non-SQLite DOs.
+ */
+interface SimpleStorage {
+  get<T>(key: string): Promise<T | undefined>
+  get<T>(keys: string[]): Promise<Map<string, T>>
+  put<T>(key: string, value: T): Promise<void>
+  put<T>(entries: Record<string, T>): Promise<void>
+  delete(key: string): Promise<boolean>
+  list<T>(options?: { prefix?: string }): Promise<Map<string, T>>
+}
 
 // ============================================================================
 // Sync/Export Types
@@ -78,6 +93,8 @@ export interface GitRepoDOInstance {
   getCapabilities(): Set<string>
   /** Start time for uptime tracking */
   readonly _startTime: number
+  /** Access to DO storage for sync operations (simple key-value API) */
+  getStorage(): SimpleStorage
 }
 
 /**
@@ -159,31 +176,88 @@ export function handleInfo(
 /**
  * Sync route handler - triggers repository sync.
  *
+ * @description
+ * Clones or fetches from a remote Git repository using the Smart HTTP protocol.
+ * On success, stores all objects in the DO's SQLite storage and returns
+ * information about the sync operation.
+ *
  * @param c - Hono context
- * @param _instance - GitRepoDO instance (unused, for future implementation)
- * @returns Sync response
+ * @param instance - GitRepoDO instance with storage access
+ * @returns Sync response with clone results
  */
 export async function handleSync(
   c: RouteContext,
-  _instance: GitRepoDOInstance
+  instance: GitRepoDOInstance
 ): Promise<Response> {
   try {
     const body = await c.req.json<SyncRequest>()
-
-    // Log sync request
     const syncId = crypto.randomUUID()
     const timestamp = Date.now()
 
-    // In a full implementation, this would:
-    // 1. Store the sync event for tracking
-    // 2. Trigger actual git fetch/sync operations
-    // For now, we acknowledge the request
+    // Get clone URL from request
+    const cloneUrl = body.repository?.clone_url
+    if (!cloneUrl) {
+      return c.json({
+        success: false,
+        error: 'No clone_url provided in repository data',
+        syncId,
+        timestamp,
+      }, 400)
+    }
 
+    // Create GitBackend adapter for DO storage
+    const storage = instance.getStorage()
+    const backend = createGitBackendAdapter(storage)
+
+    // First, discover refs to see what's available
+    let refAdvertisement
+    try {
+      refAdvertisement = await discoverRefs(cloneUrl)
+    } catch (error) {
+      return c.json({
+        success: false,
+        error: `Failed to discover refs: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        syncId,
+        timestamp,
+      }, 500)
+    }
+
+    // If no refs, repo is empty
+    if (refAdvertisement.refs.length === 0) {
+      return c.json({
+        success: true,
+        syncId,
+        message: 'Repository is empty',
+        timestamp,
+        objectCount: 0,
+        refs: [],
+      })
+    }
+
+    // Clone the repository
+    const result = await clone(cloneUrl, backend, {
+      onProgress: (msg) => console.log(`[Sync ${syncId}] ${msg}`),
+    })
+
+    if (!result.success) {
+      return c.json({
+        success: false,
+        error: result.error ?? 'Clone failed',
+        syncId,
+        timestamp,
+      }, 500)
+    }
+
+    // Return success with details
     return c.json({
       success: true,
       syncId,
-      message: `Sync triggered for ${body.ref ?? 'all refs'}`,
+      message: `Synced ${result.objectCount} objects`,
       timestamp,
+      objectCount: result.objectCount,
+      head: result.head,
+      defaultBranch: result.defaultBranch,
+      refs: result.refs.map(r => ({ name: r.name, sha: r.sha })),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Sync failed'

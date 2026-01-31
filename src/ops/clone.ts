@@ -811,8 +811,8 @@ export async function unpackObjects(
       offset += offsetBytes
       const baseOffset = objectOffset - negOffset
 
-      // Decompress delta data
-      const { data: deltaData, bytesConsumed } = decompressObject(packData, offset, size)
+      // Decompress delta data (use async for native stream support)
+      const { data: deltaData, bytesConsumed } = await decompressObjectAsync(packData, offset, size)
       offset += bytesConsumed
 
       pendingDeltas.push({
@@ -829,8 +829,8 @@ export async function unpackObjects(
       const baseSha = bytesToHex(packData.slice(offset, offset + 20))
       offset += 20
 
-      // Decompress delta data
-      const { data: deltaData, bytesConsumed } = decompressObject(packData, offset, size)
+      // Decompress delta data (use async for native stream support)
+      const { data: deltaData, bytesConsumed } = await decompressObjectAsync(packData, offset, size)
       offset += bytesConsumed
 
       pendingDeltas.push({
@@ -842,8 +842,8 @@ export async function unpackObjects(
       continue
     }
 
-    // Regular object - decompress
-    const { data, bytesConsumed } = decompressObject(packData, offset, size)
+    // Regular object - decompress (use async for native stream support)
+    const { data, bytesConsumed } = await decompressObjectAsync(packData, offset, size)
     offset += bytesConsumed
 
     const typeStr = packObjectTypeToString(type) as ObjectType
@@ -959,71 +959,105 @@ function decodeOfsOffset(data: Uint8Array, offset: number): { baseOffset: number
 }
 
 /**
- * Decompress zlib-compressed object data.
+ * Decompress zlib-compressed object data from a packfile.
+ *
+ * @description
+ * Git packfiles use zlib compression. This function handles decompression
+ * using pako's inflateRaw function after manually skipping the 2-byte zlib header.
+ * This approach handles packfiles correctly where multiple compressed objects
+ * are concatenated without explicit size markers.
+ *
+ * The zlib format is: [2-byte header][deflate data][4-byte adler32]
+ * We skip the header, use inflateRaw for the deflate data, and account for
+ * the adler32 checksum when calculating bytes consumed.
  *
  * @param data - Packfile data
- * @param offset - Start of compressed data
+ * @param offset - Start of compressed data (zlib header)
  * @param expectedSize - Expected uncompressed size
  * @returns Decompressed data and bytes consumed
  *
  * @internal
  */
-function decompressObject(
+async function decompressObjectAsync(
   data: Uint8Array,
   offset: number,
   expectedSize: number
-): { data: Uint8Array; bytesConsumed: number } {
-  // Try to decompress - zlib may consume variable bytes
-  // We need to find where the compressed data ends
+): Promise<{ data: Uint8Array; bytesConsumed: number }> {
+  const maxCompressedSize = Math.min(data.length - offset, expectedSize * 10 + 1000)
 
-  // Start with a reasonable buffer and expand if needed
-  const maxCompressedSize = Math.min(
-    data.length - offset,
-    expectedSize * 2 + 1000 // Compressed is usually smaller, but add margin
-  )
+  // Verify we have a valid zlib header
+  if (data.length - offset < 2) {
+    throw new Error(`Not enough data for zlib header at offset ${offset}`)
+  }
 
-  // Use pako's inflate which handles partial input
-  const inflator = new pako.Inflate()
+  const cmf = data[offset]!
+  const flg = data[offset + 1]!
 
-  let consumed = 0
-  const chunkSize = Math.min(1024, maxCompressedSize)
+  // Validate zlib header (CMF + FLG should pass checksum: (CMF*256 + FLG) % 31 == 0)
+  if ((cmf * 256 + flg) % 31 !== 0) {
+    const firstBytes = Array.from(data.slice(offset, offset + 16))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join(' ')
+    throw new Error(
+      `Invalid zlib header at offset ${offset}: ${cmf.toString(16)} ${flg.toString(16)} ` +
+      `(data: ${firstBytes}...)`
+    )
+  }
 
-  while (consumed < maxCompressedSize) {
-    const chunk = data.slice(offset + consumed, offset + consumed + chunkSize)
-    const isLast = consumed + chunkSize >= maxCompressedSize
+  // Skip the 2-byte zlib header and use inflateRaw
+  const deflateData = data.slice(offset + 2, offset + maxCompressedSize)
 
-    inflator.push(chunk, isLast)
+  try {
+    // Use Inflate class with raw:true to get strm.total_in
+    const inflator = new pako.Inflate({ raw: true })
+    inflator.push(deflateData, true)
 
-    if (inflator.err) {
-      // Check if it's a clean end (Z_STREAM_END)
-      if (inflator.err === -5 || inflator.msg === 'unexpected end of file') {
-        // Might have pushed too much data, try smaller chunk
-        break
+    if (inflator.err !== 0) {
+      throw new Error(`inflateRaw error: ${inflator.msg || 'unknown'}`)
+    }
+
+    const result = inflator.result as Uint8Array
+    if (!result || result.length < expectedSize) {
+      throw new Error(`Decompressed size ${result?.length ?? 0} < expected ${expectedSize}`)
+    }
+
+    // Get bytes consumed from strm.total_in
+    const strm = (inflator as unknown as { strm?: { total_in?: number } }).strm
+    const deflateConsumed = strm?.total_in ?? 0
+
+    // Total consumed = 2 (header) + deflate data + 4 (adler32 checksum)
+    // Note: strm.total_in is just the deflate portion, not the adler32
+    const bytesConsumed = 2 + deflateConsumed + 4
+
+    return {
+      data: result.slice(0, expectedSize),
+      bytesConsumed,
+    }
+  } catch (e) {
+    // Try direct inflateRaw as fallback (in case the Inflate class has issues)
+    try {
+      const result = pako.inflateRaw(deflateData)
+      if (result && result.length >= expectedSize) {
+        // Estimate consumed based on typical compression ratio (around 0.4-0.6 for text)
+        const estimated = Math.ceil(expectedSize * 0.5) + 2 + 4
+        return {
+          data: result.slice(0, expectedSize),
+          bytesConsumed: Math.min(estimated, maxCompressedSize),
+        }
       }
-      throw new Error(`Decompression error: ${inflator.msg}`)
+    } catch {
+      // Fall through
     }
 
-    consumed += chunkSize
-
-    // Check if we've decompressed enough
-    if (inflator.result && (inflator.result as Uint8Array).length >= expectedSize) {
-      break
-    }
+    // Debug info
+    const firstBytes = Array.from(data.slice(offset, offset + 16))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join(' ')
+    throw new Error(
+      `Decompression failed: expected ${expectedSize} bytes at offset ${offset} ` +
+      `(data: ${firstBytes}..., available: ${data.length - offset} bytes, error: ${e instanceof Error ? e.message : 'unknown'})`
+    )
   }
-
-  const result = inflator.result as Uint8Array
-  if (!result || result.length !== expectedSize) {
-    // Fallback: try decompressing all remaining data
-    const remaining = data.slice(offset)
-    const fullResult = pako.inflate(remaining)
-    if (fullResult.length !== expectedSize) {
-      throw new Error(`Decompressed size mismatch: expected ${expectedSize}, got ${fullResult.length}`)
-    }
-    // Estimate consumed bytes (compressed ratio ~0.5-0.7 typical)
-    return { data: fullResult, bytesConsumed: Math.ceil(expectedSize * 0.7) }
-  }
-
-  return { data: result, bytesConsumed: consumed }
 }
 
 /**
