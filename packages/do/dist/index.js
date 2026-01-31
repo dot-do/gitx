@@ -42,6 +42,16 @@ LogLevel, } from './do/types';
 // =============================================================================
 export { createLogger, createChildLogger, noopLogger, } from './do/logger';
 // =============================================================================
+// MCP Server
+// =============================================================================
+export { registerTool, unregisterTool, invokeTool, getToolRegistry, clearToolRegistry, useMiddleware, clearMiddleware, 
+// Git tools
+gitTools, gitStatusToolSchema, gitLogToolSchema, gitDiffToolSchema, gitShowToolSchema, gitCommitToolSchema, gitBranchToolSchema, gitCheckoutToolSchema, gitAddToolSchema, gitResetToolSchema, gitMergeToolSchema, gitRebaseToolSchema, gitStashToolSchema, gitTagToolSchema, gitRemoteToolSchema, gitFetchToolSchema, gitPushToolSchema, gitPullToolSchema, gitCloneToolSchema, gitInitToolSchema, gitBlameToolSchema, 
+// Auth
+gitAuthMiddleware, requireGitAuth, requireGitWrite, requireGitAdmin, 
+// Server
+createGitMCPServer, } from './mcp/index';
+// =============================================================================
 // TODO: Additional exports to be added as migration continues
 // =============================================================================
 // - GitRepoDO

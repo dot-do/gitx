@@ -98,6 +98,61 @@ export {
 } from './do/logger'
 
 // =============================================================================
+// MCP Server
+// =============================================================================
+
+export {
+  // Tool registry
+  type McpToolResult,
+  type McpToolSchema,
+  type McpToolHandler,
+  type McpTool,
+  type ToolRegistry,
+  type ToolContext,
+  type ToolMiddleware,
+  type InvokeToolOptions,
+  registerTool,
+  unregisterTool,
+  invokeTool,
+  getToolRegistry,
+  clearToolRegistry,
+  useMiddleware,
+  clearMiddleware,
+  // Git tools
+  gitTools,
+  gitStatusToolSchema,
+  gitLogToolSchema,
+  gitDiffToolSchema,
+  gitShowToolSchema,
+  gitCommitToolSchema,
+  gitBranchToolSchema,
+  gitCheckoutToolSchema,
+  gitAddToolSchema,
+  gitResetToolSchema,
+  gitMergeToolSchema,
+  gitRebaseToolSchema,
+  gitStashToolSchema,
+  gitTagToolSchema,
+  gitRemoteToolSchema,
+  gitFetchToolSchema,
+  gitPushToolSchema,
+  gitPullToolSchema,
+  gitCloneToolSchema,
+  gitInitToolSchema,
+  gitBlameToolSchema,
+  // Auth
+  gitAuthMiddleware,
+  requireGitAuth,
+  requireGitWrite,
+  requireGitAdmin,
+  type GitAuthContext,
+  type GitAuthConfig,
+  // Server
+  createGitMCPServer,
+  type GitMCPServerOptions,
+} from './mcp/index'
+
+// =============================================================================
 // TODO: Additional exports to be added as migration continues
 // =============================================================================
 // - GitRepoDO
