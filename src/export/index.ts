@@ -36,6 +36,14 @@ export {
   FILE_CHANGE_DESCRIPTIONS,
   type FileRow,
   type FileChangeType,
+  REPOSITORIES_SCHEMA,
+  REPOSITORY_FIELDS,
+  toRepositoryRow,
+  toNamespace,
+  fromNamespace,
+  type RepositoryRow,
+  type SyncStatus,
+  type RepositorySource,
 } from './schemas'
 
 // Iceberg integration

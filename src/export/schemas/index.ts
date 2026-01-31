@@ -28,3 +28,14 @@ export {
   type FileRow,
   type FileChangeType,
 } from './files'
+
+export {
+  REPOSITORIES_SCHEMA,
+  REPOSITORY_FIELDS,
+  toRepositoryRow,
+  toNamespace,
+  fromNamespace,
+  type RepositoryRow,
+  type SyncStatus,
+  type RepositorySource,
+} from './repositories'
