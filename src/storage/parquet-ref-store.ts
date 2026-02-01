@@ -119,6 +119,71 @@ export class ParquetRefStore {
   }
 
   /**
+   * Atomically update a ref using compare-and-swap semantics.
+   *
+   * Reads the current ref value inside a SQLite transaction and only
+   * writes the new value if the current value matches `expectedOldTarget`.
+   *
+   * @param name - Full ref name (e.g., 'refs/heads/main')
+   * @param expectedOldTarget - Expected current value:
+   *   - A SHA string means "ref must currently point to this SHA"
+   *   - `null` or empty string means "ref must not exist" (create-only)
+   * @param newTarget - New SHA to set the ref to
+   * @returns `true` if the swap succeeded, `false` if the current value didn't match
+   */
+  compareAndSwapRef(
+    name: string,
+    expectedOldTarget: string | null,
+    newTarget: string
+  ): boolean {
+    const expectMissing = expectedOldTarget === null || expectedOldTarget === ''
+
+    this.sql.sql.exec('BEGIN TRANSACTION')
+    try {
+      // Read current value within the transaction
+      const result = this.sql.sql.exec(
+        'SELECT target FROM refs WHERE name = ?',
+        name
+      )
+      const rows = result.toArray() as RefRow[]
+      const currentTarget = rows.length > 0 ? rows[0]!.target : null
+
+      // Check if current state matches expectation
+      if (expectMissing) {
+        if (currentTarget !== null) {
+          this.sql.sql.exec('ROLLBACK')
+          return false
+        }
+      } else {
+        if (currentTarget === null || currentTarget !== expectedOldTarget) {
+          this.sql.sql.exec('ROLLBACK')
+          return false
+        }
+      }
+
+      // Apply the update
+      const now = Date.now()
+      this.sql.sql.exec(
+        'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
+        name, newTarget, 'sha', now
+      )
+
+      this.sql.sql.exec('COMMIT')
+      this.dirty = true
+
+      // Fire callback if registered
+      if (this.onRefUpdate) {
+        this.onRefUpdate(name, expectedOldTarget ?? '', newTarget)
+      }
+
+      return true
+    } catch (error) {
+      this.sql.sql.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /**
    * List all refs, optionally filtered by prefix.
    */
   listRefs(prefix?: string): Ref[] {

@@ -132,94 +132,54 @@ export interface BasicCommitProvider {
 }
 
 // ============================================================================
-// Storage Backend Interface
+// Segregated Storage Backend Interfaces (ISP)
 // ============================================================================
 
 /**
- * Low-level storage backend interface.
+ * Content-Addressable Storage (CAS) backend interface.
  *
- * This interface abstracts over different storage implementations
- * (file system, Cloudflare R2, SQLite, etc.) and provides a unified API.
+ * Provides operations for storing and retrieving Git objects by their SHA-1 hash.
  */
-export interface StorageBackend {
-  // Content-Addressable Storage (CAS) Operations
-
-  /**
-   * Store a Git object and return its SHA-1 hash.
-   */
+export interface CASBackend {
   putObject(type: ObjectType, content: Uint8Array): Promise<string>
-
-  /**
-   * Retrieve a Git object by its SHA-1 hash.
-   */
   getObject(sha: string): Promise<StoredObjectResult | null>
-
-  /**
-   * Check if a Git object exists in storage.
-   */
   hasObject(sha: string): Promise<boolean>
-
-  /**
-   * Delete a Git object from storage.
-   */
   deleteObject(sha: string): Promise<void>
+}
 
-  // Reference Operations
-
-  /**
-   * Get a reference by name.
-   */
+/**
+ * Reference storage backend interface.
+ *
+ * Provides operations for managing Git references (branches, tags, HEAD).
+ */
+export interface RefBackend {
   getRef(name: string): Promise<Ref | null>
-
-  /**
-   * Create or update a reference.
-   */
   setRef(name: string, ref: Ref): Promise<void>
-
-  /**
-   * Delete a reference.
-   */
   deleteRef(name: string): Promise<void>
-
-  /**
-   * List references matching an optional prefix.
-   */
   listRefs(prefix?: string): Promise<Ref[]>
+}
 
-  // Raw File Operations
-
-  /**
-   * Read a raw file from the repository.
-   */
+/**
+ * File storage backend interface.
+ *
+ * Provides raw file and directory operations for Git repository files.
+ */
+export interface FileBackend {
   readFile(path: string): Promise<Uint8Array | null>
-
-  /**
-   * Write a raw file to the repository.
-   */
   writeFile(path: string, content: Uint8Array): Promise<void>
-
-  /**
-   * Delete a raw file from the repository.
-   */
   deleteFile(path: string): Promise<void>
-
-  /**
-   * Check if a file or directory exists.
-   */
   exists(path: string): Promise<boolean>
-
-  // Directory Operations
-
-  /**
-   * List contents of a directory.
-   */
   readdir(path: string): Promise<string[]>
-
-  /**
-   * Create a directory.
-   */
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
 }
+
+/**
+ * Full storage backend interface (backward-compatible).
+ *
+ * Combines CASBackend, RefBackend, and FileBackend. Existing code using
+ * StorageBackend continues to work unchanged.
+ */
+export interface StorageBackend extends CASBackend, RefBackend, FileBackend {}
 
 // ============================================================================
 // Hash Function Interface

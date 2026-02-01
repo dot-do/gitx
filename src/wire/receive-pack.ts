@@ -447,6 +447,23 @@ export interface ReceivePackObjectStore {
    * @returns true if ancestor is reachable from descendant
    */
   isAncestor(ancestor: string, descendant: string): Promise<boolean>
+
+  /**
+   * Atomically update a ref using compare-and-swap semantics.
+   *
+   * Reads the current ref value and only writes the new value if the
+   * current value matches `expectedOldTarget`. This prevents lost updates
+   * from concurrent pushes.
+   *
+   * @param name - Full ref name (e.g., 'refs/heads/main')
+   * @param expectedOldTarget - Expected current value:
+   *   - A 40-char SHA means "ref must currently point to this SHA"
+   *   - `null` means "ref must not exist" (create-only)
+   *   - Empty string or ZERO_SHA means "ref must not exist"
+   * @param newTarget - New SHA to set the ref to
+   * @returns `true` if the swap succeeded, `false` if the current value didn't match
+   */
+  compareAndSwapRef?(name: string, expectedOldTarget: string | null, newTarget: string): Promise<boolean>
 }
 
 /**
@@ -2415,7 +2432,7 @@ export async function handleReceivePack(
     unpackStatus = 'ok'
   }
 
-  // Process commands - validate first, then apply
+  // Process commands - validate first, then apply with CAS if available
   const refResults: RefUpdateResult[] = []
 
   for (const cmd of parsed.commands) {
@@ -2433,12 +2450,28 @@ export async function handleReceivePack(
     }
 
     // Apply the update (validation passed)
-    if (cmd.type === 'delete') {
-      await store.deleteRef(cmd.refName)
+    if (store.compareAndSwapRef) {
+      // Use atomic compare-and-swap when available
+      const expectedOld = cmd.oldSha === ZERO_SHA ? null : cmd.oldSha
+      const swapOk = await store.compareAndSwapRef(cmd.refName, expectedOld, cmd.newSha)
+      if (!swapOk) {
+        refResults.push({
+          refName: cmd.refName,
+          success: false,
+          error: 'lock failed: ref has been updated concurrently',
+        })
+        continue
+      }
+      refResults.push({ refName: cmd.refName, success: true })
     } else {
-      await store.setRef(cmd.refName, cmd.newSha)
+      // Fallback to non-atomic path
+      if (cmd.type === 'delete') {
+        await store.deleteRef(cmd.refName)
+      } else {
+        await store.setRef(cmd.refName, cmd.newSha)
+      }
+      refResults.push({ refName: cmd.refName, success: true })
     }
-    refResults.push({ refName: cmd.refName, success: true })
   }
 
   // Build response

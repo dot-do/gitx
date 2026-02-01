@@ -110,11 +110,21 @@ export interface StoredObjectResult {
  * }
  * ```
  */
-export interface StorageBackend {
-  // ===========================================================================
-  // Content-Addressable Storage (CAS) Operations
-  // ===========================================================================
+// ===========================================================================
+// ISP: Segregated Backend Interfaces
+// ===========================================================================
 
+/**
+ * Content-Addressable Storage (CAS) backend interface.
+ *
+ * @description
+ * Provides operations for storing and retrieving Git objects by their SHA-1 hash.
+ * Objects are stored by their content hash, making storage idempotent and
+ * content-addressable. This is the minimal interface needed for object storage.
+ *
+ * Implementations: ParquetStore, FSxStorageAdapter (partial), SqliteObjectStore (via delegation)
+ */
+export interface CASBackend {
   /**
    * Store a Git object and return its SHA-1 hash.
    *
@@ -128,17 +138,6 @@ export interface StorageBackend {
    * @param type - Object type: 'blob', 'tree', 'commit', or 'tag'
    * @param content - Raw object content (without Git header)
    * @returns 40-character lowercase hexadecimal SHA-1 hash
-   *
-   * @example
-   * ```typescript
-   * // Store a blob
-   * const content = new TextEncoder().encode('file content')
-   * const sha = await backend.putObject('blob', content)
-   * console.log(`Stored as: ${sha}`)
-   *
-   * // Store a tree (content must be properly formatted)
-   * const treeSha = await backend.putObject('tree', treeContent)
-   * ```
    */
   putObject(type: ObjectType, content: Uint8Array): Promise<string>
 
@@ -152,17 +151,6 @@ export interface StorageBackend {
    *
    * @param sha - 40-character SHA-1 hash (case-insensitive)
    * @returns Object with type and content, or null if not found
-   *
-   * @example
-   * ```typescript
-   * const obj = await backend.getObject(sha)
-   * if (obj) {
-   *   if (obj.type === 'blob') {
-   *     const text = new TextDecoder().decode(obj.content)
-   *     console.log(text)
-   *   }
-   * }
-   * ```
    */
   getObject(sha: string): Promise<StoredObjectResult | null>
 
@@ -175,15 +163,6 @@ export interface StorageBackend {
    *
    * @param sha - 40-character SHA-1 hash (case-insensitive)
    * @returns True if the object exists, false otherwise
-   *
-   * @example
-   * ```typescript
-   * if (await backend.hasObject(sha)) {
-   *   console.log('Object exists')
-   * } else {
-   *   console.log('Need to fetch object')
-   * }
-   * ```
    */
   hasObject(sha: string): Promise<boolean>
 
@@ -195,24 +174,20 @@ export interface StorageBackend {
    * as deleting objects that are still referenced by other objects (e.g., blobs
    * referenced by trees) will corrupt the repository.
    *
-   * Note: Most Git operations don't delete objects directly. Use garbage
-   * collection instead for safe cleanup of unreferenced objects.
-   *
    * @param sha - 40-character SHA-1 hash (case-insensitive)
    * @returns Resolves when deletion is complete (no error if object didn't exist)
-   *
-   * @example
-   * ```typescript
-   * // Only delete if you're sure nothing references this object
-   * await backend.deleteObject(sha)
-   * ```
    */
   deleteObject(sha: string): Promise<void>
+}
 
-  // ===========================================================================
-  // Reference Operations
-  // ===========================================================================
-
+/**
+ * Reference storage backend interface.
+ *
+ * @description
+ * Provides operations for managing Git references (branches, tags, HEAD).
+ * References can be direct (pointing to a SHA) or symbolic (pointing to another ref).
+ */
+export interface RefBackend {
   /**
    * Get a reference by name.
    *
@@ -223,16 +198,6 @@ export interface StorageBackend {
    *
    * @param name - Full ref name (e.g., 'HEAD', 'refs/heads/main', 'refs/tags/v1.0.0')
    * @returns The reference or null if not found
-   *
-   * @example
-   * ```typescript
-   * const head = await backend.getRef('HEAD')
-   * if (head?.type === 'symbolic') {
-   *   console.log(`On branch: ${head.target}`)
-   * } else if (head?.type === 'direct') {
-   *   console.log(`Detached at: ${head.target}`)
-   * }
-   * ```
    */
   getRef(name: string): Promise<Ref | null>
 
@@ -243,28 +208,8 @@ export interface StorageBackend {
    * Sets a reference to point to a target (SHA for direct refs, ref name for symbolic).
    * Creates the ref if it doesn't exist, updates it if it does.
    *
-   * Note: This is a low-level operation. For atomic updates with compare-and-swap,
-   * use the RefStorage class instead.
-   *
    * @param name - Full ref name (e.g., 'HEAD', 'refs/heads/main')
    * @param ref - The reference object with name, target, and type
-   *
-   * @example
-   * ```typescript
-   * // Create/update a branch
-   * await backend.setRef('refs/heads/feature', {
-   *   name: 'refs/heads/feature',
-   *   target: commitSha,
-   *   type: 'direct'
-   * })
-   *
-   * // Update HEAD to point to a branch
-   * await backend.setRef('HEAD', {
-   *   name: 'HEAD',
-   *   target: 'refs/heads/main',
-   *   type: 'symbolic'
-   * })
-   * ```
    */
   setRef(name: string, ref: Ref): Promise<void>
 
@@ -276,15 +221,6 @@ export interface StorageBackend {
    * No error is thrown if the ref doesn't exist.
    *
    * @param name - Full ref name to delete
-   *
-   * @example
-   * ```typescript
-   * // Delete a branch
-   * await backend.deleteRef('refs/heads/old-feature')
-   *
-   * // Delete a tag
-   * await backend.deleteRef('refs/tags/old-release')
-   * ```
    */
   deleteRef(name: string): Promise<void>
 
@@ -297,161 +233,83 @@ export interface StorageBackend {
    *
    * @param prefix - Optional prefix to filter refs (e.g., 'refs/heads/', 'refs/tags/')
    * @returns Array of matching references
-   *
-   * @example
-   * ```typescript
-   * // List all branches
-   * const branches = await backend.listRefs('refs/heads/')
-   *
-   * // List all tags
-   * const tags = await backend.listRefs('refs/tags/')
-   *
-   * // List all refs
-   * const all = await backend.listRefs()
-   * ```
    */
   listRefs(prefix?: string): Promise<Ref[]>
+}
 
-  // ===========================================================================
-  // Raw File Operations
-  // ===========================================================================
-
+/**
+ * File storage backend interface.
+ *
+ * @description
+ * Provides raw file and directory operations for Git repository files
+ * that are not content-addressed objects (e.g., index, config, hooks).
+ * Paths are relative to the Git directory (.git/).
+ */
+export interface FileBackend {
   /**
    * Read a raw file from the repository.
    *
-   * @description
-   * Reads a file that isn't a Git object (e.g., index, config, hooks).
-   * Paths are relative to the Git directory (.git/).
-   * Returns null if the file doesn't exist.
-   *
    * @param path - Path relative to Git directory (e.g., 'index', 'config', 'hooks/pre-commit')
    * @returns File contents as Uint8Array, or null if not found
-   *
-   * @example
-   * ```typescript
-   * // Read the index file
-   * const indexData = await backend.readFile('index')
-   *
-   * // Read config
-   * const config = await backend.readFile('config')
-   * if (config) {
-   *   const text = new TextDecoder().decode(config)
-   *   console.log(text)
-   * }
-   * ```
    */
   readFile(path: string): Promise<Uint8Array | null>
 
   /**
    * Write a raw file to the repository.
    *
-   * @description
-   * Writes a file that isn't a Git object (e.g., index, config).
-   * Paths are relative to the Git directory (.git/).
-   * Creates parent directories if they don't exist.
-   * Overwrites existing files.
-   *
    * @param path - Path relative to Git directory
    * @param content - File contents as Uint8Array
-   *
-   * @example
-   * ```typescript
-   * // Write config
-   * const config = new TextEncoder().encode('[core]\n\trepositoryformatversion = 0\n')
-   * await backend.writeFile('config', config)
-   *
-   * // Write index
-   * await backend.writeFile('index', indexData)
-   * ```
    */
   writeFile(path: string, content: Uint8Array): Promise<void>
 
   /**
    * Delete a raw file from the repository.
    *
-   * @description
-   * Removes a file from the Git directory. No error if file doesn't exist.
-   *
    * @param path - Path relative to Git directory
-   *
-   * @example
-   * ```typescript
-   * // Remove index.lock after crash
-   * await backend.deleteFile('index.lock')
-   * ```
    */
   deleteFile(path: string): Promise<void>
 
   /**
    * Check if a file or directory exists.
    *
-   * @description
-   * Checks for the existence of a file or directory at the given path.
-   * Paths are relative to the Git directory.
-   *
    * @param path - Path relative to Git directory
    * @returns True if the path exists (file or directory), false otherwise
-   *
-   * @example
-   * ```typescript
-   * if (await backend.exists('index.lock')) {
-   *   throw new Error('Another git process is running')
-   * }
-   *
-   * if (!await backend.exists('objects')) {
-   *   console.log('Not a valid git repository')
-   * }
-   * ```
    */
   exists(path: string): Promise<boolean>
-
-  // ===========================================================================
-  // Directory Operations
-  // ===========================================================================
 
   /**
    * List contents of a directory.
    *
-   * @description
-   * Returns the names of files and directories within the specified directory.
-   * Paths are relative to the Git directory. Returns an empty array if the
-   * directory doesn't exist.
-   *
    * @param path - Path relative to Git directory
    * @returns Array of file and directory names (not full paths)
-   *
-   * @example
-   * ```typescript
-   * // List pack files
-   * const packDir = await backend.readdir('objects/pack')
-   * const packs = packDir.filter(f => f.endsWith('.pack'))
-   *
-   * // List loose object prefixes
-   * const objectDirs = await backend.readdir('objects')
-   * ```
    */
   readdir(path: string): Promise<string[]>
 
   /**
    * Create a directory.
    *
-   * @description
-   * Creates a directory at the specified path. If `recursive` is true,
-   * creates parent directories as needed. No error if directory already exists.
-   *
    * @param path - Path relative to Git directory
    * @param options - Options for directory creation
    * @param options.recursive - If true, create parent directories as needed
-   *
-   * @example
-   * ```typescript
-   * // Create objects directory structure
-   * await backend.mkdir('objects/pack', { recursive: true })
-   *
-   * // Create refs structure
-   * await backend.mkdir('refs/heads', { recursive: true })
-   * await backend.mkdir('refs/tags', { recursive: true })
-   * ```
    */
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
 }
+
+// ===========================================================================
+// Combined Interface (backward-compatible)
+// ===========================================================================
+
+/**
+ * Full storage backend interface for Git operations.
+ *
+ * @description
+ * This interface combines all three segregated backend interfaces into a single
+ * unified API. Existing code that depends on `StorageBackend` continues to work
+ * unchanged. New code should prefer the narrower interfaces (`CASBackend`,
+ * `RefBackend`, `FileBackend`) to depend only on what it actually uses.
+ *
+ * @see {@link CASBackend} for content-addressable storage operations
+ * @see {@link RefBackend} for reference management operations
+ * @see {@link FileBackend} for raw file and directory operations
+ */
+export interface StorageBackend extends CASBackend, RefBackend, FileBackend {}

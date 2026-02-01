@@ -13,6 +13,7 @@ import type {
 } from './types'
 import type { DurableObjectStorage } from './schema'
 import type { ParquetStore } from '../storage/parquet-store'
+import { EXPORT_COMMITS_SCHEMA } from '../storage/parquet-schemas'
 import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
 import { SqliteObjectStore } from './object-store'
@@ -375,24 +376,7 @@ export async function handleExport(
         const buffer = parquetWriteBuffer({
           codec,
           ...(useLZ4 && { compressors: lz4Compressors }),
-          // Custom schema with VARIANT type for parent_shas
-          schema: [
-            { name: 'root', num_children: 11 },
-            { name: 'sha', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'tree_sha', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            // VARIANT group for parent_shas (semi-structured array)
-            { name: 'parent_shas', repetition_type: 'OPTIONAL', num_children: 2, logical_type: { type: 'VARIANT' } },
-            { name: 'metadata', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED' },
-            { name: 'value', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' },
-            { name: 'author_name', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'author_email', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'author_date', type: 'INT64', repetition_type: 'REQUIRED', logical_type: { type: 'TIMESTAMP', isAdjustedToUTC: true, unit: 'MILLIS' } },
-            { name: 'committer_name', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'committer_email', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'committer_date', type: 'INT64', repetition_type: 'REQUIRED', logical_type: { type: 'TIMESTAMP', isAdjustedToUTC: true, unit: 'MILLIS' } },
-            { name: 'message', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-            { name: 'repository', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
-          ],
+          schema: EXPORT_COMMITS_SCHEMA,
           columnData: [
             { name: 'sha', data: commits.map(c => c.sha) },
             { name: 'tree_sha', data: commits.map(c => c.treeSha) },

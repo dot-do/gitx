@@ -1,7 +1,7 @@
 /**
  * @fileoverview R2 Parquet Object Store
  *
- * Implements the StorageBackend interface using R2 Parquet files as the
+ * Implements the CASBackend interface using R2 Parquet files as the
  * primary storage backend for git objects. All objects are stored as
  * VARIANT-encoded rows in append-only Parquet files on R2.
  *
@@ -16,7 +16,7 @@
 import { parquetWriteBuffer } from 'hyparquet-writer'
 import { parquetReadObjects } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
-import type { StorageBackend, StoredObjectResult } from './backend'
+import type { CASBackend, StoredObjectResult } from './backend'
 import {
   encodeObjectBatch,
   detectStorageMode,
@@ -29,22 +29,10 @@ interface AsyncBuffer {
   byteLength: number
   slice(start: number, end?: number): ArrayBuffer
 }
+import { GIT_OBJECTS_SCHEMA } from './parquet-schemas'
 import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
-import type { IcebergTableMetadata } from '../iceberg/metadata'
-import {
-  createTableMetadata,
-  addSnapshot,
-  serializeMetadata,
-} from '../iceberg/metadata'
-import {
-  createManifestEntry,
-  createManifest,
-  serializeManifest,
-  createManifestList,
-  serializeManifestList,
-} from '../iceberg/manifest'
 
 // ============================================================================
 // Type Guards
@@ -77,6 +65,30 @@ const FLUSH_BYTES_THRESHOLD = DEFAULT_FLUSH_BYTES_THRESHOLD
 // Types
 // ============================================================================
 
+/**
+ * Event emitted after a successful flush of buffered objects to Parquet.
+ * Consumers (e.g., Iceberg metadata generators) can react to this event
+ * without ParquetStore needing to know about their existence.
+ */
+export interface FlushEvent {
+  /** R2 key of the newly written Parquet file */
+  parquetKey: string
+  /** Size of the Parquet file in bytes */
+  fileSizeBytes: number
+  /** Number of records in the Parquet file */
+  recordCount: number
+  /** R2 bucket reference for writing derived artifacts */
+  r2: R2Bucket
+  /** Repository prefix in R2 */
+  prefix: string
+}
+
+/**
+ * Callback invoked after each successful flush.
+ * Errors thrown by the handler are logged but do not fail the flush.
+ */
+export type OnFlushHandler = (event: FlushEvent) => Promise<void>
+
 export interface ParquetStoreOptions {
   /** R2 bucket for Parquet files and large objects */
   r2: R2Bucket
@@ -90,8 +102,11 @@ export interface ParquetStoreOptions {
   flushBytesThreshold?: number
   /** Compression codec */
   codec?: 'SNAPPY' | 'LZ4_RAW' | 'UNCOMPRESSED'
-  /** Enable Iceberg metadata generation on flush */
-  icebergEnabled?: boolean
+  /**
+   * Optional callback invoked after each successful flush.
+   * Use this to hook in Iceberg metadata generation or other post-flush logic.
+   */
+  onFlush?: OnFlushHandler
 }
 
 /** Buffered object awaiting flush to Parquet */
@@ -103,39 +118,17 @@ interface BufferedObject {
 }
 
 // ============================================================================
-// Parquet Schema for Git Objects
-// ============================================================================
-
-const GIT_OBJECTS_SCHEMA = [
-  { name: 'root', num_children: 11 },
-  { name: 'sha', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
-  { name: 'type', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
-  { name: 'size', type: 'INT64' as const, repetition_type: 'REQUIRED' as const },
-  { name: 'storage', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
-  // VARIANT-encoded data stored as flat BYTE_ARRAY columns
-  { name: 'variant_metadata', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const },
-  { name: 'variant_value', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const },
-  // Raw object data for inline storage (enables fast reads without VARIANT decoding)
-  { name: 'raw_data', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const },
-  { name: 'path', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
-  // Shredded commit fields (null for non-commit objects)
-  { name: 'author_name', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
-  { name: 'author_date', type: 'INT64' as const, repetition_type: 'OPTIONAL' as const },
-  { name: 'message', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
-]
-
-// ============================================================================
 // ParquetStore Class
 // ============================================================================
 
 /**
- * R2 Parquet-backed StorageBackend for git objects.
+ * R2 Parquet-backed CASBackend for git objects.
  *
  * Objects are written to append-only Parquet files on R2.
  * Reads use a bloom filter for fast existence checks, falling back
  * to R2 Parquet file scanning.
  */
-export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObject' | 'hasObject' | 'deleteObject'> {
+export class ParquetStore implements CASBackend {
   private r2: R2Bucket
   private prefix: string
   private bloomCache: BloomCache
@@ -148,8 +141,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   private tombstones: Set<string> = new Set()
   private initialized = false
   private initPromise?: Promise<void>
-  private icebergEnabled: boolean
-  private icebergMetadata: IcebergTableMetadata | null = null
+  private onFlush: OnFlushHandler | undefined
   private _compactionNeeded = false
 
   constructor(options: ParquetStoreOptions) {
@@ -159,7 +151,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     this.flushThreshold = options.flushThreshold ?? FLUSH_THRESHOLD
     this.flushBytesThreshold = options.flushBytesThreshold ?? FLUSH_BYTES_THRESHOLD
     this.codec = options.codec ?? 'SNAPPY'
-    this.icebergEnabled = options.icebergEnabled ?? false
+    this.onFlush = options.onFlush
   }
 
   /**
@@ -319,76 +311,22 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     // Persist bloom filter
     await this.bloomCache.persist()
 
-    // Iceberg metadata generation
-    if (this.icebergEnabled) {
-      await this.updateIcebergMetadata(key, buffer.byteLength, objects.length)
+    // Invoke post-flush handler (e.g., Iceberg metadata generation)
+    if (this.onFlush) {
+      try {
+        await this.onFlush({
+          parquetKey: key,
+          fileSizeBytes: buffer.byteLength,
+          recordCount: objects.length,
+          r2: this.r2,
+          prefix: this.prefix,
+        })
+      } catch (err) {
+        console.error('[ParquetStore] onFlush handler failed:', err)
+      }
     }
 
     return key
-  }
-
-  /**
-   * Generate and write Iceberg manifest, manifest list, and table metadata
-   * for a newly flushed Parquet file.
-   */
-  private async updateIcebergMetadata(
-    parquetKey: string,
-    fileSizeBytes: number,
-    recordCount: number,
-  ): Promise<void> {
-    // Use a combination of timestamp and random bits to ensure unique snapshot IDs
-    const snapshotId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
-
-    // (a) Create a manifest entry for the new Parquet file
-    const entry = createManifestEntry({
-      filePath: parquetKey,
-      fileSizeBytes,
-      recordCount,
-    })
-
-    // (b) Create a manifest containing that entry
-    const manifestId = crypto.randomUUID()
-    const manifestPath = `${this.prefix}/iceberg/manifests/${manifestId}.json`
-    const manifest = createManifest({
-      entries: [entry],
-      schemaId: 0,
-      manifestPath,
-    })
-
-    // (c) Write manifest JSON to R2
-    await this.r2.put(manifestPath, serializeManifest(manifest))
-
-    // (d) Create manifest list
-    const manifestListId = crypto.randomUUID()
-    const manifestListPath = `${this.prefix}/iceberg/manifest-lists/${manifestListId}.json`
-    const manifestList = createManifestList({
-      manifests: [manifest],
-      snapshotId,
-    })
-
-    // (e) Write manifest list to R2
-    await this.r2.put(manifestListPath, serializeManifestList(manifestList))
-
-    // (f) Load or create table metadata, add snapshot pointing to manifest list
-    if (!this.icebergMetadata) {
-      this.icebergMetadata = createTableMetadata({
-        location: `${this.prefix}/iceberg`,
-      })
-    }
-
-    this.icebergMetadata = addSnapshot(this.icebergMetadata, {
-      manifestListPath,
-      snapshotId,
-      summary: {
-        operation: 'append',
-        'added-data-files': '1',
-        'added-records': String(recordCount),
-      },
-    })
-
-    // (g) Write metadata.json to R2
-    const metadataPath = `${this.prefix}/iceberg/metadata.json`
-    await this.r2.put(metadataPath, serializeMetadata(this.icebergMetadata))
   }
 
   // ===========================================================================

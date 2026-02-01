@@ -10,7 +10,8 @@
 
 import type { GitBackend, GitObject, Ref, PackedRefs } from '../core/backend'
 import type { ObjectType } from '../types/objects'
-import { SqliteObjectStore, type CASBackend } from './object-store'
+import { SqliteObjectStore } from './object-store'
+import type { CASBackend } from '../storage/backend'
 import { SchemaManager, type DurableObjectStorage } from './schema'
 import { parsePackHeader, decodeTypeAndSize, PackObjectType, packObjectTypeToString } from '../pack/format'
 import { applyDelta } from '../pack/delta'
@@ -132,6 +133,83 @@ export class GitBackendAdapter implements GitBackend {
     // Update cache if populated
     if (this.refCache !== null) {
       this.refCache.delete(name)
+    }
+  }
+
+  /**
+   * Atomically update a ref using compare-and-swap semantics.
+   *
+   * Reads the current ref value inside a SQLite transaction and only
+   * writes the new value if the current value matches `expectedOldTarget`.
+   *
+   * @param name - Full ref name (e.g., 'refs/heads/main')
+   * @param expectedOldTarget - Expected current value of the ref:
+   *   - A 40-char SHA means "ref must currently point to this SHA"
+   *   - `null` means "ref must not exist" (create-only)
+   *   - Empty string `""` means "ref must not exist" (Git zero-SHA convention)
+   * @param newTarget - New SHA to set the ref to. Empty or zero-SHA means delete.
+   * @returns `true` if the swap succeeded, `false` if the current value didn't match
+   */
+  async compareAndSwapRef(
+    name: string,
+    expectedOldTarget: string | null,
+    newTarget: string
+  ): Promise<boolean> {
+    await this.ensureSchema()
+
+    const ZERO_SHA = '0000000000000000000000000000000000000000'
+    const isDelete = !newTarget || newTarget === ZERO_SHA
+    const expectMissing = expectedOldTarget === null || expectedOldTarget === '' || expectedOldTarget === ZERO_SHA
+
+    // Use a SQLite transaction for atomicity
+    this.storage.sql.exec('BEGIN TRANSACTION')
+    try {
+      // Read current value within the transaction
+      const result = this.storage.sql.exec(
+        'SELECT target FROM refs WHERE name = ?',
+        name
+      )
+      const rows = result.toArray() as { target: string }[]
+      const currentTarget = rows.length > 0 ? rows[0]!.target : null
+
+      // Check if current state matches expectation
+      if (expectMissing) {
+        // Caller expects ref does not exist
+        if (currentTarget !== null) {
+          this.storage.sql.exec('ROLLBACK')
+          return false
+        }
+      } else {
+        // Caller expects ref exists with specific value
+        if (currentTarget === null || currentTarget !== expectedOldTarget!.toLowerCase()) {
+          this.storage.sql.exec('ROLLBACK')
+          return false
+        }
+      }
+
+      // Apply the update
+      if (isDelete) {
+        this.storage.sql.exec('DELETE FROM refs WHERE name = ?', name)
+      } else {
+        const target = newTarget.toLowerCase()
+        this.storage.sql.exec(
+          'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
+          name,
+          target,
+          'sha',
+          Date.now()
+        )
+      }
+
+      this.storage.sql.exec('COMMIT')
+
+      // Invalidate cache after successful CAS
+      this.refCache = null
+
+      return true
+    } catch (error) {
+      this.storage.sql.exec('ROLLBACK')
+      throw error
     }
   }
 

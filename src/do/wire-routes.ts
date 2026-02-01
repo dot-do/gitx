@@ -148,43 +148,54 @@ class DORepositoryProvider implements RepositoryProvider {
       }
     }
 
-    // Step 2: Apply ref updates
+    // Step 2: Apply ref updates using atomic compare-and-swap
     for (const cmd of commands) {
       try {
         const ZERO_SHA = '0000000000000000000000000000000000000000'
+        const isDelete = cmd.newSha === ZERO_SHA
+        const isCreate = cmd.oldSha === ZERO_SHA
 
-        if (cmd.newSha === ZERO_SHA) {
-          // Delete ref
-          this.storage.sql.exec('DELETE FROM refs WHERE name = ?', cmd.refName)
-          refResults.push({ refName: cmd.refName, success: true })
-        } else {
-          // Create or update ref
-          // Verify old SHA matches if this is an update (not a create)
-          if (cmd.oldSha !== ZERO_SHA) {
-            const existing = this.storage.sql.exec(
-              'SELECT target FROM refs WHERE name = ?',
-              cmd.refName
-            ).toArray() as { target: string }[]
+        // Use a SQLite transaction for atomic compare-and-swap
+        this.storage.sql.exec('BEGIN TRANSACTION')
+        try {
+          // Read current ref value within transaction
+          const existing = this.storage.sql.exec(
+            'SELECT target FROM refs WHERE name = ?',
+            cmd.refName
+          ).toArray() as { target: string }[]
+          const currentSha = existing.length > 0 ? existing[0]!.target : ZERO_SHA
 
-            const currentSha = existing.length > 0 ? existing[0]!.target : ZERO_SHA
-            if (currentSha !== cmd.oldSha) {
-              refResults.push({
-                refName: cmd.refName,
-                success: false,
-                error: 'lock failed: ref has been updated',
-              })
-              continue
-            }
+          // Verify old SHA matches (compare step)
+          if (currentSha !== cmd.oldSha) {
+            this.storage.sql.exec('ROLLBACK')
+            refResults.push({
+              refName: cmd.refName,
+              success: false,
+              error: isCreate
+                ? 'lock failed: ref already exists'
+                : 'lock failed: ref has been updated',
+            })
+            continue
           }
 
-          this.storage.sql.exec(
-            'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
-            cmd.refName,
-            cmd.newSha.toLowerCase(),
-            'sha',
-            Date.now()
-          )
+          // Apply the update (swap step)
+          if (isDelete) {
+            this.storage.sql.exec('DELETE FROM refs WHERE name = ?', cmd.refName)
+          } else {
+            this.storage.sql.exec(
+              'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
+              cmd.refName,
+              cmd.newSha.toLowerCase(),
+              'sha',
+              Date.now()
+            )
+          }
+
+          this.storage.sql.exec('COMMIT')
           refResults.push({ refName: cmd.refName, success: true })
+        } catch (txError) {
+          this.storage.sql.exec('ROLLBACK')
+          throw txError
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'ref update failed'

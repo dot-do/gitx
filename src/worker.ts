@@ -11,6 +11,7 @@
 import { Hono } from 'hono'
 import { GitRepoDO, GitRepoDOSQL } from './do/GitRepoDO'
 import { GitHubWebhookHandler } from './webhooks'
+import { authMiddleware } from './worker-auth'
 
 // ============================================================================
 // Environment Interface
@@ -31,6 +32,10 @@ interface Env {
 
   // Secrets
   GITHUB_WEBHOOK_SECRET: string
+
+  // Auth (optional — if not set, all requests pass through)
+  AUTH_TOKEN?: string
+  API_KEYS?: string
 }
 
 // ============================================================================
@@ -38,6 +43,9 @@ interface Env {
 // ============================================================================
 
 const app = new Hono<{ Bindings: Env }>()
+
+// Authentication middleware — enforces Bearer/Basic auth when AUTH_TOKEN or API_KEYS is set
+app.use('*', authMiddleware())
 
 // Health check
 app.get('/health', (c) => {

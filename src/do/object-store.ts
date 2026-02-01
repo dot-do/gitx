@@ -62,15 +62,9 @@ import {
   serializeTreeEntries,
   parseTreeEntries
 } from '../utils/tree'
-import type { StorageBackend } from '../storage/backend'
+import type { CASBackend } from '../storage/backend'
+export type { CASBackend } from '../storage/backend'
 import type { BasicObjectStore } from '../types/storage'
-
-/**
- * Minimal CAS (content-addressable storage) interface needed by ObjectStore.
- * ParquetStore and other partial backends can satisfy this without implementing
- * the full StorageBackend (refs, files, etc.).
- */
-export type CASBackend = Pick<StorageBackend, 'putObject' | 'getObject' | 'hasObject' | 'deleteObject'>
 
 // ============================================================================
 // Constants

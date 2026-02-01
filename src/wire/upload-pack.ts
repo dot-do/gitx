@@ -39,7 +39,11 @@
 
 import type { ObjectType } from '../types/objects'
 import { encodePktLine, FLUSH_PKT } from './pkt-line'
-import * as pako from 'pako'
+import {
+  generatePackfile as generatePackfileFromObjects,
+  type PackableObject as PackGenObject,
+} from '../pack/generation'
+import { stringToPackObjectType } from '../pack/format'
 
 // ============================================================================
 // Constants
@@ -53,38 +57,6 @@ const decoder = new TextDecoder()
 
 /** SHA-1 regex pattern for validation */
 const SHA1_REGEX = /^[0-9a-f]{40}$/i
-
-/** Packfile magic signature bytes "PACK" */
-const PACK_SIGNATURE = new Uint8Array([0x50, 0x41, 0x43, 0x4b]) // P A C K
-
-/** Packfile version number */
-const PACK_VERSION = 2
-
-/** Packfile header size in bytes */
-const PACK_HEADER_SIZE = 12
-
-/**
- * Git object type numbers for packfile encoding.
- * @see https://git-scm.com/docs/pack-format
- */
-const PackObjectType = {
-  COMMIT: 1,
-  TREE: 2,
-  BLOB: 3,
-  TAG: 4,
-  OFS_DELTA: 6,
-  REF_DELTA: 7
-} as const
-
-/**
- * Mapping from Git object type names to packfile type numbers.
- */
-const OBJECT_TYPE_MAP: Record<ObjectType, number> = {
-  commit: PackObjectType.COMMIT,
-  tree: PackObjectType.TREE,
-  blob: PackObjectType.BLOB,
-  tag: PackObjectType.TAG
-}
 
 /** Default server agent string */
 const DEFAULT_AGENT = 'gitx.do/1.0'
@@ -406,22 +378,6 @@ function concatenateBuffers(parts: Uint8Array[]): Uint8Array {
   }
 
   return result
-}
-
-/**
- * Calculate SHA-1 hash using Web Crypto API.
- *
- * @param data - Data to hash
- * @returns SHA-1 hash as Uint8Array (20 bytes)
- *
- * @internal
- */
-async function sha1(data: Uint8Array): Promise<Uint8Array> {
-  // Create a copy as ArrayBuffer to satisfy BufferSource type
-  const buffer = new ArrayBuffer(data.length)
-  new Uint8Array(buffer).set(data)
-  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
-  return new Uint8Array(hashBuffer)
 }
 
 /**
@@ -1349,11 +1305,10 @@ export async function generatePackfile(
   // Handle empty wants
   if (wants.length === 0) {
     // Return minimal empty packfile (header + checksum only)
-    const emptyPack = createPackfileHeader(0)
-    const checksum = await sha1(emptyPack)
+    const emptyPackfile = generatePackfileFromObjects([])
 
     return {
-      packfile: concatenateBuffers([emptyPack, checksum]),
+      packfile: emptyPackfile,
       objectCount: 0,
       includedObjects: []
     }
@@ -1454,81 +1409,14 @@ export async function generateThinPack(
 // ============================================================================
 
 /**
- * Create packfile header.
- *
- * @description
- * Creates a 12-byte packfile header containing:
- * - 4 bytes: "PACK" magic signature
- * - 4 bytes: Version number (2) in big-endian
- * - 4 bytes: Object count in big-endian
- *
- * @param objectCount - Number of objects in the packfile
- * @returns 12-byte header
- *
- * @internal
- */
-function createPackfileHeader(objectCount: number): Uint8Array {
-  const header = new Uint8Array(PACK_HEADER_SIZE)
-
-  // PACK signature
-  header.set(PACK_SIGNATURE, 0)
-
-  // Version (big-endian 32-bit)
-  header[4] = 0
-  header[5] = 0
-  header[6] = 0
-  header[7] = PACK_VERSION
-
-  // Object count (big-endian 32-bit)
-  header[8] = (objectCount >> 24) & 0xff
-  header[9] = (objectCount >> 16) & 0xff
-  header[10] = (objectCount >> 8) & 0xff
-  header[11] = objectCount & 0xff
-
-  return header
-}
-
-/**
- * Encode object header in packfile format.
- *
- * @description
- * Encodes the object type and uncompressed size using Git's variable-length
- * encoding. The format is:
- * - First byte: bits 4-6 contain type, bits 0-3 contain size LSBs
- * - Subsequent bytes: 7 bits of size each, MSB set if more bytes follow
- *
- * @param type - Object type number (1=commit, 2=tree, 3=blob, 4=tag)
- * @param size - Uncompressed data size in bytes
- * @returns Variable-length encoded header
- *
- * @internal
- */
-function encodePackfileObjectHeader(type: number, size: number): Uint8Array {
-  const bytes: number[] = []
-
-  // First byte: type (bits 4-6) and size (bits 0-3)
-  let byte = ((type & 0x7) << 4) | (size & 0x0f)
-  size >>= 4
-
-  // Continue encoding size in 7-bit chunks
-  while (size > 0) {
-    bytes.push(byte | 0x80) // Set MSB to indicate more bytes follow
-    byte = size & 0x7f
-    size >>= 7
-  }
-
-  bytes.push(byte) // Final byte (MSB clear)
-  return new Uint8Array(bytes)
-}
-
-/**
  * Build complete packfile from objects.
  *
  * @description
- * Assembles a complete Git packfile from the given objects:
- * 1. Creates 12-byte header (signature + version + count)
- * 2. Encodes each object with type/size header + zlib-compressed data
- * 3. Appends 20-byte SHA-1 checksum of all preceding data
+ * Assembles a complete Git packfile from the given objects using the
+ * pack generation module. The packfile includes:
+ * 1. 12-byte header (signature + version + count)
+ * 2. Each object encoded with type/size header + zlib-compressed data
+ * 3. 20-byte SHA-1 checksum of all preceding data
  *
  * @param objects - Array of objects to include in the packfile
  * @param _onProgress - Progress callback (reserved for future delta compression progress)
@@ -1542,32 +1430,16 @@ async function buildPackfile(
   _onProgress?: ProgressCallback,
   _clientHasObjects?: string[]
 ): Promise<Uint8Array> {
-  const parts: Uint8Array[] = []
+  // Convert to pack generation module's PackableObject format
+  const packObjects: PackGenObject[] = objects.map(obj => ({
+    sha: obj.sha,
+    type: stringToPackObjectType(obj.type),
+    data: obj.data,
+  }))
 
-  // Header
-  parts.push(createPackfileHeader(objects.length))
-
-  // Encode each object
-  for (const obj of objects) {
-    const typeNum = OBJECT_TYPE_MAP[obj.type]
-
-    // Compress data using zlib
-    const compressed = pako.deflate(obj.data)
-
-    // Object header (variable-length encoding of type and size)
-    const header = encodePackfileObjectHeader(typeNum, obj.data.length)
-    parts.push(header)
-    parts.push(compressed)
-  }
-
-  // Concatenate all parts (without checksum yet)
-  const packData = concatenateBuffers(parts)
-
-  // Calculate SHA-1 checksum of pack data
-  const checksum = await sha1(packData)
-
-  // Final packfile with checksum appended
-  return concatenateBuffers([packData, checksum])
+  // Use the pack generation module to produce the complete packfile
+  // (header + compressed objects + SHA-1 checksum)
+  return generatePackfileFromObjects(packObjects)
 }
 
 // ============================================================================
