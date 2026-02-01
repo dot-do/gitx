@@ -103,7 +103,7 @@ export interface DurableObjectStorage {
  * }
  * ```
  */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /**
  * Complete SQL schema definition.
@@ -238,6 +238,54 @@ CREATE INDEX IF NOT EXISTS idx_exec_enabled ON exec(enabled);
 const REQUIRED_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'refs', 'git', 'git_branches', 'git_content', 'exec']
 
 // ============================================================================
+// Thin Coordinator Schema (v2)
+// ============================================================================
+
+/**
+ * Minimal schema for the thin DO coordinator pattern.
+ *
+ * Only includes:
+ * - `refs`: Git references (name -> sha) for ref locking
+ * - `bloom_filter`: Persisted bloom filter for SHA existence checks
+ * - `sha_cache`: Exact SHA cache for recently-seen objects
+ *
+ * Objects are stored externally in R2 Parquet files via ParquetStore.
+ * The legacy tables (objects, object_index, hot_objects, wal) are
+ * retained via SCHEMA_SQL for migration but not required by the thin coordinator.
+ */
+export const THIN_SCHEMA_SQL = `
+-- Refs table (authoritative ref storage)
+CREATE TABLE IF NOT EXISTS refs (name TEXT PRIMARY KEY, target TEXT NOT NULL, type TEXT DEFAULT 'sha', updated_at INTEGER);
+
+-- Bloom filter persistence for SHA existence checks
+CREATE TABLE IF NOT EXISTS bloom_filter (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  filter_data BLOB NOT NULL,
+  item_count INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
+-- SHA existence cache (exact lookups alongside bloom filter)
+CREATE TABLE IF NOT EXISTS sha_cache (
+  sha TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  added_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sha_cache_added ON sha_cache(added_at);
+`
+
+/**
+ * Required tables for the thin coordinator schema.
+ */
+const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache']
+
+/**
+ * Optional legacy tables that may exist during migration.
+ */
+export const LEGACY_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'git', 'git_branches', 'git_content', 'exec']
+
+// ============================================================================
 // SchemaManager Class
 // ============================================================================
 
@@ -344,5 +392,77 @@ export class SchemaManager {
     const tableNames = tables.map(t => t.name)
 
     return REQUIRED_TABLES.every(table => tableNames.includes(table))
+  }
+}
+
+// ============================================================================
+// ThinSchemaManager Class
+// ============================================================================
+
+/**
+ * Schema manager for the thin DO coordinator pattern.
+ *
+ * Only initializes the minimal refs + bloom filter + sha_cache tables.
+ * Legacy tables are NOT created unless explicitly requested via
+ * initializeLegacySchema().
+ */
+export class ThinSchemaManager {
+  constructor(private storage: DurableObjectStorage) {}
+
+  /**
+   * Initialize the thin coordinator schema.
+   */
+  async initializeSchema(): Promise<void> {
+    this.storage.sql.exec(THIN_SCHEMA_SQL)
+  }
+
+  /**
+   * Initialize the full legacy schema (for migration period).
+   */
+  async initializeLegacySchema(): Promise<void> {
+    this.storage.sql.exec(SCHEMA_SQL)
+  }
+
+  /**
+   * Get the schema version. Returns 2 for thin, 1 for legacy, 0 for missing.
+   */
+  async getSchemaVersion(): Promise<number> {
+    const isThin = await this.validateSchema()
+    if (isThin) return SCHEMA_VERSION
+
+    // Check if legacy schema is present
+    const result = this.storage.sql.exec(
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    )
+    const tables = result.toArray() as { name: string }[]
+    const tableNames = tables.map(t => t.name)
+    const hasLegacy = REQUIRED_TABLES.every(table => tableNames.includes(table))
+    return hasLegacy ? 1 : 0
+  }
+
+  /**
+   * Validate that all required thin coordinator tables exist.
+   */
+  async validateSchema(): Promise<boolean> {
+    const result = this.storage.sql.exec(
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    )
+    const tables = result.toArray() as { name: string }[]
+    const tableNames = tables.map(t => t.name)
+
+    return THIN_REQUIRED_TABLES.every(table => tableNames.includes(table))
+  }
+
+  /**
+   * Check if legacy tables exist (for migration detection).
+   */
+  async hasLegacyTables(): Promise<boolean> {
+    const result = this.storage.sql.exec(
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    )
+    const tables = result.toArray() as { name: string }[]
+    const tableNames = tables.map(t => t.name)
+
+    return LEGACY_TABLES.some(table => tableNames.includes(table))
   }
 }

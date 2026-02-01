@@ -42,6 +42,8 @@ import type {
 import { GitRepoDOError, GitRepoDOErrorCode } from './types'
 import { createLogger } from './logger'
 import { setupRoutes, type GitRepoDOInstance } from './routes'
+import { ThinSchemaManager } from './schema'
+import { ParquetStore } from '../storage/parquet-store'
 
 /**
  * Creates an FsCapability adapter that uses the FSX service binding.
@@ -247,6 +249,8 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
   private _events: StoreAccessor
   private _fs?: FsCapability
   private _logger: Logger
+  private _parquetStore?: ParquetStore
+  private _thinSchema?: ThinSchemaManager
 
   /** Start time for uptime tracking */
   readonly _startTime: number = Date.now()
@@ -270,6 +274,20 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       // Use the DO ID as the namespace for FSX operations
       this._fs = createFsxAdapter(env.FSX, state.id.toString())
       this._logger.debug('FSX adapter initialized')
+    }
+
+    // Initialize thin schema manager
+    this._thinSchema = new ThinSchemaManager({ sql: state.storage.sql })
+
+    // Initialize ParquetStore when ANALYTICS_BUCKET is available
+    if (env.ANALYTICS_BUCKET) {
+      this._parquetStore = new ParquetStore({
+        r2: env.ANALYTICS_BUCKET,
+        sql: { sql: state.storage.sql },
+        prefix: `repos/${state.id.toString()}`,
+      })
+      this._capabilities.add('parquet')
+      this._logger.debug('ParquetStore initialized with R2 backend')
     }
 
     // Initialize router with extracted route handlers
@@ -364,6 +382,20 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    */
   getAnalyticsBucket(): R2Bucket | undefined {
     return this.env.ANALYTICS_BUCKET
+  }
+
+  /**
+   * Get the ParquetStore instance (if ANALYTICS_BUCKET is configured).
+   */
+  getParquetStore(): ParquetStore | undefined {
+    return this._parquetStore
+  }
+
+  /**
+   * Get the thin schema manager.
+   */
+  getThinSchema(): ThinSchemaManager | undefined {
+    return this._thinSchema
   }
 
   // ===========================================================================

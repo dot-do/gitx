@@ -64,6 +64,13 @@ import {
 } from '../utils/tree'
 import type { StorageBackend } from '../storage/backend'
 
+/**
+ * Minimal CAS (content-addressable storage) interface needed by ObjectStore.
+ * ParquetStore and other partial backends can satisfy this without implementing
+ * the full StorageBackend (refs, files, etc.).
+ */
+export type CASBackend = Pick<StorageBackend, 'putObject' | 'getObject' | 'hasObject' | 'deleteObject'>
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -182,7 +189,7 @@ export interface ObjectStoreOptions {
    * This enables gradual migration to different storage implementations.
    * @default undefined (uses SQLite directly)
    */
-  backend?: StorageBackend
+  backend?: CASBackend
 }
 
 /**
@@ -315,7 +322,7 @@ export class ObjectStore {
   private hashCache: HashCache
   private options: ObjectStoreOptions
   private logger?: ObjectStoreLogger
-  private backend: StorageBackend | null
+  private backend: CASBackend | null
 
   // Metrics tracking
   private _reads = 0

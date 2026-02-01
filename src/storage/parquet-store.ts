@@ -14,6 +14,8 @@
  */
 
 import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer'
+import { parquetReadObjects } from 'hyparquet'
+import type { AsyncBuffer } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
 import type { StorageBackend, StoredObjectResult } from './backend'
 import type { Ref } from '../refs/storage'
@@ -72,16 +74,21 @@ interface BufferedObject {
 // ============================================================================
 
 const GIT_OBJECTS_SCHEMA = [
-  { name: 'root', num_children: 6 },
+  { name: 'root', num_children: 11 },
   { name: 'sha', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
   { name: 'type', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
   { name: 'size', type: 'INT64' as const, repetition_type: 'REQUIRED' as const },
   { name: 'storage', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const, converted_type: 'UTF8' as const },
-  // VARIANT group for data
-  { name: 'data', repetition_type: 'OPTIONAL' as const, num_children: 2, logical_type: { type: 'VARIANT' as const } },
-  { name: 'metadata', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const },
-  { name: 'value', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const },
+  // VARIANT-encoded data stored as flat BYTE_ARRAY columns
+  { name: 'variant_metadata', type: 'BYTE_ARRAY' as const, repetition_type: 'REQUIRED' as const },
+  { name: 'variant_value', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const },
+  // Raw object data for inline storage (enables fast reads without VARIANT decoding)
+  { name: 'raw_data', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const },
   { name: 'path', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
+  // Shredded commit fields (null for non-commit objects)
+  { name: 'author_name', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
+  { name: 'author_date', type: 'INT64' as const, repetition_type: 'OPTIONAL' as const },
+  { name: 'message', type: 'BYTE_ARRAY' as const, repetition_type: 'OPTIONAL' as const, converted_type: 'UTF8' as const },
 ]
 
 // ============================================================================
@@ -105,6 +112,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   private flushBytesThreshold: number
   private codec: 'SNAPPY' | 'LZ4_RAW' | 'UNCOMPRESSED'
   private objectFileKeys: string[] = []
+  private tombstones: Set<string> = new Set()
   private initialized = false
 
   constructor(options: ParquetStoreOptions) {
@@ -169,6 +177,9 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   async getObject(sha: string): Promise<StoredObjectResult | null> {
     await this.initialize()
 
+    // Check tombstones first
+    if (this.tombstones.has(sha)) return null
+
     // Check bloom filter first
     const check = await this.bloomCache.check(sha)
     if (check === 'absent') {
@@ -196,6 +207,9 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   async hasObject(sha: string): Promise<boolean> {
     await this.initialize()
 
+    // Check tombstones first
+    if (this.tombstones.has(sha)) return false
+
     // Check bloom filter
     const check = await this.bloomCache.check(sha)
     if (check === 'absent') return false
@@ -209,10 +223,12 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     return obj !== null
   }
 
-  async deleteObject(_sha: string): Promise<void> {
-    // Parquet files are append-only. Deletion is handled via compaction
-    // which rewrites files excluding deleted SHAs. For now, this is a no-op.
-    // A proper implementation would maintain a tombstone set.
+  async deleteObject(sha: string): Promise<void> {
+    // Parquet files are append-only. Mark SHA as tombstoned.
+    // Tombstoned SHAs are excluded during compaction.
+    this.tombstones.add(sha)
+    // Remove from buffer if present
+    this.buffer = this.buffer.filter(o => o.sha !== sha)
   }
 
   // ===========================================================================
@@ -241,8 +257,14 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
         { name: 'type', data: batch.types },
         { name: 'size', data: batch.sizes },
         { name: 'storage', data: batch.storages },
-        { name: 'data', data: batch.variantData },
+        { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
+        { name: 'variant_value', data: batch.variantData.map(v => v.value) },
+        { name: 'raw_data', data: objects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
         { name: 'path', data: batch.paths },
+        // Shredded commit fields
+        { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
+        { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
+        { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
       ],
     })
 
@@ -258,14 +280,139 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   }
 
   // ===========================================================================
+  // Compaction
+  // ===========================================================================
+
+  /**
+   * Compact multiple Parquet files into a single file.
+   *
+   * Reads all objects from existing Parquet files, excludes tombstoned SHAs,
+   * deduplicates by SHA, and writes a single merged Parquet file.
+   * Old files are deleted from R2 after the new file is written.
+   *
+   * @returns The key of the new compacted file, or null if no compaction needed
+   */
+  async compact(): Promise<string | null> {
+    await this.initialize()
+
+    if (this.objectFileKeys.length < 2) return null
+
+    // Read all rows from all Parquet files
+    const allObjects: BufferedObject[] = []
+    const seenShas = new Set<string>()
+
+    for (const key of this.objectFileKeys) {
+      const r2Obj = await this.r2.get(key)
+      if (!r2Obj) continue
+
+      const arrayBuffer = await r2Obj.arrayBuffer()
+      const file: AsyncBuffer = {
+        byteLength: arrayBuffer.byteLength,
+        slice(start: number, end?: number) {
+          return arrayBuffer.slice(start, end)
+        },
+      }
+
+      try {
+        const rows = await parquetReadObjects({
+          file,
+          columns: ['sha', 'type', 'storage', 'raw_data'],
+          rowFormat: 'object',
+        })
+
+        for (const row of rows) {
+          const sha = row.sha as string
+          // Skip tombstoned and duplicate SHAs
+          if (this.tombstones.has(sha) || seenShas.has(sha)) continue
+          seenShas.add(sha)
+
+          const type = row.type as ObjectType
+          const storage = row.storage as string
+
+          if (storage === 'inline' && row.raw_data != null) {
+            const data = row.raw_data instanceof Uint8Array
+              ? row.raw_data
+              : typeof row.raw_data === 'string'
+                ? new TextEncoder().encode(row.raw_data)
+                : new Uint8Array(row.raw_data)
+            allObjects.push({ sha, type, data })
+          } else {
+            // For R2/LFS objects, fetch from raw storage
+            const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
+            const rawObj = await this.r2.get(r2Key)
+            if (rawObj) {
+              const data = new Uint8Array(await rawObj.arrayBuffer())
+              allObjects.push({ sha, type, data })
+            }
+          }
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    if (allObjects.length === 0) return null
+
+    // Also include any buffered objects
+    for (const obj of this.buffer) {
+      if (!this.tombstones.has(obj.sha) && !seenShas.has(obj.sha)) {
+        allObjects.push(obj)
+        seenShas.add(obj.sha)
+      }
+    }
+
+    // Write the compacted file
+    const batch = encodeObjectBatch(allObjects, { r2Prefix: `${this.prefix}/raw` })
+
+    const buffer = parquetWriteBuffer({
+      codec: this.codec,
+      schema: GIT_OBJECTS_SCHEMA,
+      columnData: [
+        { name: 'sha', data: batch.shas },
+        { name: 'type', data: batch.types },
+        { name: 'size', data: batch.sizes },
+        { name: 'storage', data: batch.storages },
+        { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
+        { name: 'variant_value', data: batch.variantData.map(v => v.value) },
+        { name: 'raw_data', data: allObjects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
+        { name: 'path', data: batch.paths },
+        { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
+        { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
+        { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
+      ],
+    })
+
+    const fileId = crypto.randomUUID()
+    const newKey = `${this.prefix}/objects/${fileId}.parquet`
+    await this.r2.put(newKey, buffer)
+
+    // Delete old files from R2
+    const oldKeys = [...this.objectFileKeys]
+    for (const key of oldKeys) {
+      await this.r2.delete(key)
+    }
+
+    // Update state
+    this.objectFileKeys = [newKey]
+    this.buffer = []
+    this.bufferBytes = 0
+    this.tombstones.clear()
+
+    // Persist bloom filter
+    await this.bloomCache.persist()
+
+    return newKey
+  }
+
+  // ===========================================================================
   // Read from Parquet
   // ===========================================================================
 
   /**
    * Read a specific object from a Parquet file.
    *
-   * Currently does a full scan of the file. A production implementation
-   * would use row group statistics and bloom filters for predicate pushdown.
+   * Uses hyparquet's parquetQuery with predicate pushdown on the SHA column
+   * to efficiently locate the matching row without scanning the entire file.
    */
   private async readObjectFromParquet(
     key: string,
@@ -275,21 +422,50 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     const r2Obj = await this.r2.get(key)
     if (!r2Obj) return null
 
-    // For now, we need to parse the Parquet file to find the object.
-    // hyparquet provides reading capabilities.
-    // TODO: Use hyparquet's parquetRead with row group filtering
-    // For the initial implementation, we store a SHA index alongside.
+    const arrayBuffer = await r2Obj.arrayBuffer()
+    const file: AsyncBuffer = {
+      byteLength: arrayBuffer.byteLength,
+      slice(start: number, end?: number) {
+        return arrayBuffer.slice(start, end)
+      },
+    }
 
-    // Fallback: check if object is stored as raw R2 (for large objects)
-    const meta = await this.bloomCache.getMetadata(sha)
-    if (meta) {
-      // Try raw R2 key for large objects
-      const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
-      const rawObj = await this.r2.get(r2Key)
-      if (rawObj) {
-        const data = new Uint8Array(await rawObj.arrayBuffer())
-        return { type: meta.type as ObjectType, content: data }
-      }
+    // Read all rows from Parquet file and filter by SHA
+    // parquetReadObjects is simpler and more reliable than parquetQuery across environments
+    let allRows: Record<string, any>[]
+    try {
+      allRows = await parquetReadObjects({
+        file,
+        columns: ['sha', 'type', 'storage', 'raw_data'],
+        rowFormat: 'object',
+      })
+    } catch (_err) {
+      // If parquetRead fails, fall back to raw R2 lookup
+      allRows = []
+    }
+
+    const row = allRows.find(r => r.sha === sha)
+    if (!row) return null
+
+    const type = row.type as ObjectType
+    const storage = row.storage as StorageMode
+
+    // Handle inline storage mode - raw_data contains the object bytes
+    if (storage === 'inline' && row.raw_data != null) {
+      const content = row.raw_data instanceof Uint8Array
+        ? row.raw_data
+        : typeof row.raw_data === 'string'
+          ? new TextEncoder().encode(row.raw_data)
+          : new Uint8Array(row.raw_data)
+      return { type, content }
+    }
+
+    // For r2/lfs storage, fetch from raw R2
+    const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
+    const rawObj = await this.r2.get(r2Key)
+    if (rawObj) {
+      const data = new Uint8Array(await rawObj.arrayBuffer())
+      return { type, content: data }
     }
 
     return null

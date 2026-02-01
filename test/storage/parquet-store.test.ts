@@ -166,6 +166,208 @@ describe('ParquetStore', () => {
     })
   })
 
+  describe('Parquet read path', () => {
+    it('should read an inline object back from a flushed Parquet file', async () => {
+      const data = encoder.encode('hello from parquet')
+      const sha = await store.putObject('blob', data)
+
+      // Flush to Parquet on R2
+      const key = await store.flush()
+      expect(key).not.toBeNull()
+
+      // Now getObject should find it by scanning the Parquet file
+      const result = await store.getObject(sha)
+      expect(result).not.toBeNull()
+      expect(result!.type).toBe('blob')
+      expect(new TextDecoder().decode(result!.content)).toBe('hello from parquet')
+    })
+
+    it('should read multiple objects from a flushed Parquet file', async () => {
+      const data1 = encoder.encode('object one')
+      const data2 = encoder.encode('object two')
+      const data3 = encoder.encode('object three')
+
+      const sha1 = await store.putObject('blob', data1)
+      const sha2 = await store.putObject('tree', data2)
+      const sha3 = await store.putObject('commit', data3)
+
+      await store.flush()
+
+      const result1 = await store.getObject(sha1)
+      expect(result1).not.toBeNull()
+      expect(result1!.type).toBe('blob')
+      expect(new TextDecoder().decode(result1!.content)).toBe('object one')
+
+      const result2 = await store.getObject(sha2)
+      expect(result2).not.toBeNull()
+      expect(result2!.type).toBe('tree')
+
+      const result3 = await store.getObject(sha3)
+      expect(result3).not.toBeNull()
+      expect(result3!.type).toBe('commit')
+    })
+
+    it('should return null for SHA not in any Parquet file', async () => {
+      const data = encoder.encode('something')
+      await store.putObject('blob', data)
+      await store.flush()
+
+      const result = await store.getObject('f'.repeat(40))
+      expect(result).toBeNull()
+    })
+
+    it('should read large (R2-backed) objects via raw R2 key', async () => {
+      // Create a large object that exceeds INLINE_THRESHOLD (1MB)
+      const data = new Uint8Array(1.5 * 1024 * 1024)
+      data.fill(42)
+      const sha = await store.putObject('blob', data)
+
+      await store.flush()
+
+      const result = await store.getObject(sha)
+      expect(result).not.toBeNull()
+      expect(result!.type).toBe('blob')
+      expect(result!.content.length).toBe(data.length)
+    })
+  })
+
+  describe('shredded commit columns', () => {
+    it('should write commit fields as separate Parquet columns', async () => {
+      const { parquetReadObjects } = await import('hyparquet')
+      const commitData = encoder.encode(
+        'tree ' + 'a'.repeat(40) + '\n' +
+        'author Alice <alice@test.com> 1704067200 +0000\n' +
+        'committer Alice <alice@test.com> 1704067200 +0000\n' +
+        '\n' +
+        'Initial commit'
+      )
+      await store.putObject('commit', commitData)
+      const key = await store.flush()
+      expect(key).not.toBeNull()
+
+      // Read the Parquet file directly to verify shredded columns
+      const r2Obj = await mockR2.get(key!)
+      const buf = await r2Obj!.arrayBuffer()
+      const file = { byteLength: buf.byteLength, slice: (s: number, e?: number) => buf.slice(s, e) }
+      const rows = await parquetReadObjects({
+        file,
+        columns: ['sha', 'type', 'author_name', 'author_date', 'message'],
+        rowFormat: 'object',
+      })
+
+      expect(rows.length).toBe(1)
+      expect(rows[0].type).toBe('commit')
+      expect(rows[0].author_name).toBe('Alice')
+      expect(Number(rows[0].author_date)).toBe(1704067200000) // millis
+      expect(rows[0].message).toBe('Initial commit')
+    })
+
+    it('should write null for non-commit shredded columns', async () => {
+      const { parquetReadObjects } = await import('hyparquet')
+      const blobData = encoder.encode('just a blob')
+      await store.putObject('blob', blobData)
+      const key = await store.flush()
+
+      const r2Obj = await mockR2.get(key!)
+      const buf = await r2Obj!.arrayBuffer()
+      const file = { byteLength: buf.byteLength, slice: (s: number, e?: number) => buf.slice(s, e) }
+      const rows = await parquetReadObjects({
+        file,
+        columns: ['sha', 'type', 'author_name', 'author_date', 'message'],
+        rowFormat: 'object',
+      })
+
+      expect(rows.length).toBe(1)
+      expect(rows[0].type).toBe('blob')
+      expect(rows[0].author_name).toBeNull()
+      expect(rows[0].author_date).toBeNull()
+      expect(rows[0].message).toBeNull()
+    })
+  })
+
+  describe('compaction', () => {
+    it('should merge multiple Parquet files into one', async () => {
+      // Create and flush two batches
+      await store.putObject('blob', encoder.encode('batch one'))
+      await store.flush()
+
+      await store.putObject('blob', encoder.encode('batch two'))
+      await store.flush()
+
+      expect(store.getStats().parquetFiles).toBe(2)
+
+      // Compact
+      const compactedKey = await store.compact()
+      expect(compactedKey).not.toBeNull()
+      expect(store.getStats().parquetFiles).toBe(1)
+    })
+
+    it('should exclude tombstoned objects during compaction', async () => {
+      const data1 = encoder.encode('keep me')
+      const data2 = encoder.encode('delete me')
+
+      const sha1 = await store.putObject('blob', data1)
+      await store.flush()
+
+      const sha2 = await store.putObject('blob', data2)
+      await store.flush()
+
+      // Tombstone sha2
+      await store.deleteObject(sha2)
+
+      // Compact
+      await store.compact()
+
+      // sha1 should still be readable
+      const result1 = await store.getObject(sha1)
+      expect(result1).not.toBeNull()
+      expect(new TextDecoder().decode(result1!.content)).toBe('keep me')
+
+      // sha2 should not be found (not in tombstones after compact, and excluded from file)
+      const result2 = await store.getObject(sha2)
+      expect(result2).toBeNull()
+    })
+
+    it('should return null when fewer than 2 files exist', async () => {
+      await store.putObject('blob', encoder.encode('one file'))
+      await store.flush()
+
+      const result = await store.compact()
+      expect(result).toBeNull()
+    })
+
+    it('should deduplicate objects across files', async () => {
+      const { parquetReadObjects } = await import('hyparquet')
+      const data = encoder.encode('duplicate content')
+
+      // Write same object twice in different flushes
+      const sha = await store.putObject('blob', data)
+      await store.flush()
+
+      // Manually add same sha again by re-putting
+      await store.putObject('blob', data)
+      await store.flush()
+
+      expect(store.getStats().parquetFiles).toBe(2)
+
+      const compactedKey = await store.compact()
+      expect(compactedKey).not.toBeNull()
+
+      // Read compacted file - should have only one row for this SHA
+      const r2Obj = await mockR2.get(compactedKey!)
+      const buf = await r2Obj!.arrayBuffer()
+      const file = { byteLength: buf.byteLength, slice: (s: number, e?: number) => buf.slice(s, e) }
+      const rows = await parquetReadObjects({
+        file,
+        columns: ['sha'],
+        rowFormat: 'object',
+      })
+
+      const shaRows = rows.filter(r => r.sha === sha)
+      expect(shaRows.length).toBe(1)
+    })
+  })
+
   describe('getStats', () => {
     it('should return initial stats', () => {
       const stats = store.getStats()
