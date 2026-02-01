@@ -84,6 +84,25 @@ describe('GitRepoDO thin coordinator wiring', () => {
     expect(repo.getParquetStore()).toBeDefined()
   })
 
+  it('should have RefLog when ANALYTICS_BUCKET is available', () => {
+    const state = createMockState('reflog-repo-id')
+    const env = { ANALYTICS_BUCKET: createMockR2Bucket() }
+    const repo = new GitRepoDO(state as any, env as any)
+
+    const refLog = repo.getRefLog()
+    expect(refLog).toBeDefined()
+    expect(refLog!.version).toBe(0)
+    expect(refLog!.getBucket()).toBe(env.ANALYTICS_BUCKET)
+  })
+
+  it('should NOT have RefLog without ANALYTICS_BUCKET', () => {
+    const state = createMockState()
+    const env = {}
+    const repo = new GitRepoDO(state as any, env as any)
+
+    expect(repo.getRefLog()).toBeUndefined()
+  })
+
   it('ParquetStore should use DO id as R2 prefix', () => {
     const state = createMockState('my-repo-id')
     const env = { ANALYTICS_BUCKET: createMockR2Bucket() }

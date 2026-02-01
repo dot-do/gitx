@@ -84,6 +84,12 @@ export const GIT_OBJECTS_ICEBERG_SCHEMA: { 'schema-id': number; type: 'struct'; 
     { id: 4, name: 'storage', required: true, type: 'string' },
     { id: 5, name: 'data', required: false, type: 'binary' },
     { id: 6, name: 'path', required: false, type: 'string' },
+    { id: 7, name: 'variant_metadata', required: false, type: 'binary' },
+    { id: 8, name: 'variant_value', required: false, type: 'binary' },
+    { id: 9, name: 'raw_data', required: false, type: 'binary' },
+    { id: 10, name: 'author_name', required: false, type: 'string' },
+    { id: 11, name: 'author_date', required: false, type: 'long' },
+    { id: 12, name: 'message', required: false, type: 'string' },
   ],
 }
 
@@ -145,6 +151,11 @@ export function addSnapshot(
 ): IcebergTableMetadata {
   const now = Date.now()
   const snapshotId = options.snapshotId ?? now
+
+  if (metadata.snapshots.some(s => s['snapshot-id'] === snapshotId)) {
+    throw new Error(`Duplicate snapshot ID: ${snapshotId}`)
+  }
+
   const parentSnapshotId =
     metadata['current-snapshot-id'] !== -1 ? metadata['current-snapshot-id'] : undefined
 

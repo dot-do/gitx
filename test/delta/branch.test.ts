@@ -63,6 +63,10 @@ describe('DeltaBranch', () => {
       expect(branch.info.baseVersion).toBe(2)
     })
 
+    it('should throw if version is negative', () => {
+      expect(() => createBranchAtVersion('test', parentLog, -1, bucket, 'repo')).toThrow('negative')
+    })
+
     it('should throw if version exceeds parent', () => {
       parentLog.append('refs/heads/main', '', 'aaa', 1000)
 

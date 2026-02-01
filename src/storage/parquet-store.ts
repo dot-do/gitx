@@ -30,8 +30,19 @@ interface AsyncBuffer {
   slice(start: number, end?: number): ArrayBuffer
 }
 import { BloomCache } from './bloom-cache'
-import type { DurableObjectStorage } from '../do/schema'
+import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
+
+// ============================================================================
+// Type Guards
+// ============================================================================
+
+function isValidObjectType(t: unknown): t is ObjectType {
+  return t === 'blob' || t === 'tree' || t === 'commit' || t === 'tag'
+}
+function isValidStorageMode(s: unknown): s is StorageMode {
+  return s === 'inline' || s === 'r2' || s === 'lfs'
+}
 
 // ============================================================================
 // Constants
@@ -51,7 +62,7 @@ export interface ParquetStoreOptions {
   /** R2 bucket for Parquet files and large objects */
   r2: R2Bucket
   /** SQLite storage for bloom filter and refs */
-  sql: DurableObjectStorage
+  sql: SQLStorage
   /** Repository prefix in R2 (e.g., "owner/repo") */
   prefix: string
   /** Flush threshold (number of objects) */
@@ -333,8 +344,11 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
           if (this.tombstones.has(sha) || seenShas.has(sha)) continue
           seenShas.add(sha)
 
-          const type = row['type'] as ObjectType
-          const storage = row['storage'] as string
+          const rawType = row['type']
+          const rawStorage = row['storage']
+          if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) continue
+          const type = rawType
+          const storage = rawStorage
           const rawData = row['raw_data']
 
           if (storage === 'inline' && rawData != null) {
@@ -455,8 +469,11 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     const row = allRows.find(r => r['sha'] === sha)
     if (!row) return null
 
-    const type = row['type'] as ObjectType
-    const storage = row['storage'] as StorageMode
+    const rawType = row['type']
+    const rawStorage = row['storage']
+    if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) return null
+    const type = rawType
+    const storage = rawStorage
     const rawData = row['raw_data']
 
     // Handle inline storage mode - raw_data contains the object bytes

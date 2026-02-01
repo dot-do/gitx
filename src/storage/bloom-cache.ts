@@ -12,7 +12,7 @@
  * @module storage/bloom-cache
  */
 
-import type { DurableObjectStorage } from '../do/schema'
+import type { SQLStorage } from './types'
 
 // ============================================================================
 // Constants
@@ -117,7 +117,7 @@ export class BloomFilter {
     const h2 = fnv1a(sha, 0xc4ceb9fe)
     const hashes: number[] = []
     for (let i = 0; i < this.hashCount; i++) {
-      hashes.push(Math.abs((h1 + i * h2) | 0))
+      hashes.push((h1 + i * h2) >>> 0)
     }
     return hashes
   }
@@ -162,11 +162,11 @@ export interface BloomCacheOptions {
  */
 export class BloomCache {
   private filter: BloomFilter
-  private storage: DurableObjectStorage
+  private storage: SQLStorage
   private options: Required<BloomCacheOptions>
   private initialized = false
 
-  constructor(storage: DurableObjectStorage, options?: BloomCacheOptions) {
+  constructor(storage: SQLStorage, options?: BloomCacheOptions) {
     this.storage = storage
     this.options = {
       filterBits: options?.filterBits ?? DEFAULT_FILTER_BITS,

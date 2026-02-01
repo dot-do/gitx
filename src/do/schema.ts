@@ -33,6 +33,8 @@
  * ```
  */
 
+import type { SQLStorage } from '../storage/types'
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -43,6 +45,7 @@
  * @description
  * Abstraction over Cloudflare's Durable Object storage that provides
  * SQLite access. This interface allows for easy mocking in tests.
+ * Extends the abstract SQLStorage interface used by storage layer modules.
  *
  * @example
  * ```typescript
@@ -56,33 +59,7 @@
  * }
  * ```
  */
-export interface DurableObjectStorage {
-  /**
-   * SQL execution interface.
-   *
-   * @description
-   * Provides access to SQLite query execution within the Durable Object.
-   */
-  sql: {
-    /**
-     * Execute a SQL query with optional parameters.
-     *
-     * @param query - SQL query string (can use ? placeholders)
-     * @param params - Parameter values for placeholders
-     * @returns Result object with toArray() method for reading rows
-     *
-     * @example
-     * ```typescript
-     * const result = storage.sql.exec(
-     *   'SELECT * FROM objects WHERE sha = ?',
-     *   'abc123...'
-     * )
-     * const rows = result.toArray()
-     * ```
-     */
-    exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
-  }
-}
+export interface DurableObjectStorage extends SQLStorage {}
 
 // ============================================================================
 // Schema Constants

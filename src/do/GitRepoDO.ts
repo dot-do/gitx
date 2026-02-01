@@ -44,6 +44,7 @@ import { createLogger } from './logger'
 import { setupRoutes, type GitRepoDOInstance } from './routes'
 import { ThinSchemaManager } from './schema'
 import { ParquetStore } from '../storage/parquet-store'
+import { RefLog } from '../delta/ref-log'
 
 /**
  * Creates an FsCapability adapter that uses the FSX service binding.
@@ -251,6 +252,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
   private _logger: Logger
   private _parquetStore?: ParquetStore
   private _thinSchema?: ThinSchemaManager
+  private _refLog?: RefLog
 
   /** Start time for uptime tracking */
   readonly _startTime: number = Date.now()
@@ -288,6 +290,10 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       })
       this._capabilities.add('parquet')
       this._logger.debug('ParquetStore initialized with R2 backend')
+
+      // Initialize RefLog for delta tracking
+      this._refLog = new RefLog(env.ANALYTICS_BUCKET, `repos/${state.id.toString()}/delta`)
+      this._logger.debug('RefLog initialized with R2 backend')
     }
 
     // Initialize router with extracted route handlers
@@ -396,6 +402,13 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    */
   getThinSchema(): ThinSchemaManager | undefined {
     return this._thinSchema
+  }
+
+  /**
+   * Get the RefLog instance (if ANALYTICS_BUCKET is configured).
+   */
+  getRefLog(): RefLog | undefined {
+    return this._refLog
   }
 
   // ===========================================================================

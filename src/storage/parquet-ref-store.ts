@@ -8,7 +8,7 @@
  * @module storage/parquet-ref-store
  */
 
-import type { DurableObjectStorage } from '../do/schema'
+import type { SQLStorage } from './types'
 import type { Ref } from '../refs/storage'
 
 // ============================================================================
@@ -22,7 +22,7 @@ export interface ParquetRefStoreOptions {
   /** R2 bucket for Parquet files */
   r2: R2Bucket
   /** SQLite storage for authoritative refs */
-  sql: DurableObjectStorage
+  sql: SQLStorage
   /** Repository prefix in R2 */
   prefix: string
   /** Optional callback invoked on ref changes (set or delete) */
@@ -53,7 +53,7 @@ export interface RefRow {
  */
 export class ParquetRefStore {
   private r2: R2Bucket
-  private sql: DurableObjectStorage
+  private sql: SQLStorage
   private prefix: string
   private dirty = false
   private onRefUpdate?: RefUpdateCallback

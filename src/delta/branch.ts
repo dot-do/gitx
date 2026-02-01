@@ -143,6 +143,7 @@ export function createBranchAtVersion(
   bucket: RefLogBucket,
   prefix: string,
 ): DeltaBranch {
+  if (atVersion < 0) throw new Error(`Cannot fork at negative version: ${atVersion}`)
   if (atVersion > parentLog.version) {
     throw new Error(`Cannot fork at version ${atVersion}: parent log only has ${parentLog.version} entries`)
   }

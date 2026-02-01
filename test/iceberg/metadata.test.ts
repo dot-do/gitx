@@ -11,7 +11,7 @@ describe('Iceberg Metadata', () => {
   describe('GIT_OBJECTS_ICEBERG_SCHEMA', () => {
     it('should define schema with field IDs for all git object columns', () => {
       const schema = GIT_OBJECTS_ICEBERG_SCHEMA
-      expect(schema.fields.length).toBeGreaterThanOrEqual(5)
+      expect(schema.fields).toHaveLength(12)
 
       const fieldNames = schema.fields.map(f => f.name)
       expect(fieldNames).toContain('sha')
@@ -19,6 +19,12 @@ describe('Iceberg Metadata', () => {
       expect(fieldNames).toContain('size')
       expect(fieldNames).toContain('storage')
       expect(fieldNames).toContain('path')
+      expect(fieldNames).toContain('variant_metadata')
+      expect(fieldNames).toContain('variant_value')
+      expect(fieldNames).toContain('raw_data')
+      expect(fieldNames).toContain('author_name')
+      expect(fieldNames).toContain('author_date')
+      expect(fieldNames).toContain('message')
 
       // Each field must have a unique field-id
       const ids = schema.fields.map(f => f.id)
@@ -52,7 +58,7 @@ describe('Iceberg Metadata', () => {
       const meta = createTableMetadata({ location: 's3://bucket/test' })
       expect(meta.schemas).toHaveLength(1)
       expect(meta.schemas[0]['schema-id']).toBe(0)
-      expect(meta.schemas[0].fields.length).toBeGreaterThanOrEqual(5)
+      expect(meta.schemas[0].fields).toHaveLength(12)
       expect(meta['current-schema-id']).toBe(0)
     })
 
@@ -122,8 +128,8 @@ describe('Iceberg Metadata', () => {
 
     it('should chain multiple snapshots', () => {
       let meta = createTableMetadata({ location: 's3://bucket/test' })
-      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-1.json' })
-      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-2.json' })
+      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-1.json', snapshotId: 100 })
+      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-2.json', snapshotId: 200 })
 
       expect(meta.snapshots).toHaveLength(2)
       expect(meta['current-snapshot-id']).toBe(meta.snapshots[1]['snapshot-id'])
@@ -147,10 +153,24 @@ describe('Iceberg Metadata', () => {
       expect(updated['last-updated-ms']).toBeGreaterThanOrEqual(meta['last-updated-ms'])
     })
 
+    it('should throw on duplicate snapshot ID', () => {
+      let meta = createTableMetadata({ location: 's3://bucket/test' })
+      meta = addSnapshot(meta, {
+        manifestListPath: 's3://bucket/test/snap-1.json',
+        snapshotId: 42,
+      })
+      expect(() =>
+        addSnapshot(meta, {
+          manifestListPath: 's3://bucket/test/snap-2.json',
+          snapshotId: 42,
+        }),
+      ).toThrow('Duplicate snapshot ID: 42')
+    })
+
     it('should include snapshot-log', () => {
       let meta = createTableMetadata({ location: 's3://bucket/test' })
-      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-1.json' })
-      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-2.json' })
+      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-1.json', snapshotId: 300 })
+      meta = addSnapshot(meta, { manifestListPath: 's3://bucket/test/snap-2.json', snapshotId: 400 })
 
       expect(meta['snapshot-log']).toHaveLength(2)
       expect(meta['snapshot-log'][0]['snapshot-id']).toBe(meta.snapshots[0]['snapshot-id'])
