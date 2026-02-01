@@ -27,7 +27,7 @@ import { SqliteObjectStore } from './object-store'
 import { SchemaManager, type DurableObjectStorage } from './schema'
 import type { ObjectType } from '../types/objects'
 import type {
-  ObjectStore as UploadPackObjectStore,
+  UploadPackObjectStore,
   Ref as UploadPackRef,
 } from '../wire/upload-pack'
 import { generatePackfile } from '../wire/upload-pack'

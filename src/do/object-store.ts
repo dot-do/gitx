@@ -65,6 +65,7 @@ import {
 import type { CASBackend } from '../storage/backend'
 export type { CASBackend } from '../storage/backend'
 import type { BasicObjectStore } from '../types/storage'
+import { typedQuery, validateRow } from '../utils/sql-validate'
 
 // ============================================================================
 // Constants
@@ -894,7 +895,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       'SELECT sha, tier, size, type, chunked, chunk_count FROM object_index WHERE sha = ?',
       sha
     )
-    const indexRows = indexResult.toArray() as { sha: string; tier: string; size: number; type: string; chunked: number; chunk_count: number }[]
+    const indexRows = typedQuery<{ sha: string; tier: string; size: number; type: string; chunked: number; chunk_count: number }>(indexResult, validateRow(['sha', 'tier', 'size', 'type', 'chunked', 'chunk_count']))
 
     if (indexRows.length > 0 && indexRows[0].chunked === 1) {
       // This is a chunked blob - reassemble from chunks
@@ -913,7 +914,7 @@ export class SqliteObjectStore implements BasicObjectStore {
           'SELECT data FROM objects WHERE sha = ?',
           chunkKey
         )
-        const chunkRows = chunkResult.toArray() as { data: Uint8Array }[]
+        const chunkRows = typedQuery<{ data: Uint8Array }>(chunkResult, validateRow(['data']))
 
         if (chunkRows.length === 0) {
           this.log('error', `Missing chunk ${i} for chunked blob: ${sha}`)
@@ -954,7 +955,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       'SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha = ?',
       sha
     )
-    const rows = result.toArray() as StoredObject[]
+    const rows = typedQuery<StoredObject>(result, validateRow(['sha', 'type', 'size', 'data']))
 
     if (rows.length === 0) {
       this.log('debug', `Object not found: ${sha}`)
@@ -1029,7 +1030,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       'SELECT chunked, chunk_count FROM object_index WHERE sha = ?',
       sha
     )
-    const indexRows = indexResult.toArray() as { chunked: number; chunk_count: number }[]
+    const indexRows = typedQuery<{ chunked: number; chunk_count: number }>(indexResult, validateRow(['chunked', 'chunk_count']))
 
     // Check if object exists (either in index or directly in objects table)
     const exists = await this.hasObject(sha)
@@ -1133,7 +1134,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       'SELECT type, data FROM objects WHERE sha = ?',
       sha
     )
-    const rows = result.toArray() as { type: ObjectType; data: ArrayBuffer }[]
+    const rows = typedQuery<{ type: ObjectType; data: ArrayBuffer }>(result, validateRow(['type', 'data']))
 
     if (rows.length === 0) {
       return false
@@ -1374,7 +1375,7 @@ export class SqliteObjectStore implements BasicObjectStore {
         `SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha IN (${placeholders})`,
         ...uncachedShas
       )
-      const rows = result.toArray() as StoredObject[]
+      const rows = typedQuery<StoredObject>(result, validateRow(['sha', 'type', 'size', 'data']))
 
       // Build lookup map for O(1) access
       const rowMap = new Map<string, StoredObject>()
@@ -1734,6 +1735,48 @@ export class SqliteObjectStore implements BasicObjectStore {
   }
 
   /**
+   * List objects by type with optional limit.
+   *
+   * @description
+   * Queries the objects table for all objects of the given type,
+   * returning their SHA and raw data ordered by creation time (newest first).
+   * This is useful for export operations that need to iterate over all
+   * objects of a specific type (e.g., all commits for Parquet export).
+   *
+   * @param type - Object type to filter by ('blob', 'tree', 'commit', 'tag')
+   * @param limit - Maximum number of objects to return (default 10000)
+   * @returns Array of objects with sha and data fields
+   *
+   * @example
+   * ```typescript
+   * const commits = await store.listObjectsByType('commit')
+   * for (const { sha, data } of commits) {
+   *   console.log(`Commit ${sha}: ${data.length} bytes`)
+   * }
+   * ```
+   */
+  async listObjectsByType(type: ObjectType, limit = 10000): Promise<{ sha: string; data: Uint8Array }[]> {
+    // Delegate to backend if available - backend doesn't support type queries,
+    // so we fall through to SQLite
+    if (this.backend) {
+      // Backend interface doesn't support listing by type, so fall through to SQLite
+      // This is acceptable because the objects table is the canonical source for type queries
+    }
+
+    try {
+      const result = this.storage.sql.exec(
+        'SELECT sha, data FROM objects WHERE type = ? ORDER BY created_at DESC LIMIT ?',
+        type,
+        limit
+      )
+      return result.toArray() as { sha: string; data: Uint8Array }[]
+    } catch (error) {
+      this.log('error', `Error listing objects by type ${type}:`, error)
+      return []
+    }
+  }
+
+  /**
    * Get the hash cache for external inspection or tuning.
    *
    * @description
@@ -1808,7 +1851,7 @@ export class SqliteObjectStore implements BasicObjectStore {
     )
     // Get the number of rows affected - SQLite returns this via changes
     const changesResult = this.storage.sql.exec('SELECT changes() as count')
-    const rows = changesResult.toArray() as { count: number }[]
+    const rows = typedQuery<{ count: number }>(changesResult, validateRow(['count']))
     const deletedCount = rows.length > 0 ? rows[0].count : 0
 
     this.log('info', `WAL truncation: deleted ${deletedCount} flushed entries`)

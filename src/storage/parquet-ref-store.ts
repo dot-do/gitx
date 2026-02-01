@@ -10,6 +10,7 @@
 
 import type { SQLStorage } from './types'
 import type { Ref } from '../refs/storage'
+import { typedQuery, validateRow } from '../utils/sql-validate'
 
 // ============================================================================
 // Types
@@ -82,7 +83,7 @@ export class ParquetRefStore {
       'SELECT name, target, type FROM refs WHERE name = ?',
       name
     )
-    const rows = result.toArray() as RefRow[]
+    const rows = typedQuery<RefRow>(result, validateRow(['name', 'target', 'type']))
     if (rows.length === 0) return null
 
     const row = rows[0]
@@ -145,7 +146,7 @@ export class ParquetRefStore {
         'SELECT target FROM refs WHERE name = ?',
         name
       )
-      const rows = result.toArray() as RefRow[]
+      const rows = typedQuery<RefRow>(result, validateRow(['name', 'target', 'type']))
       const currentTarget = rows.length > 0 ? rows[0]!.target : null
 
       // Check if current state matches expectation
@@ -197,7 +198,7 @@ export class ParquetRefStore {
       result = this.sql.sql.exec('SELECT name, target, type FROM refs')
     }
 
-    const rows = result.toArray() as RefRow[]
+    const rows = typedQuery<RefRow>(result, validateRow(['name', 'target', 'type']))
     return rows.map(row => ({
       name: row.name,
       target: row.target,

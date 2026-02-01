@@ -275,16 +275,27 @@ export interface PackfileResult {
 }
 
 /**
- * Object storage interface for retrieving git objects.
+ * Object storage interface for upload-pack operations.
  *
  * @description
  * Defines the methods required from an object store to support
  * upload-pack operations. Implementations typically wrap a Git
  * object database or similar storage.
  *
+ * This interface shares `getObject` and `hasObject` with the canonical
+ * {@link import('../types/storage').BasicObjectStore BasicObjectStore},
+ * but adds wire-protocol-specific methods (`getCommitParents`, `getRefs`,
+ * `getReachableObjects`) needed for fetch negotiation and packfile
+ * generation. It cannot directly extend BasicObjectStore because it
+ * does not include `storeObject` (upload-pack is read-only).
+ *
+ * @see {@link import('../types/storage').BasicObjectStore} for the canonical minimal store
+ * @see {@link import('../types/storage').ObjectStore} for the canonical full-featured store
+ * @see {@link import('./receive-pack').ReceivePackObjectStore} for the receive-pack counterpart
+ *
  * @example
  * ```typescript
- * class MyObjectStore implements ObjectStore {
+ * class MyObjectStore implements UploadPackObjectStore {
  *   async getObject(sha: string) {
  *     return this.database.get(sha)
  *   }
@@ -295,7 +306,7 @@ export interface PackfileResult {
  * }
  * ```
  */
-export interface ObjectStore {
+export interface UploadPackObjectStore {
   /**
    * Get an object by its SHA.
    * @param sha - The SHA-1 hash of the object
@@ -331,6 +342,11 @@ export interface ObjectStore {
    */
   getReachableObjects(sha: string, depth?: number): Promise<string[]>
 }
+
+/**
+ * @deprecated Use {@link UploadPackObjectStore} instead. This alias exists for backward compatibility.
+ */
+export type ObjectStore = UploadPackObjectStore
 
 /**
  * Shallow clone information.
@@ -643,7 +659,7 @@ export function parseHaveLine(line: string): string {
  * ```
  */
 export async function advertiseRefs(
-  store: ObjectStore,
+  store: UploadPackObjectStore,
   capabilities?: Partial<UploadPackCapabilities>
 ): Promise<string> {
   const refs = await store.getRefs()
@@ -808,7 +824,7 @@ export function formatNak(): string {
 export async function processWants(
   session: UploadPackSession,
   wants: string[],
-  store: ObjectStore
+  store: UploadPackObjectStore
 ): Promise<UploadPackSession> {
   // Deduplicate wants
   const uniqueWants = [...new Set(wants.map(w => w.toLowerCase()))]
@@ -854,7 +870,7 @@ export async function processWants(
 export async function processHaves(
   session: UploadPackSession,
   haves: string[],
-  store: ObjectStore,
+  store: UploadPackObjectStore,
   done: boolean
 ): Promise<WantHaveNegotiation> {
   const result: WantHaveNegotiation = {
@@ -986,7 +1002,7 @@ function extractObjectFromTag(tagData: Uint8Array): string | null {
  * ```
  */
 export async function calculateMissingObjects(
-  store: ObjectStore,
+  store: UploadPackObjectStore,
   wants: string[],
   haves: string[]
 ): Promise<Set<string>> {
@@ -1088,7 +1104,7 @@ export async function processShallow(
   depth?: number,
   deepenSince?: number,
   deepenNot?: string[],
-  store?: ObjectStore
+  store?: UploadPackObjectStore
 ): Promise<ShallowInfo> {
   const result: ShallowInfo = {
     shallowCommits: [],
@@ -1295,7 +1311,7 @@ export function formatProgress(message: string): Uint8Array {
  * ```
  */
 export async function generatePackfile(
-  store: ObjectStore,
+  store: UploadPackObjectStore,
   wants: string[],
   haves: string[],
   options?: PackfileOptions
@@ -1378,7 +1394,7 @@ export async function generatePackfile(
  * ```
  */
 export async function generateThinPack(
-  store: ObjectStore,
+  store: UploadPackObjectStore,
   objects: string[],
   clientHasObjects: string[]
 ): Promise<PackfileResult> {
@@ -1472,7 +1488,7 @@ async function buildPackfile(
 export async function handleFetch(
   session: UploadPackSession,
   request: string,
-  store: ObjectStore
+  store: UploadPackObjectStore
 ): Promise<Uint8Array> {
   const lines = request.split('\n').filter(l => l.trim() && l !== '0000')
   const parts: Uint8Array[] = []

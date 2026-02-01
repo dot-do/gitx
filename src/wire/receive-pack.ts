@@ -363,10 +363,27 @@ export interface ReceivePackSession {
  * receive-pack operations. Implementations typically wrap a Git
  * object database or similar storage.
  *
- * Note: This interface differs from the canonical ObjectStore in types/storage.ts
- * because receive-pack has unique requirements (e.g., getRefs(), isAncestor(),
- * storeObject takes SHA as a parameter). See types/storage.ts for the canonical
- * storage interfaces used by most modules.
+ * This interface shares `getObject` and `hasObject` with the canonical
+ * {@link import('../types/storage').BasicObjectStore BasicObjectStore},
+ * but differs in important ways:
+ *
+ * - `storeObject(sha, type, data)` takes the SHA as a parameter (the caller
+ *   computes it during packfile unpacking), whereas the canonical
+ *   `BasicObjectStore.storeObject(type, data)` computes and returns the SHA.
+ * - `getRef` returns a `Ref` object (with `name`, `sha`, `peeled?`) rather
+ *   than a plain `string | null`.
+ * - `deleteRef` returns `void` rather than `boolean`.
+ * - Adds wire-protocol-specific methods: `getCommitParents`, `getRefs`,
+ *   `isAncestor`, and the optional `compareAndSwapRef`.
+ *
+ * Because of these signature differences, this interface cannot directly
+ * extend BasicObjectStore. However, any object that implements
+ * ReceivePackObjectStore is structurally compatible with BasicObjectStore
+ * for its `getObject` and `hasObject` methods.
+ *
+ * @see {@link import('../types/storage').BasicObjectStore} for the canonical minimal store
+ * @see {@link import('../types/storage').ObjectStore} for the canonical full-featured store
+ * @see {@link import('./upload-pack').UploadPackObjectStore} for the upload-pack counterpart
  *
  * @example
  * ```typescript
@@ -465,11 +482,6 @@ export interface ReceivePackObjectStore {
    */
   compareAndSwapRef?(name: string, expectedOldTarget: string | null, newTarget: string): Promise<boolean>
 }
-
-/**
- * @deprecated Use {@link ReceivePackObjectStore} instead. This alias exists for backward compatibility.
- */
-export type ObjectStore = ReceivePackObjectStore
 
 /**
  * Parsed receive-pack request.
@@ -636,9 +648,9 @@ export interface QuarantineEnvironment {
   /** Unique quarantine ID */
   id: string
   /** Isolated object store for quarantined objects */
-  store: ObjectStore
+  store: ReceivePackObjectStore
   /** Commit quarantined objects to main store */
-  commit: (mainStore: ObjectStore) => Promise<void>
+  commit: (mainStore: ReceivePackObjectStore) => Promise<void>
   /** Abort and clean up quarantined objects */
   abort: () => Promise<void>
   /** Get list of quarantined object SHAs */
@@ -804,7 +816,7 @@ export function createReceiveSession(repoId: string): ReceivePackSession {
  * ```
  */
 export async function advertiseReceiveRefs(
-  store: ObjectStore,
+  store: ReceivePackObjectStore,
   capabilities?: ReceivePackCapabilities
 ): Promise<string> {
   const refs = await store.getRefs()
@@ -1210,7 +1222,7 @@ export async function validatePackfile(
  */
 export async function unpackObjects(
   packfile: Uint8Array,
-  _store: ObjectStore,
+  _store: ReceivePackObjectStore,
   options?: UnpackOptions
 ): Promise<UnpackResult> {
   const unpackedShas: string[] = []
@@ -1305,14 +1317,14 @@ export async function unpackObjects(
  * ```
  */
 export function createQuarantine(
-  mainStore: ObjectStore,
+  mainStore: ReceivePackObjectStore,
   quarantineId?: string
 ): QuarantineEnvironment {
   const id = quarantineId || `quarantine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const quarantinedObjects = new Map<string, { type: string; data: Uint8Array }>()
 
   // Create a hybrid store that writes to quarantine but reads from both
-  const quarantineStore: ObjectStore = {
+  const quarantineStore: ReceivePackObjectStore = {
     async getObject(sha: string) {
       // Check quarantine first
       const quarantined = quarantinedObjects.get(sha)
@@ -1362,7 +1374,7 @@ export function createQuarantine(
     id,
     store: quarantineStore,
 
-    async commit(targetStore: ObjectStore) {
+    async commit(targetStore: ReceivePackObjectStore) {
       // Move all quarantined objects to the target store
       const entries = Array.from(quarantinedObjects.entries())
       for (const [sha, obj] of entries) {
@@ -1423,7 +1435,7 @@ export interface UnpackWithQuarantineOptions extends UnpackOptions {
  */
 export async function unpackWithQuarantine(
   packfile: Uint8Array,
-  store: ObjectStore,
+  store: ReceivePackObjectStore,
   options?: UnpackWithQuarantineOptions
 ): Promise<UnpackResult> {
   const quarantine = createQuarantine(store, options?.sessionId)
@@ -1607,7 +1619,7 @@ export function validateRefName(refName: string): boolean {
 export async function validateFastForward(
   oldSha: string,
   newSha: string,
-  store: ObjectStore
+  store: ReceivePackObjectStore
 ): Promise<boolean> {
   // Creation is always allowed
   if (oldSha === ZERO_SHA) {
@@ -1703,7 +1715,7 @@ function matchPattern(str: string, pattern: string): boolean {
  */
 interface CommandValidationContext {
   command: RefUpdateCommand
-  store: ObjectStore
+  store: ReceivePackObjectStore
   capabilities: ReceivePackCapabilities
   forcePush?: boolean
 }
@@ -1806,7 +1818,7 @@ async function validateCommand(ctx: CommandValidationContext): Promise<RefUpdate
 export async function processCommands(
   session: ReceivePackSession,
   commands: RefUpdateCommand[],
-  store: ObjectStore,
+  store: ReceivePackObjectStore,
   options?: ProcessCommandsOptions
 ): Promise<ProcessCommandsResult> {
   const results: RefUpdateResult[] = []
@@ -1845,7 +1857,7 @@ export async function processCommands(
  */
 export async function updateRefs(
   commands: RefUpdateCommand[],
-  store: ObjectStore
+  store: ReceivePackObjectStore
 ): Promise<void> {
   for (const cmd of commands) {
     if (cmd.type === 'delete') {
@@ -1879,7 +1891,7 @@ export async function updateRefs(
  */
 export async function atomicRefUpdate(
   commands: RefUpdateCommand[],
-  store: ObjectStore
+  store: ReceivePackObjectStore
 ): Promise<AtomicRefUpdateResult> {
   const results: RefUpdateResult[] = []
   const originalRefs = new Map<string, string | null>()
@@ -2033,7 +2045,7 @@ type PostUpdateHookFn = (refNames: string[]) => Promise<HookResult>
  */
 export async function executePreReceiveHook(
   commands: RefUpdateCommand[],
-  _store: ObjectStore,
+  _store: ReceivePackObjectStore,
   hookFn: PreReceiveHookFn,
   env: Record<string, string> = {},
   options?: HookOptions
@@ -2084,7 +2096,7 @@ export async function executePreReceiveHook(
  */
 export async function executeUpdateHook(
   commands: RefUpdateCommand[],
-  _store: ObjectStore,
+  _store: ReceivePackObjectStore,
   hookFn: UpdateHookFn,
   env: Record<string, string> = {}
 ): Promise<{ results: RefUpdateResult[] }> {
@@ -2137,7 +2149,7 @@ export async function executeUpdateHook(
 export async function executePostReceiveHook(
   commands: RefUpdateCommand[],
   results: RefUpdateResult[],
-  _store: ObjectStore,
+  _store: ReceivePackObjectStore,
   hookFn: PostReceiveHookFn,
   options?: HookOptions
 ): Promise<{ pushSuccess: boolean; hookSuccess: boolean }> {
@@ -2398,7 +2410,7 @@ export function rejectPush(
 export async function handleReceivePack(
   session: ReceivePackSession,
   request: Uint8Array,
-  store: ObjectStore
+  store: ReceivePackObjectStore
 ): Promise<Uint8Array> {
   // Parse the request
   const parsed = parseReceivePackRequest(request)

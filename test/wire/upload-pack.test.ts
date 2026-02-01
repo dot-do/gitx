@@ -7,7 +7,7 @@ import {
   SideBandChannel,
   PackfileOptions,
   PackfileResult,
-  ObjectStore,
+  UploadPackUploadPackObjectStore,
   ShallowInfo,
   advertiseRefs,
   createSession,
@@ -43,7 +43,7 @@ const SHA1_BLOB_1 = 'e'.repeat(40)
 const SHA1_TAG_1 = 'f'.repeat(40)
 
 // Mock object store implementation
-function createMockStore(objects: Map<string, { type: 'blob' | 'tree' | 'commit' | 'tag'; data: Uint8Array }>): ObjectStore {
+function createMockStore(objects: Map<string, { type: 'blob' | 'tree' | 'commit' | 'tag'; data: Uint8Array }>): UploadPackObjectStore {
   const refs: Ref[] = [
     { name: 'refs/heads/main', sha: SHA1_COMMIT_1 },
     { name: 'refs/heads/feature', sha: SHA1_COMMIT_2 },
@@ -94,7 +94,7 @@ function createCommitData(tree: string, parents: string[], message: string): Uin
 }
 
 describe('git-upload-pack', () => {
-  let mockStore: ObjectStore
+  let mockStore: UploadPackObjectStore
   let objects: Map<string, { type: 'blob' | 'tree' | 'commit' | 'tag'; data: Uint8Array }>
 
   beforeEach(() => {
@@ -170,7 +170,7 @@ describe('git-upload-pack', () => {
     })
 
     it('should return empty advertisement for empty repository', async () => {
-      const emptyStore: ObjectStore = {
+      const emptyStore: UploadPackObjectStore = {
         ...mockStore,
         async getRefs() { return [] }
       }
@@ -698,7 +698,7 @@ describe('git-upload-pack', () => {
       const baseSha = '1'.repeat(40)
       const targetSha = '2'.repeat(40)
 
-      const thinPackStore: ObjectStore = {
+      const thinPackStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === baseSha) return { type: 'blob', data: baseBlob }
           if (sha === targetSha) return { type: 'blob', data: targetBlob }
@@ -1065,7 +1065,7 @@ describe('git-upload-pack', () => {
   // ==========================================================================
   describe('Edge Cases', () => {
     it('should handle clone of empty repository', async () => {
-      const emptyStore: ObjectStore = {
+      const emptyStore: UploadPackObjectStore = {
         async getObject() { return null },
         async hasObject() { return false },
         async getCommitParents() { return [] },
@@ -1267,7 +1267,7 @@ describe('git-upload-pack', () => {
       const baseSha = '1'.repeat(40)
       const modifiedSha = '2'.repeat(40)
 
-      const deltaStore: ObjectStore = {
+      const deltaStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === baseSha) return { type: 'blob', data: baseBlob }
           if (sha === modifiedSha) return { type: 'blob', data: modifiedBlob }
@@ -1309,7 +1309,7 @@ describe('git-upload-pack', () => {
       const baseSha = 'base'.padEnd(40, '0')
       const modifiedSha = 'modi'.padEnd(40, '0')
 
-      const thinStore: ObjectStore = {
+      const thinStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === baseSha) return { type: 'blob', data: baseBlob }
           if (sha === modifiedSha) return { type: 'blob', data: modifiedBlob }
@@ -1347,7 +1347,7 @@ describe('git-upload-pack', () => {
         shas.push(sha)
       }
 
-      const chainStore: ObjectStore = {
+      const chainStore: UploadPackObjectStore = {
         async getObject(sha: string) { return objectChain.get(sha) || null },
         async hasObject(sha: string) { return objectChain.has(sha) },
         async getCommitParents() { return [] },
@@ -1380,7 +1380,7 @@ describe('git-upload-pack', () => {
       const baseSha = 'base'.padEnd(40, '0')
       const modifiedSha = 'modi'.padEnd(40, '0')
 
-      const deltaTestStore: ObjectStore = {
+      const deltaTestStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === baseSha) return { type: 'blob', data: baseBlob }
           if (sha === modifiedSha) return { type: 'blob', data: modifiedBlob }
@@ -1442,7 +1442,7 @@ describe('git-upload-pack', () => {
       const baseSha = 'clienthas'.padEnd(40, '0').slice(0, 40)
       const modifiedSha = 'needstosend'.padEnd(40, '0').slice(0, 40)
 
-      const refDeltaStore: ObjectStore = {
+      const refDeltaStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === baseSha) return { type: 'blob', data: baseBlob }
           if (sha === modifiedSha) return { type: 'blob', data: modifiedBlob }
@@ -1575,7 +1575,7 @@ describe('git-upload-pack', () => {
         'Test commit'
       )
 
-      const filterStore: ObjectStore = {
+      const filterStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === commit) return { type: 'commit', data: commitData }
           if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
@@ -1626,7 +1626,7 @@ describe('git-upload-pack', () => {
         'Test commit'
       )
 
-      const limitStore: ObjectStore = {
+      const limitStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === commit) return { type: 'commit', data: commitData }
           if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
@@ -1767,7 +1767,7 @@ describe('git-upload-pack', () => {
         'New commit'
       )
 
-      const timestampStore: ObjectStore = {
+      const timestampStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === oldCommit) return { type: 'commit', data: oldCommitData }
           if (sha === newCommit) return { type: 'commit', data: newCommitData }
@@ -1821,7 +1821,7 @@ describe('git-upload-pack', () => {
         'Commit'
       )
 
-      const deepenNotStore: ObjectStore = {
+      const deepenNotStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === commit1) return { type: 'commit', data: commitData() }
           if (sha === commit2) return { type: 'commit', data: commitData(commit1) }
@@ -1998,7 +1998,7 @@ describe('git-upload-pack', () => {
       largeBlob.fill(0x42)
       const largeSha = 'large'.padEnd(40, '0')
 
-      const largeStore: ObjectStore = {
+      const largeStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === largeSha) return { type: 'blob', data: largeBlob }
           return null
@@ -2059,7 +2059,7 @@ describe('git-upload-pack', () => {
 
     it('should advertise symref for detached HEAD', async () => {
       // When HEAD is detached, symref should point to the commit
-      const detachedStore: ObjectStore = {
+      const detachedStore: UploadPackObjectStore = {
         ...mockStore,
         async getRefs() {
           return [
@@ -2094,7 +2094,7 @@ describe('git-upload-pack', () => {
         'Merge commit'
       )
 
-      const mergeStore: ObjectStore = {
+      const mergeStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           if (sha === mergeCommit) return { type: 'commit', data: mergeData }
           if (sha === parent1 || sha === parent2) {
@@ -2149,7 +2149,7 @@ describe('git-upload-pack', () => {
       const circularSha = 'circ'.padEnd(40, '0')
       let callCount = 0
 
-      const circularStore: ObjectStore = {
+      const circularStore: UploadPackObjectStore = {
         async getObject(sha: string) {
           callCount++
           if (callCount > 100) throw new Error('Infinite loop detected')

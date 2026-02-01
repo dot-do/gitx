@@ -212,3 +212,12 @@ export {
   parseRefAdvertisements,
   formatRefAdvertisements,
 } from './protocol'
+
+// ============================================================================
+// Repository Abstraction
+// ============================================================================
+
+export {
+  type Repository,
+  GitBackendRepository,
+} from './repository'

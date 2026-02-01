@@ -448,16 +448,8 @@ export async function handleExport(
 async function readCommitsFromStorage(store: SqliteObjectStore): Promise<GitCommitData[]> {
   const commits: GitCommitData[] = []
 
-  // Query all commit objects from the objects table
-  // Note: This uses a raw SQL query since ObjectStore doesn't have a listByType method
-  const storage = (store as unknown as { storage: DurableObjectStorage }).storage
-  if (!storage?.sql) return commits
-
   try {
-    const result = storage.sql.exec(
-      "SELECT sha, data FROM objects WHERE type = 'commit' ORDER BY created_at DESC LIMIT 10000"
-    )
-    const rows = result.toArray() as { sha: string; data: Uint8Array }[]
+    const rows = await store.listObjectsByType('commit')
 
     for (const row of rows) {
       const commit = parseCommitObject(row.sha, row.data)
