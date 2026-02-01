@@ -15,6 +15,9 @@ import type { Ref } from '../refs/storage'
 // Types
 // ============================================================================
 
+/** Callback invoked after a ref is updated or deleted. */
+export type RefUpdateCallback = (refName: string, oldTarget: string, newTarget: string) => void
+
 export interface ParquetRefStoreOptions {
   /** R2 bucket for Parquet files */
   r2: R2Bucket
@@ -22,6 +25,8 @@ export interface ParquetRefStoreOptions {
   sql: DurableObjectStorage
   /** Repository prefix in R2 */
   prefix: string
+  /** Optional callback invoked on ref changes (set or delete) */
+  onRefUpdate?: RefUpdateCallback
 }
 
 export interface RefRow {
@@ -51,11 +56,13 @@ export class ParquetRefStore {
   private sql: DurableObjectStorage
   private prefix: string
   private dirty = false
+  private onRefUpdate?: RefUpdateCallback
 
   constructor(options: ParquetRefStoreOptions) {
     this.r2 = options.r2
     this.sql = options.sql
     this.prefix = options.prefix
+    this.onRefUpdate = options.onRefUpdate
   }
 
   /**

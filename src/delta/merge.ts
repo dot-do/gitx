@@ -85,7 +85,7 @@ export function threeWayMerge(
 
   // Compute base state at ancestor
   const baseEntries = parentLog.snapshot(baseVersion)
-  const tempLog = new RefLog(null as unknown as never, '__merge_temp__')
+  const tempLog = new RefLog(null, '__merge_temp__')
   tempLog.loadEntries(baseEntries)
   const baseState = tempLog.replayState()
 

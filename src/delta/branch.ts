@@ -79,7 +79,7 @@ export class DeltaBranch {
   replayState(): Map<string, RefState> {
     // Start with parent state at fork point
     const parentEntries = this.parentLog.snapshot(this.info.baseVersion)
-    const tempLog = new RefLog(this.branchLog['bucket'], '__temp__')
+    const tempLog = new RefLog(this.branchLog.getBucket(), '__temp__')
     tempLog.loadEntries(parentEntries)
     const state = tempLog.replayState()
 

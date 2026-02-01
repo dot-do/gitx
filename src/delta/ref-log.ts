@@ -62,10 +62,10 @@ const REF_LOG_SCHEMA = [
 export class RefLog {
   private entries: RefLogEntry[] = []
   private nextVersion: number = 1
-  private bucket: RefLogBucket
+  private bucket: RefLogBucket | null
   private prefix: string
 
-  constructor(bucket: RefLogBucket, prefix: string) {
+  constructor(bucket: RefLogBucket | null, prefix: string) {
     this.bucket = bucket
     this.prefix = prefix
   }
@@ -134,8 +134,16 @@ export class RefLog {
    * Flush current entries to a Parquet file on R2.
    * Returns the R2 key of the written file.
    */
+  /** Get the bucket (may be null for temporary/in-memory logs). */
+  getBucket(): RefLogBucket | null {
+    return this.bucket
+  }
+
   async flush(): Promise<string | null> {
     if (this.entries.length === 0) return null
+    if (!this.bucket) {
+      throw new Error('Cannot flush a RefLog with no bucket')
+    }
 
     const buffer = parquetWriteBuffer({
       schema: REF_LOG_SCHEMA,

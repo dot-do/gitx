@@ -115,6 +115,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   private objectFileKeys: string[] = []
   private tombstones: Set<string> = new Set()
   private initialized = false
+  private initPromise?: Promise<void>
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
@@ -129,7 +130,13 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
    * Initialize the store (bloom cache, discover existing Parquet files).
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return
+    if (!this.initPromise) {
+      this.initPromise = this._doInitialize()
+    }
+    return this.initPromise
+  }
+
+  private async _doInitialize(): Promise<void> {
     await this.bloomCache.initialize()
     // Discover existing object files
     await this.discoverObjectFiles()
