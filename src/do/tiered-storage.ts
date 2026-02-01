@@ -543,14 +543,14 @@ export class TieredStorage {
     const rows = this.sql.exec(
       'SELECT type, data FROM git_objects_hot WHERE sha = ?',
       sha
-    ).toArray() as Array<{ type: string; data: Uint8Array }>
+    ).toArray() as Array<{ type: ObjectType; data: Uint8Array }>
 
     if (rows.length === 0) return
 
     const { type, data } = rows[0]
 
     // Store in warm tier
-    await this.storeInWarmTier(sha, type as ObjectType, data)
+    await this.storeInWarmTier(sha, type, data)
 
     // Remove from hot tier
     this.sql.exec('DELETE FROM git_objects_hot WHERE sha = ?', sha)
@@ -732,12 +732,12 @@ export class TieredStorage {
     const rows = this.sql.exec(
       'SELECT type, data FROM git_objects_hot WHERE sha = ?',
       sha
-    ).toArray() as Array<{ type: string; data: Uint8Array }>
+    ).toArray() as Array<{ type: ObjectType; data: Uint8Array }>
 
     if (rows.length === 0) return null
 
     return {
-      type: rows[0].type as ObjectType,
+      type: rows[0].type,
       data: rows[0].data
     }
   }

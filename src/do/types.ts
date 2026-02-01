@@ -336,6 +336,15 @@ export interface Logger {
 // ============================================================================
 
 /**
+ * Per-component health status returned in the health check response.
+ */
+export interface ComponentHealth {
+  status: 'ok' | 'degraded' | 'unhealthy'
+  message?: string
+  [key: string]: unknown
+}
+
+/**
  * Health check response.
  */
 export interface HealthCheckResponse {
@@ -344,4 +353,9 @@ export interface HealthCheckResponse {
   $type: string
   uptime?: number
   capabilities?: string[]
+  components?: {
+    sqlite?: ComponentHealth
+    bloom?: ComponentHealth
+    parquet?: ComponentHealth
+  }
 }

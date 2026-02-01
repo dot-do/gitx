@@ -22,8 +22,37 @@ import {
   toFileRow,
   type CommitRow,
   type RefRow,
+  type FileRow,
   type FileChangeType,
 } from './schemas'
+
+// ============================================================================
+// Parquet Row Compatibility
+// ============================================================================
+
+/**
+ * A row type compatible with the Parquet writer's `writeRow(row: Record<string, unknown>)`.
+ *
+ * Row types like CommitRow, RefRow, FileRow have strongly-typed fields
+ * (string, number, boolean, null) which are all valid `unknown` values.
+ * This type documents the contract expected by the Parquet writer.
+ */
+export type ParquetWritableRow = {
+  [key: string]: string | number | boolean | bigint | null | undefined
+}
+
+/**
+ * Converts a strongly-typed row object to the Record<string, unknown> expected by ParquetWriter.
+ *
+ * Row types (CommitRow, RefRow, FileRow) have fields that are all subtypes of `unknown`
+ * (string, number, boolean, null). This function centralizes the single safe cast
+ * rather than scattering `as unknown as Record<string, unknown>` double casts.
+ */
+function toWritableRow(row: CommitRow | RefRow | FileRow): Record<string, unknown> {
+  // All row properties are string | number | boolean | null | undefined,
+  // which are all valid `unknown` values. This cast is safe.
+  return row as unknown as Record<string, unknown>
+}
 
 // ============================================================================
 // Types
@@ -168,7 +197,7 @@ export class GitParquetExporter {
 
     for (const commit of commits) {
       const row = toCommitRow(commit, this.repository)
-      await writer.writeRow(row as unknown as Record<string, unknown>)
+      await writer.writeRow(toWritableRow(row))
     }
 
     return this.finalize(writer)
@@ -198,7 +227,7 @@ export class GitParquetExporter {
         isDefault: ref.name === options.defaultBranch,
         snapshotTime,
       })
-      await writer.writeRow(row as unknown as Record<string, unknown>)
+      await writer.writeRow(toWritableRow(row))
     }
 
     return this.finalize(writer)
@@ -222,7 +251,7 @@ export class GitParquetExporter {
     for (const commit of commits) {
       for (const file of commit.files) {
         const row = toFileRow(file, commit.sha, this.repository, commit.date)
-        await writer.writeRow(row as unknown as Record<string, unknown>)
+        await writer.writeRow(toWritableRow(row))
       }
     }
 
@@ -312,7 +341,7 @@ export class GitParquetExporter {
 /**
  * Streaming exporter for incremental Parquet writing.
  */
-export class StreamingExporter<TInput, TRow> {
+export class StreamingExporter<TInput, TRow extends CommitRow | RefRow | FileRow> {
   private writer: ParquetWriter
   private transform: (input: TInput) => TRow
 
@@ -326,7 +355,7 @@ export class StreamingExporter<TInput, TRow> {
    */
   async add(input: TInput): Promise<void> {
     const row = this.transform(input)
-    await this.writer.writeRow(row as unknown as Record<string, unknown>)
+    await this.writer.writeRow(toWritableRow(row))
   }
 
   /**
@@ -381,7 +410,7 @@ export class FileStreamingExporter {
   ): Promise<void> {
     for (const file of files) {
       const row = toFileRow(file, commitSha, this.repository, commitDate)
-      await this.writer.writeRow(row as unknown as Record<string, unknown>)
+      await this.writer.writeRow(toWritableRow(row))
     }
   }
 

@@ -4,31 +4,33 @@
  * Provides controlled access to the git object store within sandboxed code.
  */
 
+import type { ObjectType } from '../../types/objects'
+
 export interface ObjectStoreLike {
-  getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
-  putObject(type: string, data: Uint8Array): Promise<string>
-  listObjects(options?: { type?: string; limit?: number }): Promise<string[]>
+  getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
+  putObject(type: ObjectType, data: Uint8Array): Promise<string>
+  listObjects(options?: { type?: ObjectType; limit?: number }): Promise<string[]>
 }
 
 export interface ObjectStoreAccess {
   getProxy(): ObjectStoreProxy
-  getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
-  putObject(type: string, data: Uint8Array): Promise<string>
-  listObjects(options?: { type?: string; limit?: number }): Promise<string[]>
+  getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
+  putObject(type: ObjectType, data: Uint8Array): Promise<string>
+  listObjects(options?: { type?: ObjectType; limit?: number }): Promise<string[]>
 }
 
 export class ObjectStoreProxy {
   constructor(private objectStore: ObjectStoreLike) {}
 
-  async getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null> {
+  async getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null> {
     return this.objectStore.getObject(sha)
   }
 
-  async putObject(type: string, data: Uint8Array): Promise<string> {
+  async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
     return this.objectStore.putObject(type, data)
   }
 
-  async listObjects(options?: { type?: string; limit?: number }): Promise<string[]> {
+  async listObjects(options?: { type?: ObjectType; limit?: number }): Promise<string[]> {
     return this.objectStore.listObjects(options)
   }
 }
@@ -38,7 +40,7 @@ export function createObjectStoreAccess(objectStore: ObjectStoreLike): ObjectSto
   return {
     getProxy: () => proxy,
     getObject: (sha: string) => proxy.getObject(sha),
-    putObject: (type: string, data: Uint8Array) => proxy.putObject(type, data),
-    listObjects: (options?: { type?: string; limit?: number }) => proxy.listObjects(options),
+    putObject: (type: ObjectType, data: Uint8Array) => proxy.putObject(type, data),
+    listObjects: (options?: { type?: ObjectType; limit?: number }) => proxy.listObjects(options),
   }
 }

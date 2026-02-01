@@ -262,6 +262,106 @@ function validateRemoteUrl(url: string): boolean {
 }
 
 // ============================================================================
+// Type Guards
+// ============================================================================
+
+/**
+ * Valid operation type values.
+ */
+const VALID_OPERATION_TYPES = new Set<string>(Object.values(OperationType))
+
+/**
+ * Valid operation state values.
+ */
+const VALID_OPERATION_STATES = new Set<string>(Object.values(OperationState))
+
+/**
+ * Checks if a value is a valid CloneParams object.
+ */
+export function isCloneParams(value: unknown): value is CloneParams {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['remote'] === 'string' &&
+    typeof obj['branch'] === 'string' &&
+    (obj['depth'] === undefined || typeof obj['depth'] === 'number') &&
+    (obj['path'] === undefined || typeof obj['path'] === 'string')
+  )
+}
+
+/**
+ * Checks if a value is a valid FetchParams object.
+ */
+export function isFetchParams(value: unknown): value is FetchParams {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['remote'] === 'string' &&
+    Array.isArray(obj['refs']) &&
+    (obj['refs'] as unknown[]).every((r: unknown) => typeof r === 'string') &&
+    (obj['depth'] === undefined || typeof obj['depth'] === 'number') &&
+    (obj['prune'] === undefined || typeof obj['prune'] === 'boolean')
+  )
+}
+
+/**
+ * Checks if a value is a valid PushParams object.
+ */
+export function isPushParams(value: unknown): value is PushParams {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['remote'] === 'string' &&
+    Array.isArray(obj['refs']) &&
+    (obj['refs'] as unknown[]).every((r: unknown) => typeof r === 'string') &&
+    (obj['force'] === undefined || typeof obj['force'] === 'boolean') &&
+    (obj['delete'] === undefined || typeof obj['delete'] === 'boolean')
+  )
+}
+
+/**
+ * Checks if a value is a valid RPCOperation object.
+ *
+ * Validates all required fields and their types to avoid unsafe casts
+ * from storage reads.
+ */
+export function isRPCOperation(value: unknown): value is RPCOperation {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+
+  // Required fields
+  if (typeof obj['operationId'] !== 'string') return false
+  if (typeof obj['type'] !== 'string' || !VALID_OPERATION_TYPES.has(obj['type'])) return false
+  if (typeof obj['state'] !== 'string' || !VALID_OPERATION_STATES.has(obj['state'])) return false
+  if (typeof obj['createdAt'] !== 'number') return false
+
+  // Params must match the operation type
+  if (typeof obj['params'] !== 'object' || obj['params'] === null) return false
+
+  return true
+}
+
+/**
+ * Validates operation params match the declared operation type.
+ * Returns the params cast to the correct type, or null if invalid.
+ */
+export function validateOperationParams(
+  type: OperationType,
+  params: unknown
+): CloneParams | FetchParams | PushParams | null {
+  switch (type) {
+    case OperationType.CLONE:
+      return isCloneParams(params) ? params : null
+    case OperationType.FETCH:
+      return isFetchParams(params) ? params : null
+    case OperationType.PUSH:
+      return isPushParams(params) ? params : null
+    default:
+      return null
+  }
+}
+
+// ============================================================================
 // GitRPCService Class
 // ============================================================================
 
@@ -503,8 +603,8 @@ export class GitRPCService {
     const results: RPCOperationStatus[] = []
 
     for (const [_, value] of allOperations) {
-      const operation = value as RPCOperation
-      if (!operation) continue
+      if (!isRPCOperation(value)) continue
+      const operation = value
 
       // Apply filters
       if (options?.state && operation.state !== options.state) {
@@ -536,8 +636,8 @@ export class GitRPCService {
     const allOperations = await this.storage.list({ prefix: 'rpc:operation:' })
 
     for (const [key, value] of allOperations) {
-      const operation = value as RPCOperation
-      if (!operation) continue
+      if (!isRPCOperation(value)) continue
+      const operation = value
 
       // Only clean up terminal states
       if (
@@ -580,16 +680,22 @@ export class GitRPCService {
     await this._setState(operationId, OperationState.RUNNING)
 
     try {
-      // Execute based on operation type
+      // Validate and execute based on operation type
+      const validatedParams = validateOperationParams(operation.type, operation.params)
+      if (!validatedParams) {
+        await this._failOperation(operationId, `Invalid params for operation type: ${operation.type}`)
+        return
+      }
+
       switch (operation.type) {
         case OperationType.CLONE:
-          await this._executeClone(operationId, operation.params as CloneParams)
+          await this._executeClone(operationId, validatedParams as CloneParams)
           break
         case OperationType.FETCH:
-          await this._executeFetch(operationId, operation.params as FetchParams)
+          await this._executeFetch(operationId, validatedParams as FetchParams)
           break
         case OperationType.PUSH:
-          await this._executePush(operationId, operation.params as PushParams)
+          await this._executePush(operationId, validatedParams as PushParams)
           break
       }
     } catch (error) {
@@ -756,7 +862,9 @@ export class GitRPCService {
   private async _getOperation(operationId: string): Promise<RPCOperation | null> {
     const key = `rpc:operation:${operationId}`
     const data = await this.storage.get(key)
-    return data as RPCOperation | null
+    if (!data) return null
+    if (!isRPCOperation(data)) return null
+    return data
   }
 
   /**

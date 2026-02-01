@@ -52,7 +52,8 @@ import {
   CommitObject,
   TagObject,
   TreeEntry,
-  Author
+  Author,
+  isValidObjectType
 } from '../types/objects'
 
 import { hashObject, HashCache } from '../utils/hash'
@@ -563,8 +564,8 @@ export class SqliteObjectStore implements BasicObjectStore {
    * @param data - Raw object content (without Git header)
    * @returns 40-character SHA-1 hash of the stored object
    */
-  async storeObject(type: string, data: Uint8Array): Promise<string> {
-    return this.putObject(type as ObjectType, data)
+  async storeObject(type: ObjectType, data: Uint8Array): Promise<string> {
+    return this.putObject(type, data)
   }
 
   /**
@@ -1586,7 +1587,10 @@ export class SqliteObjectStore implements BasicObjectStore {
       if (line.startsWith('object ')) {
         object = line.slice(7)
       } else if (line.startsWith('type ')) {
-        objectType = line.slice(5) as ObjectType
+        const parsed = line.slice(5)
+        if (isValidObjectType(parsed)) {
+          objectType = parsed
+        }
       } else if (line.startsWith('tag ')) {
         name = line.slice(4)
       } else if (line.startsWith('tagger ')) {

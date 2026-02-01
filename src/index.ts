@@ -16,8 +16,19 @@
  *
  * @module gitx.do
  *
+ * Subpath imports are available for targeted usage without pulling in the
+ * entire barrel:
+ *
+ *   - `gitx.do/types`    - Type definitions (objects, storage, capability, interfaces)
+ *   - `gitx.do/core`     - Core git operations (merge, blame, commit, branch)
+ *   - `gitx.do/storage`  - R2 pack storage, object index, tiered storage
+ *   - `gitx.do/wire`     - Git Smart HTTP protocol, pkt-line, auth
+ *   - `gitx.do/delta`    - Delta transaction log (ref-log, branching, merging)
+ *   - `gitx.do/iceberg`  - Iceberg v2 metadata generation
+ *
  * @example
  * ```typescript
+ * // Full barrel import (backward compatible)
  * import {
  *   // Types
  *   type CommitObject,
@@ -37,6 +48,11 @@
  *   handleInfoRefs,
  *   handleUploadPack,
  * } from 'gitx.do'
+ *
+ * // Or use targeted subpath imports
+ * import { R2PackStorage, ObjectIndex } from 'gitx.do/storage'
+ * import { handleInfoRefs, handleUploadPack } from 'gitx.do/wire'
+ * import { merge, createCommit } from 'gitx.do/core'
  *
  * // Create a commit
  * const commit = await createCommit(storage, {

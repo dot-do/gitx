@@ -45,6 +45,43 @@ import type {
   RepositoryVisibility,
 } from './permissions'
 import { isPermissionExpired, getHighestPermission, isValidPermission } from './permissions'
+import { typedQuery, validateRow } from '../utils/sql-validate'
+
+// ============================================================================
+// SQL Row Types
+// ============================================================================
+
+type UserPermissionRow = {
+  user_id: string
+  repo_id: string
+  permission: string
+  granted_by: string | null
+  granted_at: number | null
+  expires_at: number | null
+  metadata: string | null
+}
+
+type TeamPermissionRow = {
+  team_id: string
+  repo_id: string
+  permission: string
+  granted_by: string | null
+  granted_at: number | null
+}
+
+type RepoSettingsRow = {
+  repo_id: string
+  visibility: string
+  owner_id: string
+  allow_anonymous_read: number
+  default_org_permission: string | null
+  protected_branches: string | null
+  protected_tags: string | null
+}
+
+const isUserPermRow = validateRow<UserPermissionRow>(['user_id', 'repo_id', 'permission'])
+const isTeamPermRow = validateRow<TeamPermissionRow>(['team_id', 'repo_id', 'permission'])
+const isRepoSettingsRow = validateRow<RepoSettingsRow>(['repo_id', 'visibility', 'owner_id'])
 
 // ============================================================================
 // Storage Interfaces
@@ -308,21 +345,14 @@ export class SqlPermissionStorage implements PermissionStorage {
   async getPermission(userId: string, repoId: string): Promise<UserPermission | null> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(
+    const rows = typedQuery<UserPermissionRow>(
+      this.sql.exec(
         `SELECT * FROM user_permissions WHERE user_id = ? AND repo_id = ?`,
         userId,
         repoId
-      )
-      .toArray() as Array<{
-      user_id: string
-      repo_id: string
-      permission: string
-      granted_by: string | null
-      granted_at: number | null
-      expires_at: number | null
-      metadata: string | null
-    }>
+      ),
+      isUserPermRow
+    )
 
     if (rows.length === 0) return null
 
@@ -342,17 +372,10 @@ export class SqlPermissionStorage implements PermissionStorage {
   async listRepoPermissions(repoId: string): Promise<UserPermission[]> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(`SELECT * FROM user_permissions WHERE repo_id = ?`, repoId)
-      .toArray() as Array<{
-      user_id: string
-      repo_id: string
-      permission: string
-      granted_by: string | null
-      granted_at: number | null
-      expires_at: number | null
-      metadata: string | null
-    }>
+    const rows = typedQuery<UserPermissionRow>(
+      this.sql.exec(`SELECT * FROM user_permissions WHERE repo_id = ?`, repoId),
+      isUserPermRow
+    )
 
     const now = Date.now()
     const permissions: UserPermission[] = []
@@ -370,17 +393,10 @@ export class SqlPermissionStorage implements PermissionStorage {
   async listUserRepos(userId: string): Promise<UserPermission[]> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(`SELECT * FROM user_permissions WHERE user_id = ?`, userId)
-      .toArray() as Array<{
-      user_id: string
-      repo_id: string
-      permission: string
-      granted_by: string | null
-      granted_at: number | null
-      expires_at: number | null
-      metadata: string | null
-    }>
+    const rows = typedQuery<UserPermissionRow>(
+      this.sql.exec(`SELECT * FROM user_permissions WHERE user_id = ?`, userId),
+      isUserPermRow
+    )
 
     const now = Date.now()
     const permissions: UserPermission[] = []
@@ -427,19 +443,14 @@ export class SqlPermissionStorage implements PermissionStorage {
   async getTeamPermission(teamId: string, repoId: string): Promise<TeamPermission | null> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(
+    const rows = typedQuery<TeamPermissionRow>(
+      this.sql.exec(
         `SELECT * FROM team_permissions WHERE team_id = ? AND repo_id = ?`,
         teamId,
         repoId
-      )
-      .toArray() as Array<{
-      team_id: string
-      repo_id: string
-      permission: string
-      granted_by: string | null
-      granted_at: number | null
-    }>
+      ),
+      isTeamPermRow
+    )
 
     if (rows.length === 0) return null
 
@@ -456,15 +467,10 @@ export class SqlPermissionStorage implements PermissionStorage {
   async listRepoTeamPermissions(repoId: string): Promise<TeamPermission[]> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(`SELECT * FROM team_permissions WHERE repo_id = ?`, repoId)
-      .toArray() as Array<{
-      team_id: string
-      repo_id: string
-      permission: string
-      granted_by: string | null
-      granted_at: number | null
-    }>
+    const rows = typedQuery<TeamPermissionRow>(
+      this.sql.exec(`SELECT * FROM team_permissions WHERE repo_id = ?`, repoId),
+      isTeamPermRow
+    )
 
     return rows.map((row) => ({
       teamId: row.team_id,
@@ -482,17 +488,10 @@ export class SqlPermissionStorage implements PermissionStorage {
   async getRepoSettings(repoId: string): Promise<RepositoryAccessSettings | null> {
     this.ensureInitialized()
 
-    const rows = this.sql
-      .exec(`SELECT * FROM repo_settings WHERE repo_id = ?`, repoId)
-      .toArray() as Array<{
-      repo_id: string
-      visibility: string
-      owner_id: string
-      allow_anonymous_read: number
-      default_org_permission: string | null
-      protected_branches: string | null
-      protected_tags: string | null
-    }>
+    const rows = typedQuery<RepoSettingsRow>(
+      this.sql.exec(`SELECT * FROM repo_settings WHERE repo_id = ?`, repoId),
+      isRepoSettingsRow
+    )
 
     if (rows.length === 0) return null
 

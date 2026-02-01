@@ -176,6 +176,93 @@ export type GitHubEventPayload =
  */
 export type GitHubEventType = 'push' | 'ping' | 'create' | 'delete'
 
+/**
+ * Set of known GitHub event types for runtime validation.
+ */
+export const GITHUB_EVENT_TYPES: ReadonlySet<string> = new Set<GitHubEventType>([
+  'push',
+  'ping',
+  'create',
+  'delete',
+])
+
+/**
+ * Checks if a string is a valid GitHubEventType.
+ */
+export function isGitHubEventType(value: string): value is GitHubEventType {
+  return GITHUB_EVENT_TYPES.has(value)
+}
+
+// ============================================================================
+// Payload Validators
+// ============================================================================
+
+/**
+ * Checks if an object has the basic shape of a GitHub repository.
+ * Validates required fields used by webhook handlers.
+ */
+function hasGitHubRepository(value: unknown): value is { repository: GitHubRepository } {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  if (typeof obj['repository'] !== 'object' || obj['repository'] === null) return false
+  const repo = obj['repository'] as Record<string, unknown>
+  return (
+    typeof repo['full_name'] === 'string' &&
+    typeof repo['clone_url'] === 'string'
+  )
+}
+
+/**
+ * Validates that unknown data has the required shape of a PushEventPayload.
+ * Does not exhaustively check all fields, but ensures fields accessed by handlers exist.
+ */
+export function isPushEventPayload(value: unknown): value is PushEventPayload {
+  if (!hasGitHubRepository(value)) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['ref'] === 'string' &&
+    typeof obj['before'] === 'string' &&
+    typeof obj['after'] === 'string' &&
+    Array.isArray(obj['commits'])
+  )
+}
+
+/**
+ * Validates that unknown data has the required shape of a PingEventPayload.
+ */
+export function isPingEventPayload(value: unknown): value is PingEventPayload {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['zen'] === 'string' &&
+    typeof obj['hook_id'] === 'number'
+  )
+}
+
+/**
+ * Validates that unknown data has the required shape of a CreateEventPayload.
+ */
+export function isCreateEventPayload(value: unknown): value is CreateEventPayload {
+  if (!hasGitHubRepository(value)) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['ref'] === 'string' &&
+    (obj['ref_type'] === 'branch' || obj['ref_type'] === 'tag')
+  )
+}
+
+/**
+ * Validates that unknown data has the required shape of a DeleteEventPayload.
+ */
+export function isDeleteEventPayload(value: unknown): value is DeleteEventPayload {
+  if (!hasGitHubRepository(value)) return false
+  const obj = value as Record<string, unknown>
+  return (
+    typeof obj['ref'] === 'string' &&
+    (obj['ref_type'] === 'branch' || obj['ref_type'] === 'tag')
+  )
+}
+
 // ============================================================================
 // Handler Types
 // ============================================================================

@@ -1321,7 +1321,7 @@ export function createQuarantine(
   quarantineId?: string
 ): QuarantineEnvironment {
   const id = quarantineId || `quarantine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  const quarantinedObjects = new Map<string, { type: string; data: Uint8Array }>()
+  const quarantinedObjects = new Map<string, { type: ObjectType; data: Uint8Array }>()
 
   // Create a hybrid store that writes to quarantine but reads from both
   const quarantineStore: ReceivePackObjectStore = {
@@ -1329,7 +1329,7 @@ export function createQuarantine(
       // Check quarantine first
       const quarantined = quarantinedObjects.get(sha)
       if (quarantined) {
-        return { type: quarantined.type as any, data: quarantined.data }
+        return { type: quarantined.type, data: quarantined.data }
       }
       // Fall back to main store (for delta resolution)
       return mainStore.getObject(sha)

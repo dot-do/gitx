@@ -29,6 +29,7 @@ import {
 } from './rpc-mock'
 
 import type { GitScope, OAuthContext } from './oauth'
+import type { ObjectType } from '../types/objects'
 
 // Re-export rpc.do types and functions
 export {
@@ -220,7 +221,7 @@ export interface GitRPCMethods {
   receivePack(data: Uint8Array): Promise<{ objectsReceived: number }>
   sendPack(options: PackSendOptions): Promise<Uint8Array>
   storeDelta(baseSha: string, deltaData: Uint8Array): Promise<{ sha: string }>
-  packObjects(objects: Array<{ sha: string; type: string; data: Uint8Array }>): Promise<Uint8Array>
+  packObjects(objects: Array<{ sha: string; type: ObjectType; data: Uint8Array }>): Promise<Uint8Array>
   batchCommit(commits: CommitOptions[], options?: BatchCommitOptions): Promise<Array<{ sha: string; index: number }>>
   batchCommitChain(commits: Array<Omit<CommitOptions, 'parents'>>): Promise<Array<{ sha: string; parents: string[] }>>
   getCloneResumeToken(url: string): Promise<CloneResumeToken>
@@ -1330,7 +1331,7 @@ export class RPCGitDO {
     return { sha }
   }
 
-  private async packObjects(objects: Array<{ sha: string; type: string; data: Uint8Array }>): Promise<Uint8Array> {
+  private async packObjects(objects: Array<{ sha: string; type: ObjectType; data: Uint8Array }>): Promise<Uint8Array> {
     // Simple pack creation - just concatenate with compression simulation
     const header = new Uint8Array([
       0x50, 0x41, 0x43, 0x4b, // PACK

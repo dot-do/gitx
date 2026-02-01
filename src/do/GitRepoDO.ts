@@ -47,6 +47,22 @@ import { ThinSchemaManager } from './schema'
 import { ParquetStore } from '../storage/parquet-store'
 import { RefLog } from '../delta/ref-log'
 
+// ============================================================================
+// Compaction Retry Constants
+// ============================================================================
+
+/** Maximum number of consecutive compaction failures before giving up */
+const MAX_COMPACTION_ATTEMPTS = 3
+
+/** Base delay for exponential backoff (10 seconds) */
+const COMPACTION_BASE_DELAY_MS = 10_000
+
+/** Backoff multiplier (10s -> 30s -> 90s) */
+const COMPACTION_BACKOFF_MULTIPLIER = 3
+
+/** SQLite table for compaction retry state */
+const COMPACTION_RETRIES_TABLE = 'compaction_retries'
+
 /**
  * Creates an FsCapability adapter that uses the FSX service binding.
  * All filesystem operations are proxied to the fsx-do worker.
@@ -605,13 +621,40 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    *
    * Runs deferred compaction if the ParquetStore has flagged it as needed.
    * This moves expensive compaction work out of the request path.
+   *
+   * Implements retry with exponential backoff:
+   * - Tracks consecutive failure count in SQLite
+   * - After MAX_COMPACTION_ATTEMPTS (3) failures, skips compaction and logs error
+   * - Uses exponential backoff for alarm rescheduling (10s, 30s, 90s)
+   * - Resets counter on success
    */
   async alarm(): Promise<void> {
     this._logger.debug('Alarm triggered')
 
     // Run deferred Parquet compaction
     if (this._parquetStore?.compactionNeeded) {
-      this._logger.info('Running deferred Parquet compaction via alarm')
+      // Ensure compaction_retries table exists
+      this._ensureCompactionRetriesTable()
+
+      // Check current attempt count
+      const attemptCount = this._getCompactionAttemptCount()
+
+      if (attemptCount >= MAX_COMPACTION_ATTEMPTS) {
+        this._logger.error('Parquet compaction permanently skipped after max retries', {
+          attempts: attemptCount,
+          maxAttempts: MAX_COMPACTION_ATTEMPTS,
+        })
+        // Reset the compaction flag so we don't keep trying on future alarms
+        // The next explicit scheduleCompaction() call will reset the counter
+        await this._parquetStore.runCompactionIfNeeded().catch(() => {})
+        return
+      }
+
+      this._logger.info('Running deferred Parquet compaction via alarm', {
+        attempt: attemptCount + 1,
+        maxAttempts: MAX_COMPACTION_ATTEMPTS,
+      })
+
       try {
         const newKey = await this._parquetStore.runCompactionIfNeeded()
         if (newKey) {
@@ -619,11 +662,96 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
         } else {
           this._logger.debug('Parquet compaction skipped (not needed)')
         }
+        // Reset retry counter on success
+        this._resetCompactionAttempts()
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        const newAttemptCount = attemptCount + 1
+        this._recordCompactionFailure(newAttemptCount, errorMessage)
+
         this._logger.error('Parquet compaction failed in alarm', {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
+          attempt: newAttemptCount,
+          maxAttempts: MAX_COMPACTION_ATTEMPTS,
         })
+
+        // Reschedule with exponential backoff if under the limit
+        if (newAttemptCount < MAX_COMPACTION_ATTEMPTS) {
+          const backoffDelay = COMPACTION_BASE_DELAY_MS * Math.pow(COMPACTION_BACKOFF_MULTIPLIER, newAttemptCount - 1)
+          this._logger.info('Rescheduling compaction with backoff', {
+            delayMs: backoffDelay,
+            nextAttempt: newAttemptCount + 1,
+          })
+          // Re-mark compaction as needed since runCompactionIfNeeded resets the flag
+          this._parquetStore.scheduleCompaction()
+          this._scheduleAlarm(backoffDelay)
+        }
       }
+    }
+  }
+
+  /**
+   * Ensure the compaction_retries table exists in SQLite.
+   */
+  private _ensureCompactionRetriesTable(): void {
+    this.state.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS ${COMPACTION_RETRIES_TABLE} (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `)
+  }
+
+  /**
+   * Get the current compaction attempt count from SQLite.
+   */
+  private _getCompactionAttemptCount(): number {
+    const result = this.state.storage.sql.exec(
+      `SELECT attempt_count FROM ${COMPACTION_RETRIES_TABLE} WHERE id = 1`
+    )
+    const rows = result.toArray() as Array<{ attempt_count: number }>
+    return rows.length > 0 ? rows[0].attempt_count : 0
+  }
+
+  /**
+   * Record a compaction failure, incrementing the attempt counter.
+   */
+  private _recordCompactionFailure(attemptCount: number, errorMessage: string): void {
+    const now = Date.now()
+    this.state.storage.sql.exec(
+      `INSERT OR REPLACE INTO ${COMPACTION_RETRIES_TABLE} (id, attempt_count, last_error, updated_at) VALUES (1, ?, ?, ?)`,
+      attemptCount,
+      errorMessage,
+      now,
+    )
+  }
+
+  /**
+   * Reset the compaction attempt counter (called on success).
+   */
+  private _resetCompactionAttempts(): void {
+    this.state.storage.sql.exec(
+      `DELETE FROM ${COMPACTION_RETRIES_TABLE} WHERE id = 1`
+    )
+  }
+
+  /**
+   * Schedule a DO alarm at a specific delay.
+   */
+  private _scheduleAlarm(delayMs: number): void {
+    try {
+      const storage = this.state.storage as unknown as {
+        setAlarm?: (scheduledTime: number | Date) => Promise<void>
+      }
+      if (typeof storage.setAlarm === 'function') {
+        this.state.waitUntil(storage.setAlarm(Date.now() + delayMs))
+      }
+    } catch (error) {
+      this._logger.warn('Failed to schedule alarm for compaction retry', {
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -643,6 +771,10 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
 
     const needed = this._parquetStore.scheduleCompaction()
     if (!needed) return false
+
+    // Reset retry counter when a fresh compaction is explicitly scheduled
+    this._ensureCompactionRetriesTable()
+    this._resetCompactionAttempts()
 
     try {
       // setAlarm is available on Cloudflare DO storage

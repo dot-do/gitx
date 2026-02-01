@@ -61,7 +61,7 @@ export interface Repository {
    * @param sha - 40-character hexadecimal SHA-1 hash
    * @returns The object with type and data, or null if not found
    */
-  getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
+  getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
 
   /**
    * Store a Git object and return its SHA-1 hash.
@@ -178,7 +178,7 @@ export class GitBackendRepository implements Repository {
   // Object operations
   // ─────────────────────────────────────────────────────────────────────────
 
-  async getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null> {
+  async getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null> {
     const obj = await this.backend.readObject(sha)
     if (!obj) return null
     return { type: obj.type, data: obj.data }

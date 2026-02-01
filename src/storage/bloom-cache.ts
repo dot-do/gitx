@@ -13,6 +13,7 @@
  */
 
 import type { SQLStorage } from './types'
+import { typedQuery, validateRow } from '../utils/sql-validate'
 
 // ============================================================================
 // Constants
@@ -416,7 +417,7 @@ export class BloomCache {
     const result = this.storage.sql.exec(
       `SELECT id, filter_data, item_count FROM ${BLOOM_TABLE} ORDER BY id ASC`
     )
-    const rows = result.toArray() as { id: number; filter_data: Uint8Array; item_count: number }[]
+    const rows = typedQuery<{ id: number; filter_data: Uint8Array; item_count: number }>(result, validateRow(['id', 'filter_data', 'item_count']))
     if (rows.length === 1 && rows[0].id === 1) {
       // Legacy single-filter format or single segment - load as legacy
       this.filter.loadLegacy(new Uint8Array(rows[0].filter_data), rows[0].item_count)
@@ -451,7 +452,7 @@ export class BloomCache {
       const countResult = this.storage.sql.exec(
         `SELECT COUNT(*) as cnt FROM ${SHA_CACHE_TABLE}`
       )
-      const countRows = countResult.toArray() as { cnt: number }[]
+      const countRows = typedQuery<{ cnt: number }>(countResult, validateRow(['cnt']))
       if (countRows.length > 0 && countRows[0].cnt > this.options.exactCacheLimit) {
         const excess = countRows[0].cnt - this.options.exactCacheLimit
         this.storage.sql.exec(
@@ -530,7 +531,7 @@ export class BloomCache {
       `SELECT type, size FROM ${SHA_CACHE_TABLE} WHERE sha = ?`,
       sha
     )
-    const rows = result.toArray() as { type: string; size: number }[]
+    const rows = typedQuery<{ type: string; size: number }>(result, validateRow(['type', 'size']))
     return rows.length > 0 ? rows[0] : null
   }
 
@@ -568,7 +569,7 @@ export class BloomCache {
       const result = this.storage.sql.exec(
         `SELECT COUNT(*) as cnt FROM ${SHA_CACHE_TABLE}`
       )
-      const rows = result.toArray() as { cnt: number }[]
+      const rows = typedQuery<{ cnt: number }>(result, validateRow(['cnt']))
       exactCacheSize = rows.length > 0 ? rows[0].cnt : 0
     }
 

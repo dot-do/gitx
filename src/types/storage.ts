@@ -23,13 +23,13 @@
  * // Implement a storage backend
  * class MyObjectStore implements ObjectStore {
  *   async getObject(sha: string) { ... }
- *   async storeObject(type: string, data: Uint8Array) { ... }
+ *   async storeObject(type: ObjectType, data: Uint8Array) { ... }
  *   // ... other methods
  * }
  * ```
  */
 
-import type { CommitObject, TreeObject } from './objects'
+import type { CommitObject, TreeObject, ObjectType } from './objects'
 import { isValidSha, isValidObjectType, assertValidSha as assertValidShaFromObjects } from './objects'
 
 // ============================================================================
@@ -268,7 +268,7 @@ export interface ObjectStore {
    * }
    * ```
    */
-  getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
+  getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
 
   /**
    * Store a Git object and return its SHA-1 hash.
@@ -288,7 +288,7 @@ export interface ObjectStore {
    * console.log(`Stored blob: ${sha}`)
    * ```
    */
-  storeObject(type: string, data: Uint8Array): Promise<string>
+  storeObject(type: ObjectType, data: Uint8Array): Promise<string>
 
   /**
    * Check if an object exists in the store.
@@ -472,7 +472,7 @@ export interface BasicObjectStore {
    * @param sha - 40-character SHA-1 hash
    * @returns Object with type and data, or null if not found
    */
-  getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
+  getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
 
   /**
    * Store an object and return its SHA.
@@ -481,7 +481,7 @@ export interface BasicObjectStore {
    * @param data - Raw object content
    * @returns 40-character SHA-1 hash of the stored object
    */
-  storeObject(type: string, data: Uint8Array): Promise<string>
+  storeObject(type: ObjectType, data: Uint8Array): Promise<string>
 
   /**
    * Check if an object exists.
@@ -673,7 +673,7 @@ export interface CommitProvider {
    * }
    * ```
    */
-  getTree?(commitSha: string): Promise<unknown>
+  getTree?(commitSha: string): Promise<TreeObject | null>
 }
 
 /**

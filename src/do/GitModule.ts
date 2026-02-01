@@ -53,35 +53,10 @@ export interface FsCapability {
   getFileId?(path: string): Promise<number | null>
 }
 
-/**
- * R2 Bucket interface for object storage operations.
- * Used as the global git object store.
- */
-export interface R2BucketLike {
-  get(key: string): Promise<R2ObjectLike | null>
-  put(key: string, value: ArrayBuffer | Uint8Array | string): Promise<R2ObjectLike>
-  delete(key: string | string[]): Promise<void>
-  list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<R2ObjectsLike>
-}
-
-/**
- * R2 Object interface.
- */
-export interface R2ObjectLike {
-  key: string
-  size: number
-  arrayBuffer(): Promise<ArrayBuffer>
-  text(): Promise<string>
-}
-
-/**
- * R2 Objects list result interface.
- */
-export interface R2ObjectsLike {
-  objects: R2ObjectLike[]
-  truncated: boolean
-  cursor?: string
-}
+// Re-export R2 interfaces from the canonical source
+export type { R2BucketLike, R2ObjectLike, R2ObjectsLike } from '../types/interfaces'
+import type { R2BucketLike } from '../types/interfaces'
+import type { ObjectType } from '../types/objects'
 
 /**
  * Database storage interface for GitModule persistence.
@@ -433,7 +408,7 @@ export class GitModule {
    * Map of SHA to { type, data } for objects that have been committed locally
    * but not yet pushed to the R2 object store.
    */
-  private pendingObjects: Map<string, { type: string; data: Uint8Array }> = new Map()
+  private pendingObjects: Map<string, { type: ObjectType; data: Uint8Array }> = new Map()
 
   /**
    * Create a new GitModule instance.

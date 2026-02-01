@@ -1247,7 +1247,10 @@ export function parseTag(data: Uint8Array): TagObject {
     if (line.startsWith('object ')) {
       object = line.slice(7)
     } else if (line.startsWith('type ')) {
-      objectType = line.slice(5) as ObjectType
+      const parsed = line.slice(5)
+      if (isValidObjectType(parsed)) {
+        objectType = parsed
+      }
     } else if (line.startsWith('tag ')) {
       name = line.slice(4)
     } else if (line.startsWith('tagger ')) {

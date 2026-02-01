@@ -62,7 +62,7 @@ import {
   RefStore
 } from '../ops/branch'
 import { createCommit, CommitAuthor, CommitOptions } from '../ops/commit'
-import type { CommitObject, TreeObject } from '../types/objects'
+import type { CommitObject, TreeObject, ObjectType } from '../types/objects'
 
 /**
  * Execute a git command and return the output.
@@ -296,7 +296,7 @@ export interface RepositoryContext {
      * @param sha - The 40-character hexadecimal SHA-1 hash
      * @returns The object with its type and data, or null if not found
      */
-    getObject(sha: string): Promise<{ type: string; data: Uint8Array } | null>
+    getObject(sha: string): Promise<{ type: ObjectType; data: Uint8Array } | null>
     /**
      * Get a parsed commit object by SHA.
      * @param sha - The commit SHA
@@ -321,7 +321,7 @@ export interface RepositoryContext {
      * @param data - The raw object data
      * @returns The SHA of the stored object
      */
-    storeObject(type: string, data: Uint8Array): Promise<string>
+    storeObject(type: ObjectType, data: Uint8Array): Promise<string>
     /**
      * Check if an object exists.
      * @param sha - The object SHA to check

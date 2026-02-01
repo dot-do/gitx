@@ -343,11 +343,13 @@ describe('ParquetStore', () => {
       const { parquetReadObjects } = await import('hyparquet')
       const data = encoder.encode('duplicate content')
 
-      // Write same object twice in different flushes
+      // Write same object in first flush
       const sha = await store.putObject('blob', data)
       await store.flush()
 
-      // Manually add same sha again by re-putting
+      // Write a different object in second flush (so keys differ)
+      await store.putObject('blob', encoder.encode('different content'))
+      // Also re-add the original to create a duplicate across files
       await store.putObject('blob', data)
       await store.flush()
 
@@ -475,7 +477,7 @@ describe('ParquetStore', () => {
         r2: mockR2,
         sql: mockStorage,
         prefix: 'test-repo',
-        icebergEnabled: true,
+        onFlush: (await import('../../src/iceberg/flush-handler')).createIcebergFlushHandler(),
       })
 
       const data = encoder.encode('iceberg test object')
@@ -501,7 +503,7 @@ describe('ParquetStore', () => {
         r2: mockR2,
         sql: mockStorage,
         prefix: 'test-repo',
-        icebergEnabled: true,
+        onFlush: (await import('../../src/iceberg/flush-handler')).createIcebergFlushHandler(),
       })
 
       await icebergStore.putObject('blob', encoder.encode('first'))
@@ -522,7 +524,7 @@ describe('ParquetStore', () => {
         r2: mockR2,
         sql: mockStorage,
         prefix: 'test-repo',
-        icebergEnabled: true,
+        onFlush: (await import('../../src/iceberg/flush-handler')).createIcebergFlushHandler(),
       })
 
       await icebergStore.putObject('blob', encoder.encode('manifest test'))
@@ -542,7 +544,7 @@ describe('ParquetStore', () => {
       expect(manifest.entries[0]['data-file']['file-format']).toBe('PARQUET')
     })
 
-    it('should not write iceberg metadata when icebergEnabled is false', async () => {
+    it('should not write iceberg metadata when onFlush is not set', async () => {
       const data = encoder.encode('no iceberg')
       await store.putObject('blob', data)
       await store.flush()

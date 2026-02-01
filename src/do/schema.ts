@@ -34,6 +34,7 @@
  */
 
 import type { SQLStorage } from '../storage/types'
+import { typedQuery, validateRow } from '../utils/sql-validate'
 
 // ============================================================================
 // Types and Interfaces
@@ -250,12 +251,30 @@ CREATE TABLE IF NOT EXISTS sha_cache (
   added_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sha_cache_added ON sha_cache(added_at);
+
+-- Compaction journal for crash recovery during R2 Parquet compaction
+-- If the DO restarts mid-compaction, this table tells us what to clean up
+CREATE TABLE IF NOT EXISTS compaction_journal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_keys TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  created_at INTEGER NOT NULL
+);
+
+-- Compaction alarm retry state for exponential backoff
+CREATE TABLE IF NOT EXISTS compaction_retries (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at INTEGER NOT NULL
+);
 `
 
 /**
  * Required tables for the thin coordinator schema.
  */
-const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache']
+const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache', 'compaction_journal', 'compaction_retries']
 
 /**
  * Optional legacy tables that may exist during migration.
@@ -365,7 +384,7 @@ export class SchemaManager {
     const result = this.storage.sql.exec(
       "SELECT name FROM sqlite_master WHERE type='table'"
     )
-    const tables = result.toArray() as { name: string }[]
+    const tables = typedQuery<{ name: string }>(result, validateRow(['name']))
     const tableNames = tables.map(t => t.name)
 
     return REQUIRED_TABLES.every(table => tableNames.includes(table))
@@ -411,7 +430,7 @@ export class ThinSchemaManager {
     const result = this.storage.sql.exec(
       "SELECT name FROM sqlite_master WHERE type='table'"
     )
-    const tables = result.toArray() as { name: string }[]
+    const tables = typedQuery<{ name: string }>(result, validateRow(['name']))
     const tableNames = tables.map(t => t.name)
     const hasLegacy = REQUIRED_TABLES.every(table => tableNames.includes(table))
     return hasLegacy ? 1 : 0
@@ -424,7 +443,7 @@ export class ThinSchemaManager {
     const result = this.storage.sql.exec(
       "SELECT name FROM sqlite_master WHERE type='table'"
     )
-    const tables = result.toArray() as { name: string }[]
+    const tables = typedQuery<{ name: string }>(result, validateRow(['name']))
     const tableNames = tables.map(t => t.name)
 
     return THIN_REQUIRED_TABLES.every(table => tableNames.includes(table))
@@ -437,7 +456,7 @@ export class ThinSchemaManager {
     const result = this.storage.sql.exec(
       "SELECT name FROM sqlite_master WHERE type='table'"
     )
-    const tables = result.toArray() as { name: string }[]
+    const tables = typedQuery<{ name: string }>(result, validateRow(['name']))
     const tableNames = tables.map(t => t.name)
 
     return LEGACY_TABLES.some(table => tableNames.includes(table))

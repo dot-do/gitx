@@ -8,6 +8,13 @@
  */
 
 import { verifyGitHubSignature } from './signature'
+import {
+  isGitHubEventType,
+  isPushEventPayload,
+  isPingEventPayload,
+  isCreateEventPayload,
+  isDeleteEventPayload,
+} from './types'
 import type {
   WebhookEnv,
   WebhookHandlerResult,
@@ -63,13 +70,30 @@ export class GitHubWebhookHandler {
     }
 
     // Get required headers
-    const eventType = request.headers.get(GITHUB_EVENT_HEADER) as GitHubEventType | null
+    const rawEventType = request.headers.get(GITHUB_EVENT_HEADER)
     const signature = request.headers.get(GITHUB_SIGNATURE_HEADER)
     const deliveryId = request.headers.get(GITHUB_DELIVERY_HEADER)
 
-    if (!eventType) {
+    if (!rawEventType) {
       return this.errorResponse(400, 'Missing x-github-event header')
     }
+
+    // Validate event type against known set
+    if (!isGitHubEventType(rawEventType)) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Ignoring unsupported event: ${rawEventType}`,
+          event: rawEventType,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    const eventType: GitHubEventType = rawEventType
 
     // Read payload
     const payload = await request.text()
@@ -93,28 +117,34 @@ export class GitHubWebhookHandler {
       return this.errorResponse(400, 'Invalid JSON payload')
     }
 
-    // Route to event handler
+    // Route to event handler with payload shape validation
     let result: WebhookHandlerResult
 
     switch (eventType) {
       case 'push':
-        result = await this.handlePush(data as PushEventPayload, deliveryId)
+        if (!isPushEventPayload(data)) {
+          return this.errorResponse(400, 'Invalid push event payload')
+        }
+        result = await this.handlePush(data, deliveryId)
         break
       case 'ping':
-        result = await this.handlePing(data as PingEventPayload)
+        if (!isPingEventPayload(data)) {
+          return this.errorResponse(400, 'Invalid ping event payload')
+        }
+        result = await this.handlePing(data)
         break
       case 'create':
-        result = await this.handleCreate(data as CreateEventPayload)
+        if (!isCreateEventPayload(data)) {
+          return this.errorResponse(400, 'Invalid create event payload')
+        }
+        result = await this.handleCreate(data)
         break
       case 'delete':
-        result = await this.handleDelete(data as DeleteEventPayload)
-        break
-      default:
-        result = {
-          success: true,
-          message: `Ignoring unsupported event: ${eventType}`,
-          event: eventType,
+        if (!isDeleteEventPayload(data)) {
+          return this.errorResponse(400, 'Invalid delete event payload')
         }
+        result = await this.handleDelete(data)
+        break
     }
 
     return new Response(JSON.stringify(result), {

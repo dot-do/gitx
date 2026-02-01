@@ -303,7 +303,9 @@ describe('ThinSchemaManager', () => {
       expect(tables).toContain('refs')
       expect(tables).toContain('bloom_filter')
       expect(tables).toContain('sha_cache')
-      expect(tables).toHaveLength(3)
+      expect(tables).toContain('compaction_journal')
+      expect(tables).toContain('compaction_retries')
+      expect(tables).toHaveLength(5)
 
       // Version should be 2
       expect(await schemaManager.getSchemaVersion()).toBe(SCHEMA_VERSION)

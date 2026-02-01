@@ -35,6 +35,24 @@ import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
 
 // ============================================================================
+// Compaction Journal
+// ============================================================================
+
+/** SQLite table name for compaction journal */
+const COMPACTION_JOURNAL_TABLE = 'compaction_journal'
+
+/** Status values for compaction journal entries */
+type CompactionJournalStatus = 'in_progress' | 'written'
+
+interface CompactionJournalEntry {
+  id: number
+  source_keys: string
+  target_key: string
+  status: string
+  created_at: number
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 
@@ -130,6 +148,7 @@ interface BufferedObject {
  */
 export class ParquetStore implements CASBackend {
   private r2: R2Bucket
+  private sql: SQLStorage
   private prefix: string
   private bloomCache: BloomCache
   private buffer: BufferedObject[] = []
@@ -146,6 +165,7 @@ export class ParquetStore implements CASBackend {
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
+    this.sql = options.sql
     this.prefix = options.prefix
     this.bloomCache = new BloomCache(options.sql)
     this.flushThreshold = options.flushThreshold ?? FLUSH_THRESHOLD
@@ -165,10 +185,87 @@ export class ParquetStore implements CASBackend {
   }
 
   private async _doInitialize(): Promise<void> {
+    // Create compaction journal table
+    this.sql.sql.exec(`
+      CREATE TABLE IF NOT EXISTS ${COMPACTION_JOURNAL_TABLE} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_keys TEXT NOT NULL,
+        target_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'in_progress',
+        created_at INTEGER NOT NULL
+      );
+    `)
+
     await this.bloomCache.initialize()
     // Discover existing object files
     await this.discoverObjectFiles()
+
+    // Recover from any interrupted compaction
+    await this.recoverCompaction()
+
     this.initialized = true
+  }
+
+  /**
+   * Recover from interrupted compaction by checking the journal.
+   *
+   * If a journal entry exists with status 'written', the new compacted file
+   * was successfully written to R2 but old files were not yet cleaned up.
+   * We complete the cleanup (delete old source files).
+   *
+   * If a journal entry exists with status 'in_progress', the compaction was
+   * interrupted before the new file was written. We roll back by deleting
+   * the (possibly partial) target file and clearing the journal.
+   */
+  private async recoverCompaction(): Promise<void> {
+    const result = this.sql.sql.exec(
+      `SELECT id, source_keys, target_key, status, created_at FROM ${COMPACTION_JOURNAL_TABLE} ORDER BY id ASC`
+    )
+    const rows = result.toArray() as CompactionJournalEntry[]
+
+    for (const row of rows) {
+      const sourceKeys = JSON.parse(row.source_keys) as string[]
+
+      if (row.status === 'written') {
+        // Target file was written successfully - complete the cleanup
+        // Delete old source files that are no longer needed
+        for (const key of sourceKeys) {
+          try {
+            await this.r2.delete(key)
+          } catch {
+            // Best-effort cleanup; the key may already be gone
+          }
+        }
+
+        // Update in-memory state: keep only the compacted target file
+        this.objectFileKeys = this.objectFileKeys.filter(
+          k => !sourceKeys.includes(k)
+        )
+        if (!this.objectFileKeys.includes(row.target_key)) {
+          this.objectFileKeys.push(row.target_key)
+        }
+
+        // Remove journal entry
+        this.sql.sql.exec(
+          `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
+          row.id
+        )
+      } else {
+        // status === 'in_progress': compaction was interrupted before write completed
+        // Roll back by deleting the (possibly partial) target file
+        try {
+          await this.r2.delete(row.target_key)
+        } catch {
+          // Target may not exist if compaction failed before the R2 put
+        }
+
+        // Remove journal entry - source files are still valid
+        this.sql.sql.exec(
+          `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
+          row.id
+        )
+      }
+    }
   }
 
   /**
@@ -233,7 +330,13 @@ export class ParquetStore implements CASBackend {
       const key = this.objectFileKeys[i]
       if (!key) continue
       const result = await this.readObjectFromParquet(key, sha)
-      if (result) return result
+      if (result) {
+        // Promote bloom-probable SHAs to exact cache after confirmed R2 read
+        if (check === 'probable') {
+          await this.bloomCache.add(sha, result.type, result.content.byteLength)
+        }
+        return result
+      }
     }
 
     return null
@@ -303,10 +406,21 @@ export class ParquetStore implements CASBackend {
       ],
     })
 
-    const fileId = crypto.randomUUID()
+    // Generate a deterministic key from the sorted SHAs so re-flushing the
+    // same buffer produces the same R2 key (idempotent).
+    const sortedShas = objects.map(o => o.sha).sort()
+    const shaDigest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(sortedShas.join(''))
+    )
+    const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
     const key = `${this.prefix}/objects/${fileId}.parquet`
     await this.r2.put(key, buffer)
-    this.objectFileKeys.push(key)
+    if (!this.objectFileKeys.includes(key)) {
+      this.objectFileKeys.push(key)
+    }
 
     // Persist bloom filter
     await this.bloomCache.persist()
@@ -346,6 +460,28 @@ export class ParquetStore implements CASBackend {
     await this.initialize()
 
     if (this.objectFileKeys.length < 2) return null
+
+    // Generate target key upfront so we can journal it
+    const fileId = crypto.randomUUID()
+    const newKey = `${this.prefix}/objects/${fileId}.parquet`
+    const sourceKeys = [...this.objectFileKeys]
+
+    // Write journal entry BEFORE starting compaction
+    const now = Date.now()
+    this.sql.sql.exec(
+      `INSERT INTO ${COMPACTION_JOURNAL_TABLE} (source_keys, target_key, status, created_at) VALUES (?, ?, ?, ?)`,
+      JSON.stringify(sourceKeys),
+      newKey,
+      'in_progress' satisfies CompactionJournalStatus,
+      now,
+    )
+    // Get the journal entry ID for later updates
+    const journalResult = this.sql.sql.exec(
+      `SELECT id FROM ${COMPACTION_JOURNAL_TABLE} WHERE target_key = ? AND created_at = ?`,
+      newKey, now,
+    )
+    const journalRows = journalResult.toArray() as Array<{ id: number }>
+    const journalId = journalRows[0]?.id
 
     // Read all rows from all Parquet files
     const allObjects: BufferedObject[] = []
@@ -405,7 +541,16 @@ export class ParquetStore implements CASBackend {
       }
     }
 
-    if (allObjects.length === 0) return null
+    if (allObjects.length === 0) {
+      // Nothing to compact - clean up journal
+      if (journalId != null) {
+        this.sql.sql.exec(
+          `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
+          journalId,
+        )
+      }
+      return null
+    }
 
     // Also include any buffered objects
     for (const obj of this.buffer) {
@@ -436,13 +581,19 @@ export class ParquetStore implements CASBackend {
       ],
     })
 
-    const fileId = crypto.randomUUID()
-    const newKey = `${this.prefix}/objects/${fileId}.parquet`
     await this.r2.put(newKey, buffer)
 
+    // Mark journal as 'written' - target file is safe on R2
+    if (journalId != null) {
+      this.sql.sql.exec(
+        `UPDATE ${COMPACTION_JOURNAL_TABLE} SET status = ? WHERE id = ?`,
+        'written' satisfies CompactionJournalStatus,
+        journalId,
+      )
+    }
+
     // Delete old files from R2
-    const oldKeys = [...this.objectFileKeys]
-    for (const key of oldKeys) {
+    for (const key of sourceKeys) {
       await this.r2.delete(key)
     }
 
@@ -454,6 +605,14 @@ export class ParquetStore implements CASBackend {
 
     // Persist bloom filter
     await this.bloomCache.persist()
+
+    // Compaction fully complete - delete journal entry
+    if (journalId != null) {
+      this.sql.sql.exec(
+        `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
+        journalId,
+      )
+    }
 
     return newKey
   }
