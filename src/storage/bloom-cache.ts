@@ -27,6 +27,12 @@ const DEFAULT_HASH_COUNT = 7
 /** Default maximum number of exact SHAs to cache in SHA cache table */
 const DEFAULT_EXACT_CACHE_LIMIT = 100_000
 
+/** Default item threshold per segment before creating a new segment */
+const DEFAULT_SEGMENT_THRESHOLD = 10_000
+
+/** Maximum number of segments before triggering compaction */
+const DEFAULT_MAX_SEGMENTS = 10
+
 /** SQLite table name for bloom filter persistence */
 const BLOOM_TABLE = 'bloom_filter'
 
@@ -139,6 +145,193 @@ function fnv1a(str: string, seed: number): number {
 }
 
 // ============================================================================
+// Segmented Bloom Filter
+// ============================================================================
+
+/**
+ * Serialized representation of a single bloom filter segment.
+ */
+export interface BloomSegmentData {
+  data: Uint8Array
+  count: number
+}
+
+/**
+ * Options for the segmented bloom filter.
+ */
+export interface SegmentedBloomFilterOptions {
+  /** Filter size in bits per segment */
+  filterBits?: number
+  /** Number of hash functions */
+  hashCount?: number
+  /** Maximum items per segment before creating a new one */
+  segmentThreshold?: number
+  /** Maximum number of segments before compaction */
+  maxSegments?: number
+}
+
+/**
+ * A segmented bloom filter that automatically creates new segments when the
+ * current segment exceeds an item threshold.
+ *
+ * This prevents false positive rate degradation as items grow. Lookups check
+ * all segments (a match in any segment returns true). When the number of
+ * segments exceeds maxSegments, older segments are compacted into a single
+ * larger segment.
+ */
+export class SegmentedBloomFilter {
+  private segments: BloomFilter[] = []
+  private readonly filterBits: number
+  private readonly hashCount: number
+  private readonly segmentThreshold: number
+  private readonly maxSegments: number
+
+  constructor(options?: SegmentedBloomFilterOptions) {
+    this.filterBits = options?.filterBits ?? DEFAULT_FILTER_BITS
+    this.hashCount = options?.hashCount ?? DEFAULT_HASH_COUNT
+    this.segmentThreshold = options?.segmentThreshold ?? DEFAULT_SEGMENT_THRESHOLD
+    this.maxSegments = options?.maxSegments ?? DEFAULT_MAX_SEGMENTS
+    // Start with one empty segment
+    this.segments.push(new BloomFilter(this.filterBits, this.hashCount))
+  }
+
+  /** Total number of items across all segments */
+  get count(): number {
+    let total = 0
+    for (const seg of this.segments) {
+      total += seg.count
+    }
+    return total
+  }
+
+  /** Number of active segments */
+  get segmentCount(): number {
+    return this.segments.length
+  }
+
+  /**
+   * Estimated false positive rate across all segments.
+   *
+   * For independent segments, the probability of a false positive is:
+   * 1 - product(1 - fp_i) for each segment i.
+   * However, since a true negative requires ALL segments to return false,
+   * the combined FP rate is bounded by the sum of per-segment rates.
+   */
+  get falsePositiveRate(): number {
+    if (this.count === 0) return 0
+    let probNoFP = 1
+    for (const seg of this.segments) {
+      probNoFP *= (1 - seg.falsePositiveRate)
+    }
+    return 1 - probNoFP
+  }
+
+  /**
+   * Add a SHA to the bloom filter. Creates a new segment if the current
+   * one has exceeded the item threshold.
+   */
+  add(sha: string): void {
+    let current = this.segments[this.segments.length - 1]
+    if (current.count >= this.segmentThreshold) {
+      current = new BloomFilter(this.filterBits, this.hashCount)
+      this.segments.push(current)
+      this.maybeCompact()
+    }
+    current.add(sha)
+  }
+
+  /**
+   * Check if a SHA might exist. Checks all segments.
+   * Returns false ONLY if no segment reports a possible match.
+   */
+  mightContain(sha: string): boolean {
+    for (const seg of this.segments) {
+      if (seg.mightContain(sha)) return true
+    }
+    return false
+  }
+
+  /** Clear all segments, reset to a single empty segment */
+  clear(): void {
+    this.segments = [new BloomFilter(this.filterBits, this.hashCount)]
+  }
+
+  /**
+   * Serialize all segments for persistence.
+   */
+  serializeSegments(): BloomSegmentData[] {
+    return this.segments.map(seg => ({
+      data: seg.serialize(),
+      count: seg.count,
+    }))
+  }
+
+  /**
+   * Load segments from serialized data.
+   */
+  loadSegments(segments: BloomSegmentData[]): void {
+    if (segments.length === 0) return
+    this.segments = segments.map(s => {
+      const f = new BloomFilter(this.filterBits, this.hashCount)
+      f.load(s.data, s.count)
+      return f
+    })
+  }
+
+  /**
+   * Load from a single legacy (non-segmented) serialized filter.
+   * Supports backward compatibility with the old single-filter persistence.
+   */
+  loadLegacy(data: Uint8Array, count: number): void {
+    const f = new BloomFilter(this.filterBits, this.hashCount)
+    f.load(data, count)
+    this.segments = [f]
+  }
+
+  /**
+   * Compact older segments by merging them into one segment.
+   * This is triggered when segment count exceeds maxSegments.
+   *
+   * The compacted segment uses a larger bit array (sum of old segment sizes)
+   * but re-hashing isn't possible so we OR the bit arrays together.
+   * Since all segments have the same bit size, we simply OR them.
+   *
+   * Note: the count on the compacted segment is the sum of original counts,
+   * making the false positive rate estimate conservative. The actual FP rate
+   * of the merged segment may be slightly better than estimated.
+   */
+  compact(): void {
+    if (this.segments.length <= 1) return
+    const newest = this.segments[this.segments.length - 1]
+    const oldSegments = this.segments.slice(0, -1)
+
+    // OR all old segments together
+    const merged = new BloomFilter(this.filterBits, this.hashCount)
+    const mergedBits = new Uint8Array(Math.ceil(this.filterBits / 8))
+    let mergedCount = 0
+    for (const seg of oldSegments) {
+      const bits = seg.serialize()
+      for (let i = 0; i < mergedBits.length; i++) {
+        mergedBits[i] |= bits[i]
+      }
+      mergedCount += seg.count
+    }
+    merged.load(mergedBits, mergedCount)
+
+    this.segments = [merged, newest]
+  }
+
+  /**
+   * Trigger compaction if we have exceeded maxSegments.
+   */
+  private maybeCompact(): void {
+    if (this.segments.length > this.maxSegments) {
+      this.compact()
+    }
+  }
+}
+
+// ============================================================================
 // SQLite-backed Bloom Cache
 // ============================================================================
 
@@ -146,7 +339,7 @@ function fnv1a(str: string, seed: number): number {
  * Configuration for BloomCache.
  */
 export interface BloomCacheOptions {
-  /** Filter size in bits */
+  /** Filter size in bits per segment */
   filterBits?: number
   /** Number of hash functions */
   hashCount?: number
@@ -154,6 +347,10 @@ export interface BloomCacheOptions {
   enableExactCache?: boolean
   /** Maximum number of exact SHAs to cache */
   exactCacheLimit?: number
+  /** Maximum items per bloom segment before creating a new segment */
+  segmentThreshold?: number
+  /** Maximum number of bloom segments before compaction */
+  maxSegments?: number
 }
 
 /**
@@ -164,7 +361,7 @@ export interface BloomCacheOptions {
  * 2. Optional exact SHA cache in SQLite for recently-seen objects
  */
 export class BloomCache {
-  private filter: BloomFilter
+  private filter: SegmentedBloomFilter
   private storage: SQLStorage
   private options: Required<BloomCacheOptions>
   private initialized = false
@@ -176,8 +373,15 @@ export class BloomCache {
       hashCount: options?.hashCount ?? DEFAULT_HASH_COUNT,
       enableExactCache: options?.enableExactCache ?? true,
       exactCacheLimit: options?.exactCacheLimit ?? DEFAULT_EXACT_CACHE_LIMIT,
+      segmentThreshold: options?.segmentThreshold ?? DEFAULT_SEGMENT_THRESHOLD,
+      maxSegments: options?.maxSegments ?? DEFAULT_MAX_SEGMENTS,
     }
-    this.filter = new BloomFilter(this.options.filterBits, this.options.hashCount)
+    this.filter = new SegmentedBloomFilter({
+      filterBits: this.options.filterBits,
+      hashCount: this.options.hashCount,
+      segmentThreshold: this.options.segmentThreshold,
+      maxSegments: this.options.maxSegments,
+    })
   }
 
   /**
@@ -186,10 +390,10 @@ export class BloomCache {
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    // Create tables
+    // Create tables - add segment_id column to support multiple segments
     this.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS ${BLOOM_TABLE} (
-        id INTEGER PRIMARY KEY DEFAULT 1,
+        id INTEGER PRIMARY KEY,
         filter_data BLOB NOT NULL,
         item_count INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
@@ -208,13 +412,21 @@ export class BloomCache {
       `)
     }
 
-    // Load persisted filter
+    // Load persisted segments (or legacy single filter at id=1)
     const result = this.storage.sql.exec(
-      `SELECT filter_data, item_count FROM ${BLOOM_TABLE} WHERE id = 1`
+      `SELECT id, filter_data, item_count FROM ${BLOOM_TABLE} ORDER BY id ASC`
     )
-    const rows = result.toArray() as { filter_data: Uint8Array; item_count: number }[]
-    if (rows.length > 0) {
-      this.filter.load(new Uint8Array(rows[0].filter_data), rows[0].item_count)
+    const rows = result.toArray() as { id: number; filter_data: Uint8Array; item_count: number }[]
+    if (rows.length === 1 && rows[0].id === 1) {
+      // Legacy single-filter format or single segment - load as legacy
+      this.filter.loadLegacy(new Uint8Array(rows[0].filter_data), rows[0].item_count)
+    } else if (rows.length > 0) {
+      // Multi-segment format
+      const segments: BloomSegmentData[] = rows.map(r => ({
+        data: new Uint8Array(r.filter_data),
+        count: r.item_count,
+      }))
+      this.filter.loadSegments(segments)
     }
 
     this.initialized = true
@@ -329,13 +541,17 @@ export class BloomCache {
   async persist(): Promise<void> {
     await this.initialize()
 
-    const data = this.filter.serialize()
+    const segments = this.filter.serializeSegments()
     const now = Date.now()
 
-    this.storage.sql.exec(
-      `INSERT OR REPLACE INTO ${BLOOM_TABLE} (id, filter_data, item_count, updated_at) VALUES (1, ?, ?, ?)`,
-      data, this.filter.count, now
-    )
+    // Replace all existing rows with current segments
+    this.storage.sql.exec(`DELETE FROM ${BLOOM_TABLE}`)
+    for (let i = 0; i < segments.length; i++) {
+      this.storage.sql.exec(
+        `INSERT INTO ${BLOOM_TABLE} (id, filter_data, item_count, updated_at) VALUES (?, ?, ?, ?)`,
+        i + 1, segments[i].data, segments[i].count, now
+      )
+    }
   }
 
   /**
@@ -344,6 +560,7 @@ export class BloomCache {
   getStats(): {
     bloomItems: number
     bloomFalsePositiveRate: number
+    bloomSegments: number
     exactCacheSize: number
   } {
     let exactCacheSize = 0
@@ -358,6 +575,7 @@ export class BloomCache {
     return {
       bloomItems: this.filter.count,
       bloomFalsePositiveRate: this.filter.falsePositiveRate,
+      bloomSegments: this.filter.segmentCount,
       exactCacheSize,
     }
   }

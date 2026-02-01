@@ -602,10 +602,77 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
 
   /**
    * Handle alarm callbacks.
+   *
+   * Runs deferred compaction if the ParquetStore has flagged it as needed.
+   * This moves expensive compaction work out of the request path.
    */
   async alarm(): Promise<void> {
     this._logger.debug('Alarm triggered')
-    // Default alarm handler - can be overridden
+
+    // Run deferred Parquet compaction
+    if (this._parquetStore?.compactionNeeded) {
+      this._logger.info('Running deferred Parquet compaction via alarm')
+      try {
+        const newKey = await this._parquetStore.runCompactionIfNeeded()
+        if (newKey) {
+          this._logger.info('Parquet compaction completed', { newKey })
+        } else {
+          this._logger.debug('Parquet compaction skipped (not needed)')
+        }
+      } catch (error) {
+        this._logger.error('Parquet compaction failed in alarm', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  }
+
+  /**
+   * Schedule Parquet compaction to run in a future DO alarm.
+   *
+   * Marks the ParquetStore as needing compaction and sets a DO alarm
+   * to fire after `delayMs` milliseconds. If alarms are not available
+   * (e.g. in tests or unsupported environments), falls back to inline
+   * compaction via waitUntil.
+   *
+   * @param delayMs - Delay before the alarm fires (default: 10 seconds)
+   * @returns true if compaction was scheduled, false if not needed
+   */
+  scheduleCompaction(delayMs = 10_000): boolean {
+    if (!this._parquetStore) return false
+
+    const needed = this._parquetStore.scheduleCompaction()
+    if (!needed) return false
+
+    try {
+      // setAlarm is available on Cloudflare DO storage
+      const storage = this.state.storage as unknown as {
+        setAlarm?: (scheduledTime: number | Date) => Promise<void>
+        getAlarm?: () => Promise<number | null>
+      }
+
+      if (typeof storage.setAlarm === 'function') {
+        const alarmTime = Date.now() + delayMs
+        this._logger.debug('Setting compaction alarm', { alarmTime, delayMs })
+        this.state.waitUntil(storage.setAlarm(alarmTime))
+        return true
+      }
+    } catch (error) {
+      this._logger.warn('Failed to set alarm, falling back to inline compaction', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+
+    // Fallback: run compaction inline via waitUntil if alarms are not available
+    this._logger.debug('Alarm not available, falling back to inline compaction via waitUntil')
+    this.state.waitUntil(
+      this._parquetStore.runCompactionIfNeeded().catch(err =>
+        this._logger.error('Inline compaction fallback failed', {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      )
+    )
+    return true
   }
 
   // ===========================================================================

@@ -150,6 +150,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   private initPromise?: Promise<void>
   private icebergEnabled: boolean
   private icebergMetadata: IcebergTableMetadata | null = null
+  private _compactionNeeded = false
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
@@ -588,6 +589,51 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     }
 
     return null
+  }
+
+  // ===========================================================================
+  // Alarm-Based Compaction Scheduling
+  // ===========================================================================
+
+  /**
+   * Check whether compaction has been scheduled but not yet executed.
+   */
+  get compactionNeeded(): boolean {
+    return this._compactionNeeded
+  }
+
+  /**
+   * Mark that compaction should be performed in the next alarm cycle.
+   *
+   * This does NOT run compaction inline. The caller (typically the DO)
+   * is responsible for setting an alarm via `state.storage.setAlarm()`
+   * after calling this method.
+   *
+   * Compaction is only meaningful when there are multiple Parquet files
+   * to merge, so this is a no-op if fewer than 2 files exist.
+   *
+   * @returns true if compaction was scheduled, false if not needed
+   */
+  scheduleCompaction(): boolean {
+    if (this.objectFileKeys.length < 2 && this.buffer.length === 0) {
+      return false
+    }
+    this._compactionNeeded = true
+    return true
+  }
+
+  /**
+   * Run compaction if it has been scheduled via `scheduleCompaction()`.
+   *
+   * Called by the DO alarm handler. Resets the compaction flag regardless
+   * of outcome so alarms don't loop indefinitely.
+   *
+   * @returns The key of the new compacted file, or null if no compaction was performed
+   */
+  async runCompactionIfNeeded(): Promise<string | null> {
+    if (!this._compactionNeeded) return null
+    this._compactionNeeded = false
+    return this.compact()
   }
 
   // ===========================================================================

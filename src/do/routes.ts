@@ -104,6 +104,8 @@ export interface GitRepoDOInstance {
   getParquetStore(): ParquetStore | undefined
   /** Schedule background work that doesn't block the response */
   waitUntil(promise: Promise<unknown>): void
+  /** Schedule Parquet compaction to run in a future DO alarm */
+  scheduleCompaction(delayMs?: number): boolean
 }
 
 /**
@@ -258,10 +260,17 @@ export async function handleSync(
     }
 
     // Flush buffered objects to Parquet on R2 (background)
+    // Flush is append-only and fast, so it runs inline via waitUntil.
+    // Compaction (merging multiple files) is expensive, so it's deferred to a DO alarm.
     const parquetStore = instance.getParquetStore()
     if (parquetStore) {
       instance.waitUntil(
-        parquetStore.flush().catch(err => console.error('Parquet flush failed:', err))
+        parquetStore.flush()
+          .then(() => {
+            // Schedule compaction to run in a future alarm (not inline)
+            instance.scheduleCompaction()
+          })
+          .catch(err => console.error('Parquet flush failed:', err))
       )
     }
 
