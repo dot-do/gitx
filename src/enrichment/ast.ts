@@ -13,7 +13,7 @@ export interface AstNode {
 }
 
 /** Languages that will eventually support AST extraction */
-const SUPPORTED_LANGUAGES = new Set(['JavaScript', 'TypeScript', 'MDX'])
+export const SUPPORTED_LANGUAGES = new Set(['JavaScript', 'TypeScript', 'MDX'])
 
 /**
  * Extract AST nodes from source content.

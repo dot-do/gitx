@@ -79,6 +79,7 @@ export class ParquetRefStore {
     if (rows.length === 0) return null
 
     const row = rows[0]
+    if (!row) return null
     return {
       name: row.name,
       target: row.target,

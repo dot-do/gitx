@@ -13,21 +13,22 @@
  * @module storage/parquet-store
  */
 
-import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer'
+import { parquetWriteBuffer } from 'hyparquet-writer'
 import { parquetReadObjects } from 'hyparquet'
-import type { AsyncBuffer } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
 import type { StorageBackend, StoredObjectResult } from './backend'
-import type { Ref } from '../refs/storage'
 import {
-  encodeGitObject,
   encodeObjectBatch,
   detectStorageMode,
   buildR2Key,
-  INLINE_THRESHOLD,
   type StorageMode,
-  type EncodedGitObject,
 } from './variant-codec'
+
+/** Minimal async buffer interface for hyparquet */
+interface AsyncBuffer {
+  byteLength: number
+  slice(start: number, end?: number): ArrayBuffer
+}
 import { BloomCache } from './bloom-cache'
 import type { DurableObjectStorage } from '../do/schema'
 import { hashObject } from '../utils/hash'
@@ -192,12 +193,11 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
       return { type: buffered.type, content: buffered.data }
     }
 
-    // Check metadata cache for type info
-    const meta = await this.bloomCache.getMetadata(sha)
-
     // Scan Parquet files in reverse order (newest first)
     for (let i = this.objectFileKeys.length - 1; i >= 0; i--) {
-      const result = await this.readObjectFromParquet(this.objectFileKeys[i], sha)
+      const key = this.objectFileKeys[i]
+      if (!key) continue
+      const result = await this.readObjectFromParquet(key, sha)
       if (result) return result
     }
 
@@ -321,20 +321,21 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
         })
 
         for (const row of rows) {
-          const sha = row.sha as string
+          const sha = row['sha'] as string
           // Skip tombstoned and duplicate SHAs
           if (this.tombstones.has(sha) || seenShas.has(sha)) continue
           seenShas.add(sha)
 
-          const type = row.type as ObjectType
-          const storage = row.storage as string
+          const type = row['type'] as ObjectType
+          const storage = row['storage'] as string
+          const rawData = row['raw_data']
 
-          if (storage === 'inline' && row.raw_data != null) {
-            const data = row.raw_data instanceof Uint8Array
-              ? row.raw_data
-              : typeof row.raw_data === 'string'
-                ? new TextEncoder().encode(row.raw_data)
-                : new Uint8Array(row.raw_data)
+          if (storage === 'inline' && rawData != null) {
+            const data = rawData instanceof Uint8Array
+              ? rawData
+              : typeof rawData === 'string'
+                ? new TextEncoder().encode(rawData)
+                : new Uint8Array(rawData as ArrayBuffer)
             allObjects.push({ sha, type, data })
           } else {
             // For R2/LFS objects, fetch from raw storage
@@ -444,19 +445,20 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
       allRows = []
     }
 
-    const row = allRows.find(r => r.sha === sha)
+    const row = allRows.find(r => r['sha'] === sha)
     if (!row) return null
 
-    const type = row.type as ObjectType
-    const storage = row.storage as StorageMode
+    const type = row['type'] as ObjectType
+    const storage = row['storage'] as StorageMode
+    const rawData = row['raw_data']
 
     // Handle inline storage mode - raw_data contains the object bytes
-    if (storage === 'inline' && row.raw_data != null) {
-      const content = row.raw_data instanceof Uint8Array
-        ? row.raw_data
-        : typeof row.raw_data === 'string'
-          ? new TextEncoder().encode(row.raw_data)
-          : new Uint8Array(row.raw_data)
+    if (storage === 'inline' && rawData != null) {
+      const content = rawData instanceof Uint8Array
+        ? rawData
+        : typeof rawData === 'string'
+          ? new TextEncoder().encode(rawData)
+          : new Uint8Array(rawData)
       return { type, content }
     }
 
