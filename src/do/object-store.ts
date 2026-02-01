@@ -18,9 +18,9 @@
  *
  * @example
  * ```typescript
- * import { ObjectStore } from './do/object-store'
+ * import { SqliteObjectStore } from './do/object-store'
  *
- * const store = new ObjectStore(durableObjectStorage, {
+ * const store = new SqliteObjectStore(durableObjectStorage, {
  *   cacheMaxCount: 1000,
  *   cacheMaxBytes: 50 * 1024 * 1024, // 50MB
  *   enableMetrics: true
@@ -63,6 +63,7 @@ import {
   parseTreeEntries
 } from '../utils/tree'
 import type { StorageBackend } from '../storage/backend'
+import type { BasicObjectStore } from '../types/storage'
 
 /**
  * Minimal CAS (content-addressable storage) interface needed by ObjectStore.
@@ -301,7 +302,7 @@ const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024 // 25MB
  *
  * @example
  * ```typescript
- * const store = new ObjectStore(durableObjectStorage)
+ * const store = new SqliteObjectStore(durableObjectStorage)
  *
  * // Create a commit
  * const commitSha = await store.putCommitObject({
@@ -317,7 +318,7 @@ const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024 // 25MB
  * console.log(commit?.message)
  * ```
  */
-export class ObjectStore {
+export class SqliteObjectStore implements BasicObjectStore {
   private cache: LRUCache<string, StoredObject>
   private hashCache: HashCache
   private options: ObjectStoreOptions
@@ -554,6 +555,21 @@ export class ObjectStore {
     }
 
     return sha
+  }
+
+  /**
+   * Store a Git object and return its SHA-1 hash.
+   *
+   * @description
+   * Alias for {@link putObject} that satisfies the canonical
+   * {@link BasicObjectStore} interface from types/storage.ts.
+   *
+   * @param type - Object type ('blob', 'tree', 'commit', 'tag')
+   * @param data - Raw object content (without Git header)
+   * @returns 40-character SHA-1 hash of the stored object
+   */
+  async storeObject(type: string, data: Uint8Array): Promise<string> {
+    return this.putObject(type as ObjectType, data)
   }
 
   /**
@@ -1835,3 +1851,12 @@ function parseAuthorLine(line: string): Author {
     timezone: match[4]
   }
 }
+
+/**
+ * @deprecated Use {@link SqliteObjectStore} instead. This alias exists for backward compatibility.
+ */
+export const ObjectStore = SqliteObjectStore
+/**
+ * @deprecated Use {@link SqliteObjectStore} instead. This type alias exists for backward compatibility.
+ */
+export type ObjectStore = SqliteObjectStore

@@ -363,9 +363,14 @@ export interface ReceivePackSession {
  * receive-pack operations. Implementations typically wrap a Git
  * object database or similar storage.
  *
+ * Note: This interface differs from the canonical ObjectStore in types/storage.ts
+ * because receive-pack has unique requirements (e.g., getRefs(), isAncestor(),
+ * storeObject takes SHA as a parameter). See types/storage.ts for the canonical
+ * storage interfaces used by most modules.
+ *
  * @example
  * ```typescript
- * class MyObjectStore implements ObjectStore {
+ * class MyObjectStore implements ReceivePackObjectStore {
  *   async getObject(sha: string) {
  *     return this.database.get(sha)
  *   }
@@ -379,7 +384,7 @@ export interface ReceivePackSession {
  * }
  * ```
  */
-export interface ObjectStore {
+export interface ReceivePackObjectStore {
   /**
    * Get an object by its SHA.
    * @param sha - The SHA-1 hash of the object
@@ -443,6 +448,11 @@ export interface ObjectStore {
    */
   isAncestor(ancestor: string, descendant: string): Promise<boolean>
 }
+
+/**
+ * @deprecated Use {@link ReceivePackObjectStore} instead. This alias exists for backward compatibility.
+ */
+export type ObjectStore = ReceivePackObjectStore
 
 /**
  * Parsed receive-pack request.

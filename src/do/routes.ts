@@ -15,7 +15,7 @@ import type { DurableObjectStorage } from './schema'
 import type { ParquetStore } from '../storage/parquet-store'
 import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
-import { ObjectStore } from './object-store'
+import { SqliteObjectStore } from './object-store'
 import { SchemaManager } from './schema'
 import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer'
 import type { CompressionCodec } from 'hyparquet'
@@ -25,6 +25,7 @@ import type {
 } from '../export/git-parquet'
 import * as lz4js from 'lz4js'
 import { LfsInterop, type LfsBatchRequest, type LfsBatchResponse } from '../storage/lfs-interop'
+import { setupWireRoutes } from './wire-routes'
 
 // ============================================================================
 // Sync/Export Types
@@ -355,7 +356,7 @@ export async function handleExport(
     const storage = instance.getStorage()
     const schemaManager = new SchemaManager(storage)
     await schemaManager.initializeSchema()
-    const objectStore = new ObjectStore(storage, {
+    const objectStore = new SqliteObjectStore(storage, {
       backend: instance.getParquetStore(),
     })
 
@@ -460,7 +461,7 @@ export async function handleExport(
 /**
  * Read commits from ObjectStore and convert to GitCommitData format.
  */
-async function readCommitsFromStorage(store: ObjectStore): Promise<GitCommitData[]> {
+async function readCommitsFromStorage(store: SqliteObjectStore): Promise<GitCommitData[]> {
   const commits: GitCommitData[] = []
 
   // Query all commit objects from the objects table
@@ -687,6 +688,13 @@ export function setupRoutes(
 
   // LFS batch API endpoint
   router.post('/objects/batch', (c) => handleLfsBatch(c, instance))
+
+  // Git Smart HTTP wire protocol routes
+  // These serve git clone/fetch/push over HTTP:
+  //   GET  /:namespace/info/refs         - ref advertisement
+  //   POST /:namespace/git-upload-pack   - fetch/clone serving
+  //   POST /:namespace/git-receive-pack  - push receiving
+  setupWireRoutes(router, instance)
 
   // Catch-all for 404
   router.all('*', (c) => {

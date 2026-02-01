@@ -548,6 +548,22 @@ export type ScheduleProxy = {
 }
 
 /**
+ * Result returned by $.try() and $.do() workflow actions.
+ *
+ * @description
+ * Provides a properly typed result instead of using unsafe generic casts.
+ * Contains the action name, optional data payload, and a success flag.
+ */
+export interface ActionResult {
+  /** The name of the action that was executed */
+  action: string
+  /** The data payload that was passed to the action */
+  data?: unknown
+  /** Whether the action completed successfully */
+  success: boolean
+}
+
+/**
  * Workflow context interface (the $ API).
  *
  * @description
@@ -587,7 +603,7 @@ export interface WorkflowContext {
    * @param data - Optional action data
    * @returns Promise resolving to the action result
    */
-  try<T>(action: string, data?: unknown): Promise<T>
+  try(action: string, data?: unknown): Promise<ActionResult>
 
   /**
    * Durable execution with retries.
@@ -596,7 +612,7 @@ export interface WorkflowContext {
    * @param data - Optional action data
    * @returns Promise resolving to the action result
    */
-  do<T>(action: string, data?: unknown): Promise<T>
+  do(action: string, data?: unknown): Promise<ActionResult>
 
   /**
    * Event handler registration proxy.

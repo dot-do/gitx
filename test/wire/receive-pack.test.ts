@@ -8,7 +8,7 @@ import {
   PackfileValidation,
   HookExecutionPoint,
   HookResult,
-  ObjectStore,
+  ReceivePackObjectStore,
   advertiseReceiveRefs,
   createReceiveSession,
   parseCommandLine,
@@ -51,7 +51,7 @@ const SHA1_TAG_1 = '1'.repeat(40)
 // Mock object store implementation
 function createMockStore(
   objects: Map<string, { type: 'blob' | 'tree' | 'commit' | 'tag'; data: Uint8Array }> = new Map()
-): ObjectStore {
+): ReceivePackObjectStore {
   const refs: Ref[] = [
     { name: 'refs/heads/main', sha: SHA1_COMMIT_1 },
     { name: 'refs/heads/feature', sha: SHA1_COMMIT_2 },
@@ -142,7 +142,7 @@ function createSamplePackfile(objectCount: number = 1): Uint8Array {
 }
 
 describe('git-receive-pack', () => {
-  let mockStore: ObjectStore
+  let mockStore: ReceivePackObjectStore
   let objects: Map<string, { type: 'blob' | 'tree' | 'commit' | 'tag'; data: Uint8Array }>
 
   beforeEach(() => {
@@ -236,7 +236,7 @@ describe('git-receive-pack', () => {
     })
 
     it('should return empty advertisement for empty repository', async () => {
-      const emptyStore: ObjectStore = {
+      const emptyStore: ReceivePackObjectStore = {
         ...mockStore,
         async getRefs() {
           return []
@@ -250,7 +250,7 @@ describe('git-receive-pack', () => {
     })
 
     it('should advertise capabilities even for empty repository', async () => {
-      const emptyStore: ObjectStore = {
+      const emptyStore: ReceivePackObjectStore = {
         ...mockStore,
         async getRefs() {
           return []
@@ -1508,7 +1508,7 @@ describe('git-receive-pack', () => {
   // ==========================================================================
   describe('Edge Cases', () => {
     it('should handle push to empty repository', async () => {
-      const emptyStore: ObjectStore = {
+      const emptyStore: ReceivePackObjectStore = {
         ...mockStore,
         async getRefs() {
           return []

@@ -173,6 +173,18 @@ export interface CompactResult {
 // ============================================================================
 
 /**
+ * Result returned by $.try() and $.do() workflow actions.
+ */
+export interface ActionResult {
+  /** The name of the action that was executed */
+  action: string
+  /** The data payload that was passed to the action */
+  data?: unknown
+  /** Whether the action completed successfully */
+  success: boolean
+}
+
+/**
  * Workflow context interface (the $ API).
  * Provides durable execution primitives and git operations.
  */
@@ -180,9 +192,9 @@ export interface WorkflowContext {
   /** Fire-and-forget event emission */
   send(event: string, data?: unknown): void
   /** Single attempt execution (blocking, non-durable) */
-  try<T>(action: string, data?: unknown): Promise<T>
+  try(action: string, data?: unknown): Promise<ActionResult>
   /** Durable execution with retries */
-  do<T>(action: string, data?: unknown): Promise<T>
+  do(action: string, data?: unknown): Promise<ActionResult>
   /** Event handler registration proxy */
   on: Record<string, Record<string, (handler: unknown) => void>>
   /** Scheduling proxy */

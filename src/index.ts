@@ -339,6 +339,7 @@ export {
   type EventHandlerProxy,
   type ScheduleProxy,
   type WorkflowContext,
+  type ActionResult,
   // Modules
   type Module,
   type StorageBackedModule,

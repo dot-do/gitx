@@ -35,6 +35,7 @@ import type {
   ForkResult,
   CompactResult,
   WorkflowContext,
+  ActionResult,
   StoreAccessor,
   FsCapability,
   Logger,
@@ -154,12 +155,11 @@ class DO {
    */
   getTypeHierarchy(): string[] {
     const hierarchy: string[] = []
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let current: any = this.constructor
+    let current: { $type?: string } | null = this.constructor as { $type?: string }
 
     while (current && current.$type) {
       hierarchy.push(current.$type)
-      current = Object.getPrototypeOf(current)
+      current = Object.getPrototypeOf(current) as { $type?: string } | null
     }
 
     return hierarchy
@@ -720,19 +720,19 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       },
 
       // Quick attempt (blocking, non-durable)
-      async try<T>(action: string, data?: unknown): Promise<T> {
+      async try(action: string, data?: unknown): Promise<ActionResult> {
         // Execute action directly
-        return { action, data, success: true } as T
+        return { action, data, success: true }
       },
 
       // Durable execution with retries
-      async do<T>(action: string, data?: unknown): Promise<T> {
+      async do(action: string, data?: unknown): Promise<ActionResult> {
         // Store action for durability
         const actionId = `action:${Date.now()}`
         await self.state.storage.put(actionId, { action, data, status: 'pending' })
 
         // Execute and update status
-        const result = { action, data, success: true } as T
+        const result: ActionResult = { action, data, success: true }
         await self.state.storage.put(actionId, { action, data, status: 'completed', result })
 
         return result

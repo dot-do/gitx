@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
-  ObjectStore,
+  SqliteObjectStore,
   StoredObject
 } from '../../src/do/object-store'
 import { DurableObjectStorage } from '../../src/do/schema'
@@ -226,11 +226,11 @@ function buildTreeContent(entries: TreeEntry[]): Uint8Array {
 
 describe('Tree Object Storage', () => {
   let storage: MockObjectStorage
-  let objectStore: ObjectStore
+  let objectStore: SqliteObjectStore
 
   beforeEach(() => {
     storage = new MockObjectStorage()
-    objectStore = new ObjectStore(storage)
+    objectStore = new SqliteObjectStore(storage)
   })
 
   describe('putTreeObject - Storing tree objects', () => {

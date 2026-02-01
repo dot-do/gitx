@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
-  ObjectStore,
+  SqliteObjectStore,
   StoredObject
 } from '../../src/do/object-store'
 import { DurableObjectStorage } from '../../src/do/schema'
@@ -185,11 +185,11 @@ class MockObjectStorage implements DurableObjectStorage {
 
 describe('ObjectStore', () => {
   let storage: MockObjectStorage
-  let objectStore: ObjectStore
+  let objectStore: SqliteObjectStore
 
   beforeEach(() => {
     storage = new MockObjectStorage()
-    objectStore = new ObjectStore(storage)
+    objectStore = new SqliteObjectStore(storage)
   })
 
   describe('putObject', () => {
@@ -643,7 +643,7 @@ describe('ObjectStore', () => {
           return originalExec(query, ...params)
         }
 
-        const failingStore = new ObjectStore(failingStorage)
+        const failingStore = new SqliteObjectStore(failingStorage)
 
         const objects = [
           { type: 'blob' as ObjectType, data: encoder.encode('rollback1') },
@@ -696,7 +696,7 @@ describe('ObjectStore', () => {
           return originalExec(query, ...params)
         }
 
-        const failingStore = new ObjectStore(failingStorage)
+        const failingStore = new SqliteObjectStore(failingStorage)
 
         // Pre-populate the cache with the original object by reading it
         await failingStore.getObject(sha1)
@@ -735,7 +735,7 @@ describe('ObjectStore', () => {
           return originalExec(query, ...params)
         }
 
-        const failingStore = new ObjectStore(failingStorage)
+        const failingStore = new SqliteObjectStore(failingStorage)
 
         const objects = [
           { type: 'blob' as ObjectType, data: encoder.encode('partial1') },

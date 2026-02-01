@@ -1,5 +1,5 @@
 /**
- * @fileoverview RED Phase Tests for GitRepoDO extends DO Base Class
+ * @fileoverview Tests for GitRepoDO extends DO Base Class
  *
  * These tests verify that GitRepoDO:
  * 1. Inherits from the DO base class from @dotdo/do
@@ -8,15 +8,11 @@
  * 4. Has proper storage access via Drizzle
  * 5. Implements required Durable Object interface
  *
- * All tests should FAIL initially (RED phase) since GitRepoDO doesn't exist yet.
- *
  * @module test/do/GitRepoDO
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Import GitRepoDO from where it should be implemented
-// This import will fail until GitRepoDO is created
 import { GitRepoDO, isGitRepoDO } from '../../src/do/GitRepoDO'
 
 // ============================================================================

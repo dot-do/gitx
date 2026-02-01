@@ -124,9 +124,10 @@ function createMockStorage(options: {
       return null
     },
     async writeObject(type: string, data: Uint8Array) {
-      // Generate a proper 40-character hex SHA
-      const timestamp = Date.now().toString(16).padStart(16, '0')
-      const sha = (timestamp + 'abcdef0123456789abcdef0123456789abcd').slice(0, 40)
+      // Generate a deterministic 40-character hex SHA using an incrementing counter
+      const counter = (this as any).__writeCounter ?? 0
+      ;(this as any).__writeCounter = counter + 1
+      const sha = counter.toString(16).padStart(40, '0')
       if (type === 'blob') {
         blobs.set(sha, data)
       }

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
-  ObjectStore,
+  SqliteObjectStore,
   StoredObject
 } from '../../src/do/object-store'
 import { DurableObjectStorage } from '../../src/do/schema'
@@ -212,11 +212,11 @@ class MockChunkedStorage implements DurableObjectStorage {
 
 describe('ChunkedBlobStorage', () => {
   let storage: MockChunkedStorage
-  let objectStore: ObjectStore
+  let objectStore: SqliteObjectStore
 
   beforeEach(() => {
     storage = new MockChunkedStorage()
-    objectStore = new ObjectStore(storage)
+    objectStore = new SqliteObjectStore(storage)
   })
 
   describe('2MB chunking threshold', () => {
@@ -628,7 +628,7 @@ describe('ChunkedBlobStorage', () => {
 
       // Clear and store again
       storage.clearAll()
-      objectStore = new ObjectStore(storage)
+      objectStore = new SqliteObjectStore(storage)
 
       const sha2 = await objectStore.putObject('blob', blob)
 
@@ -638,7 +638,7 @@ describe('ChunkedBlobStorage', () => {
 
   describe('metrics tracking', () => {
     it('should track large blob operations for chunked blobs', async () => {
-      const metricStore = new ObjectStore(storage, { enableMetrics: true })
+      const metricStore = new SqliteObjectStore(storage, { enableMetrics: true })
       const largeBlob = new Uint8Array(5 * 1024 * 1024)
 
       await metricStore.putObject('blob', largeBlob)

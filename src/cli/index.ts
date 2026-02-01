@@ -112,7 +112,7 @@ export interface ParsedArgs {
   /** Positional arguments after the command */
   args: string[]
   /** Key-value pairs of parsed options/flags */
-  options: Record<string, any>
+  options: Record<string, unknown>
   /** Arguments after '--' separator (passed through unchanged) */
   rawArgs: string[]
   /** Working directory for command execution */
@@ -149,7 +149,7 @@ export interface CommandContext {
   /** Positional arguments passed to the command */
   args: string[]
   /** Parsed options/flags for the command */
-  options: Record<string, any>
+  options: Record<string, unknown>
   /** Raw arguments after '--' separator */
   rawArgs: string[]
   /** Function to write to standard output */

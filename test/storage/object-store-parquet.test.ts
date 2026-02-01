@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ObjectStore } from '../../src/do/object-store'
+import { SqliteObjectStore } from '../../src/do/object-store'
 import { ParquetStore } from '../../src/storage/parquet-store'
 import type { DurableObjectStorage } from '../../src/do/schema'
 
@@ -71,7 +71,7 @@ function createMockStorage(): DurableObjectStorage {
 }
 
 describe('ObjectStore with ParquetStore backend', () => {
-  let objectStore: ObjectStore
+  let objectStore: SqliteObjectStore
   let parquetStore: ParquetStore
   let mockR2: R2Bucket
   let mockSqlStorage: DurableObjectStorage
@@ -84,7 +84,7 @@ describe('ObjectStore with ParquetStore backend', () => {
       sql: mockSqlStorage,
       prefix: 'test-repo',
     })
-    objectStore = new ObjectStore(mockSqlStorage, {
+    objectStore = new SqliteObjectStore(mockSqlStorage, {
       backend: parquetStore,
     })
   })
@@ -142,7 +142,7 @@ describe('ObjectStore with ParquetStore backend', () => {
     objectStore.resetMetrics()
 
     // Create a new ObjectStore to bypass LRU cache
-    const freshStore = new ObjectStore(mockSqlStorage, {
+    const freshStore = new SqliteObjectStore(mockSqlStorage, {
       backend: parquetStore,
     })
 

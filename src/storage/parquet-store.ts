@@ -548,7 +548,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
 
     // Read all rows from Parquet file and filter by SHA
     // parquetReadObjects is simpler and more reliable than parquetQuery across environments
-    let allRows: Record<string, any>[]
+    let allRows: Record<string, unknown>[]
     try {
       allRows = await parquetReadObjects({
         file,
@@ -576,7 +576,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
         ? rawData
         : typeof rawData === 'string'
           ? new TextEncoder().encode(rawData)
-          : new Uint8Array(rawData)
+          : new Uint8Array(rawData as ArrayBufferLike)
       return { type, content }
     }
 
