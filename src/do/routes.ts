@@ -16,11 +16,13 @@ import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
 import { ObjectStore } from './object-store'
 import { SchemaManager } from './schema'
-import { parquetWriteBuffer } from 'hyparquet-writer'
+import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer'
+import type { CompressionCodec } from 'hyparquet'
 import type {
   GitCommitData,
   GitRefData,
 } from '../export/git-parquet'
+import * as lz4js from 'lz4js'
 
 // ============================================================================
 // Sync/Export Types
@@ -54,6 +56,8 @@ interface ExportRequest {
   fullExport?: boolean
   /** Repository name (e.g., "owner/repo") - used as fallback if DO ns not set */
   repository?: string
+  /** Compression codec: 'LZ4', 'UNCOMPRESSED', or 'SNAPPY' (default) */
+  codec?: 'LZ4' | 'LZ4_RAW' | 'UNCOMPRESSED' | 'SNAPPY'
 }
 
 /**
@@ -271,6 +275,24 @@ export async function handleSync(
  * @param instance - GitRepoDO instance
  * @returns Export result with file paths and row counts
  */
+/**
+ * LZ4 compressor function for hyparquet-writer.
+ * Uses raw LZ4 block compression (no framing) for Parquet LZ4_RAW codec.
+ * Uses lz4js.compressBlock which produces raw block format compatible with DuckDB.
+ */
+function lz4Compress(input: Uint8Array): Uint8Array {
+  // LZ4 block format max size: inputSize + inputSize/255 + 16
+  const maxSize = input.length + Math.ceil(input.length / 255) + 16
+  const output = new Uint8Array(maxSize)
+  // compressBlock returns the number of bytes written
+  const compressedSize = lz4js.compressBlock(input, output, 0, input.length, lz4js.makeHashTable())
+  if (compressedSize === 0) {
+    // Data is incompressible, return as-is
+    return input
+  }
+  return output.slice(0, compressedSize)
+}
+
 export async function handleExport(
   c: RouteContext,
   instance: GitRepoDOInstance
@@ -280,6 +302,14 @@ export async function handleExport(
     const tables = body.tables ?? ['commits', 'refs']
     const exportId = crypto.randomUUID()
     const timestamp = Date.now()
+
+    // Get compression codec - default to SNAPPY (built-in support, DuckDB compatible)
+    // LZ4_RAW requires proper raw block format which lz4js doesn't produce correctly
+    const codec: CompressionCodec = body.codec ?? 'SNAPPY'
+
+    // Build compressors map for LZ4 support (only include if using LZ4)
+    const useLZ4 = codec === 'LZ4' || codec === 'LZ4_RAW'
+    const lz4Compressors = { LZ4: lz4Compress, LZ4_RAW: lz4Compress }
 
     // Get repository name from namespace or request body
     const ns = instance.ns
@@ -306,23 +336,49 @@ export async function handleExport(
 
     const results: ExportJobStatus['results'] = []
 
-    // Export commits to Parquet
+    // Export commits to Parquet with VARIANT type for parent_shas
     if (tables.includes('commits')) {
       const commits = await readCommitsFromStorage(objectStore)
       if (commits.length > 0) {
+        // Encode parent_shas as VARIANT binary format
+        const parentShasData = commits.map(c => {
+          const encoded = encodeVariant(c.parentShas)
+          return { metadata: encoded.metadata, value: encoded.value }
+        })
+
         const buffer = parquetWriteBuffer({
+          codec,
+          ...(useLZ4 && { compressors: lz4Compressors }),
+          // Custom schema with VARIANT type for parent_shas
+          schema: [
+            { name: 'root', num_children: 11 },
+            { name: 'sha', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'tree_sha', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            // VARIANT group for parent_shas (semi-structured array)
+            { name: 'parent_shas', repetition_type: 'OPTIONAL', num_children: 2, logical_type: { type: 'VARIANT' } },
+            { name: 'metadata', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED' },
+            { name: 'value', type: 'BYTE_ARRAY', repetition_type: 'OPTIONAL' },
+            { name: 'author_name', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'author_email', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'author_date', type: 'INT64', repetition_type: 'REQUIRED', logical_type: { type: 'TIMESTAMP', isAdjustedToUTC: true, unit: 'MILLIS' } },
+            { name: 'committer_name', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'committer_email', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'committer_date', type: 'INT64', repetition_type: 'REQUIRED', logical_type: { type: 'TIMESTAMP', isAdjustedToUTC: true, unit: 'MILLIS' } },
+            { name: 'message', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+            { name: 'repository', type: 'BYTE_ARRAY', repetition_type: 'REQUIRED', converted_type: 'UTF8' },
+          ],
           columnData: [
-            { name: 'sha', data: commits.map(c => c.sha), type: 'STRING' },
-            { name: 'tree_sha', data: commits.map(c => c.treeSha), type: 'STRING' },
-            { name: 'parent_shas', data: commits.map(c => JSON.stringify(c.parentShas)), type: 'JSON' },
-            { name: 'author_name', data: commits.map(c => c.author.name), type: 'STRING' },
-            { name: 'author_email', data: commits.map(c => c.author.email), type: 'STRING' },
-            { name: 'author_date', data: commits.map(c => new Date(c.author.date)), type: 'TIMESTAMP' },
-            { name: 'committer_name', data: commits.map(c => c.committer.name), type: 'STRING' },
-            { name: 'committer_email', data: commits.map(c => c.committer.email), type: 'STRING' },
-            { name: 'committer_date', data: commits.map(c => new Date(c.committer.date)), type: 'TIMESTAMP' },
-            { name: 'message', data: commits.map(c => c.message), type: 'STRING' },
-            { name: 'repository', data: commits.map(() => repoName), type: 'STRING' },
+            { name: 'sha', data: commits.map(c => c.sha) },
+            { name: 'tree_sha', data: commits.map(c => c.treeSha) },
+            { name: 'parent_shas', data: parentShasData },
+            { name: 'author_name', data: commits.map(c => c.author.name) },
+            { name: 'author_email', data: commits.map(c => c.author.email) },
+            { name: 'author_date', data: commits.map(c => BigInt(c.author.date || Date.now())) },
+            { name: 'committer_name', data: commits.map(c => c.committer.name) },
+            { name: 'committer_email', data: commits.map(c => c.committer.email) },
+            { name: 'committer_date', data: commits.map(c => BigInt(c.committer.date || Date.now())) },
+            { name: 'message', data: commits.map(c => c.message) },
+            { name: 'repository', data: commits.map(() => repoName) },
           ],
         })
         const path = `${repoName}/commits/${exportId}.parquet`
@@ -341,6 +397,8 @@ export async function handleExport(
       const refs = await readRefsFromStorage(storage)
       if (refs.length > 0) {
         const buffer = parquetWriteBuffer({
+          codec,
+          ...(useLZ4 && { compressors: lz4Compressors }),
           columnData: [
             { name: 'name', data: refs.map(r => r.name), type: 'STRING' },
             { name: 'target_sha', data: refs.map(r => r.targetSha), type: 'STRING' },
@@ -362,9 +420,10 @@ export async function handleExport(
       success: true,
       exportId,
       repository: repoName,
+      codec,
       timestamp,
       results,
-      message: `Exported ${results.length} table(s) to Parquet`,
+      message: `Exported ${results.length} table(s) to Parquet with ${codec} compression`,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Export failed'
@@ -456,12 +515,23 @@ function parseCommitObject(sha: string, data: Uint8Array): GitCommitData | null 
 function parseAuthorLine(line: string): { name: string; email: string; date: number } {
   const match = line.match(/^(.+) <(.+)> (\d+) ([+-]\d{4})$/)
   if (!match) {
+    // Fallback: try simpler pattern without timezone
+    const simpleMatch = line.match(/^(.+) <(.+)> (\d+)/)
+    if (simpleMatch) {
+      const timestamp = parseInt(simpleMatch[3]!, 10)
+      return {
+        name: simpleMatch[1]!,
+        email: simpleMatch[2]!,
+        date: isNaN(timestamp) ? 0 : timestamp * 1000,
+      }
+    }
     return { name: '', email: '', date: 0 }
   }
+  const timestamp = parseInt(match[3]!, 10)
   return {
     name: match[1]!,
     email: match[2]!,
-    date: parseInt(match[3]!, 10) * 1000, // Convert to milliseconds
+    date: isNaN(timestamp) ? 0 : timestamp * 1000, // Convert to milliseconds
   }
 }
 
