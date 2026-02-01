@@ -1224,18 +1224,6 @@ export class ObjectStore {
       totalBytes += obj.data.length
     }
 
-    // Save cache state before transaction for rollback
-    // We need to track which entries existed before so we can restore on failure
-    const cacheSnapshot = new Map<string, StoredObject | null>()
-    for (const { sha } of objectsWithSha) {
-      // Store the previous value (or null if it didn't exist)
-      const existing = this.cache.peek(sha) as StoredObject | undefined
-      cacheSnapshot.set(sha, existing ?? null)
-    }
-
-    // Track which keys were added to cache during transaction (for rollback)
-    const addedToCacheDuringTransaction: string[] = []
-
     // Begin transaction for atomic batch write
     this.storage.sql.exec('BEGIN TRANSACTION')
 
@@ -1276,53 +1264,43 @@ export class ObjectStore {
           type,
           now
         )
-
-        // Add to cache
-        const storedObject: StoredObject = {
-          sha,
-          type,
-          size: data.length,
-          data,
-          createdAt: now
-        }
-        this.cache.set(sha, storedObject)
-        addedToCacheDuringTransaction.push(sha)
       }
 
       // Commit transaction
       this.storage.sql.exec('COMMIT')
-
-      this.log('info', `Batch write completed: ${objects.length} objects, ${totalBytes} bytes`)
-
-      // Update metrics
-      if (this.options.enableMetrics) {
-        this._writes += objects.length
-        this._bytesWritten += totalBytes
-        this._totalWriteLatency += Date.now() - startTime
-        this._batchOperations++
-        this._batchObjectsTotal += objects.length
-      }
-
-      return shas
     } catch (error) {
-      // Rollback SQL transaction
+      // Rollback SQL transaction - cache was not modified, so no cache rollback needed
       this.storage.sql.exec('ROLLBACK')
 
-      // Restore cache state to pre-transaction snapshot
-      for (const sha of addedToCacheDuringTransaction) {
-        const previousValue = cacheSnapshot.get(sha)
-        if (previousValue === null) {
-          // Entry didn't exist before - remove it
-          this.cache.delete(sha)
-        } else if (previousValue !== undefined) {
-          // Entry had a different value before - restore it
-          this.cache.set(sha, previousValue)
-        }
-      }
-
-      this.log('error', `Batch write failed, rolled back (including cache)`, error)
+      this.log('error', `Batch write failed, transaction rolled back`, error)
       throw error
     }
+
+    // Update cache AFTER successful commit to ensure cache/storage consistency.
+    // If the transaction was rolled back, we never reach this point.
+    for (const { sha, type, data } of objectsWithSha) {
+      const storedObject: StoredObject = {
+        sha,
+        type,
+        size: data.length,
+        data,
+        createdAt: now
+      }
+      this.cache.set(sha, storedObject)
+    }
+
+    this.log('info', `Batch write completed: ${objects.length} objects, ${totalBytes} bytes`)
+
+    // Update metrics
+    if (this.options.enableMetrics) {
+      this._writes += objects.length
+      this._bytesWritten += totalBytes
+      this._totalWriteLatency += Date.now() - startTime
+      this._batchOperations++
+      this._batchObjectsTotal += objects.length
+    }
+
+    return shas
   }
 
   /**

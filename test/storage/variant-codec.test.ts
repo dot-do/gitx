@@ -4,6 +4,8 @@ import {
   parseLfsPointer,
   buildR2Key,
   encodeGitObject,
+  decodeGitObject,
+  decodeVariant,
   extractCommitFields,
   encodeObjectBatch,
   INLINE_THRESHOLD,
@@ -141,6 +143,148 @@ Root commit`
     it('should return null for non-commit data', () => {
       const result = extractCommitFields(encoder.encode(''))
       expect(result).toBeNull()
+    })
+  })
+
+  describe('decodeVariant', () => {
+    it('should round-trip a blob through encode → decode', () => {
+      const sha = 'a'.repeat(40)
+      const data = encoder.encode('hello world')
+      const encoded = encodeGitObject(sha, 'blob', data)
+
+      const decoded = decodeGitObject(
+        encoded.sha,
+        encoded.type,
+        encoded.size,
+        encoded.path,
+        encoded.storage,
+        encoded.data.metadata,
+        encoded.data.value,
+      )
+
+      expect(decoded.sha).toBe(sha)
+      expect(decoded.type).toBe('blob')
+      expect(decoded.size).toBe(data.length)
+      expect(decoded.storage).toBe('inline')
+      expect(decoded.path).toBeNull()
+      expect(decoded.content).toBeInstanceOf(Uint8Array)
+      expect(decoded.content).toEqual(data)
+    })
+
+    it('should round-trip a commit with shredded fields', () => {
+      const sha = 'c'.repeat(40)
+      const commitText = `tree ${'a'.repeat(40)}
+parent ${'b'.repeat(40)}
+author Alice <alice@x.com> 1704067200 +0000
+committer Bob <bob@x.com> 1704067200 +0000
+
+Initial commit`
+      const data = encoder.encode(commitText)
+      const encoded = encodeGitObject(sha, 'commit', data)
+
+      const decoded = decodeGitObject(
+        encoded.sha,
+        encoded.type,
+        encoded.size,
+        encoded.path,
+        encoded.storage,
+        encoded.data.metadata,
+        encoded.data.value,
+      )
+
+      expect(decoded.sha).toBe(sha)
+      expect(decoded.type).toBe('commit')
+      expect(decoded.size).toBe(data.length)
+      expect(decoded.storage).toBe('inline')
+      expect(decoded.content).toBeInstanceOf(Uint8Array)
+      expect(decoded.content).toEqual(data)
+
+      // Verify shredded fields can still be extracted from decoded content
+      const fields = extractCommitFields(decoded.content as Uint8Array)
+      expect(fields).not.toBeNull()
+      expect(fields!.tree_sha).toBe('a'.repeat(40))
+      expect(fields!.parent_shas).toEqual(['b'.repeat(40)])
+      expect(fields!.author_name).toBe('Alice')
+      expect(fields!.message).toBe('Initial commit')
+    })
+
+    it('should round-trip an LFS pointer', () => {
+      const sha = 'd'.repeat(40)
+      const oid = 'e'.repeat(64)
+      const pointer = `version https://git-lfs.github.com/spec/v1
+oid sha256:${oid}
+size 12345
+`
+      const data = encoder.encode(pointer)
+      const encoded = encodeGitObject(sha, 'blob', data)
+
+      expect(encoded.storage).toBe('lfs')
+
+      const decoded = decodeGitObject(
+        encoded.sha,
+        encoded.type,
+        encoded.size,
+        encoded.path,
+        encoded.storage,
+        encoded.data.metadata,
+        encoded.data.value,
+      )
+
+      expect(decoded.sha).toBe(sha)
+      expect(decoded.type).toBe('blob')
+      expect(decoded.storage).toBe('lfs')
+      // LFS stores an R2 key reference
+      expect(typeof decoded.content).toBe('string')
+      expect(decoded.content).toBe(`lfs/${oid.slice(0, 2)}/${oid.slice(2)}`)
+    })
+
+    it('should round-trip an R2 large blob', () => {
+      const sha = 'f'.repeat(40)
+      const data = new Uint8Array(INLINE_THRESHOLD + 1)
+      data.fill(0x42)
+      const encoded = encodeGitObject(sha, 'blob', data)
+
+      expect(encoded.storage).toBe('r2')
+
+      const decoded = decodeGitObject(
+        encoded.sha,
+        encoded.type,
+        encoded.size,
+        encoded.path,
+        encoded.storage,
+        encoded.data.metadata,
+        encoded.data.value,
+      )
+
+      expect(decoded.sha).toBe(sha)
+      expect(decoded.storage).toBe('r2')
+      expect(typeof decoded.content).toBe('string')
+      expect(decoded.content).toBe(`objects/${sha.slice(0, 2)}/${sha.slice(2)}`)
+    })
+
+    it('should decode VARIANT primitives correctly', () => {
+      const { encodeVariant } = require('hyparquet-writer')
+
+      // String
+      const strEnc = encodeVariant('hello')
+      expect(decodeVariant(strEnc.metadata, strEnc.value)).toBe('hello')
+
+      // Number
+      const numEnc = encodeVariant(42)
+      expect(decodeVariant(numEnc.metadata, numEnc.value)).toBe(42)
+
+      // Boolean
+      const boolEnc = encodeVariant(true)
+      expect(decodeVariant(boolEnc.metadata, boolEnc.value)).toBe(true)
+
+      // Null
+      const nullEnc = encodeVariant(null)
+      expect(decodeVariant(nullEnc.metadata, nullEnc.value)).toBeNull()
+
+      // Object
+      const objEnc = encodeVariant({ key: 'value', num: 123 })
+      const objDec = decodeVariant(objEnc.metadata, objEnc.value)
+      expect(objDec).toEqual({ key: 'value', num: 123 })
     })
   })
 

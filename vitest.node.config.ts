@@ -25,10 +25,10 @@ export default defineConfig({
       include: ['src/cli/**/*.ts', 'src/mcp/**/*.ts'],
       exclude: ['src/**/*.d.ts'],
       thresholds: {
-        statements: 65,
-        branches: 50,
-        functions: 50,
-        lines: 65
+        statements: 75,
+        branches: 60,
+        functions: 60,
+        lines: 75
       }
     },
   }

@@ -242,6 +242,268 @@ export function extractCommitFields(data: Uint8Array): ShreddedCommitFields | nu
   return fields.tree_sha ? fields : null
 }
 
+// ============================================================================
+// Decoding
+// ============================================================================
+
+/**
+ * Read an unsigned little-endian integer from a buffer.
+ */
+function readUnsigned(buf: Uint8Array, pos: number, byteWidth: number): number {
+  let value = 0
+  for (let i = 0; i < byteWidth; i++) {
+    value |= buf[pos + i] << (i * 8)
+  }
+  return value >>> 0 // unsigned
+}
+
+/**
+ * Decode a VARIANT metadata buffer into a string dictionary.
+ */
+function decodeMetadata(metadata: Uint8Array): string[] {
+  if (metadata.length < 2) return []
+
+  const header = metadata[0]
+  // header: version (4 bits), sorted (1 bit), offset_size_minus_one (2 bits)
+  const offsetSize = ((header >> 6) & 0x03) + 1
+
+  const dictSize = readUnsigned(metadata, 1, offsetSize)
+  if (dictSize === 0) return []
+
+  const offsetsStart = 1 + offsetSize
+  const stringsStart = offsetsStart + (dictSize + 1) * offsetSize
+
+  const dictionary: string[] = []
+  for (let i = 0; i < dictSize; i++) {
+    const start = readUnsigned(metadata, offsetsStart + i * offsetSize, offsetSize)
+    const end = readUnsigned(metadata, offsetsStart + (i + 1) * offsetSize, offsetSize)
+    dictionary.push(decoder.decode(metadata.subarray(stringsStart + start, stringsStart + end)))
+  }
+
+  return dictionary
+}
+
+/**
+ * Decode a VARIANT value buffer into a JavaScript value.
+ * Returns the decoded value and the number of bytes consumed.
+ */
+function decodeValue(value: Uint8Array, pos: number, dictionary: string[]): { result: unknown; bytesRead: number } {
+  const header = value[pos]
+  const basicType = header & 0x03
+
+  switch (basicType) {
+    case 0: {
+      // Primitive
+      const typeId = (header >> 2) & 0x3F
+      return decodePrimitive(value, pos, typeId)
+    }
+    case 1: {
+      // Short string
+      const length = (header >> 2) & 0x3F
+      const str = decoder.decode(value.subarray(pos + 1, pos + 1 + length))
+      return { result: str, bytesRead: 1 + length }
+    }
+    case 2: {
+      // Object
+      return decodeObject(value, pos, dictionary)
+    }
+    case 3: {
+      // Array
+      return decodeArray(value, pos, dictionary)
+    }
+    default:
+      throw new Error(`Unknown VARIANT basic type: ${basicType}`)
+  }
+}
+
+/**
+ * Decode a VARIANT primitive value.
+ */
+function decodePrimitive(buf: Uint8Array, pos: number, typeId: number): { result: unknown; bytesRead: number } {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+
+  switch (typeId) {
+    case 0: // null
+      return { result: null, bytesRead: 1 }
+    case 1: // true
+      return { result: true, bytesRead: 1 }
+    case 2: // false
+      return { result: false, bytesRead: 1 }
+    case 3: // INT8
+      return { result: view.getInt8(pos + 1), bytesRead: 2 }
+    case 4: // INT16
+      return { result: view.getInt16(pos + 1, true), bytesRead: 3 }
+    case 5: // INT32
+      return { result: view.getInt32(pos + 1, true), bytesRead: 5 }
+    case 6: // INT64
+      return { result: Number(view.getBigInt64(pos + 1, true)), bytesRead: 9 }
+    case 7: // DOUBLE
+      return { result: view.getFloat64(pos + 1, true), bytesRead: 9 }
+    case 12: // TIMESTAMP_MICROS
+      return { result: Number(view.getBigInt64(pos + 1, true)) / 1000, bytesRead: 9 }
+    case 16: {
+      // Long string
+      const length = view.getUint32(pos + 1, true)
+      const str = decoder.decode(buf.subarray(pos + 5, pos + 5 + length))
+      return { result: str, bytesRead: 5 + length }
+    }
+    default:
+      throw new Error(`Unknown VARIANT primitive type_id: ${typeId}`)
+  }
+}
+
+/**
+ * Decode a VARIANT object value.
+ */
+function decodeObject(buf: Uint8Array, pos: number, dictionary: string[]): { result: Record<string, unknown>; bytesRead: number } {
+  const header = buf[pos]
+  const offsetSize = ((header >> 2) & 0x03) + 1
+  const idSize = ((header >> 4) & 0x03) + 1
+  const isLarge = (header & 0x40) !== 0
+
+  let cursor = pos + 1
+  let numElements: number
+  if (isLarge) {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    numElements = view.getUint32(cursor, true)
+    cursor += 4
+  } else {
+    numElements = buf[cursor]
+    cursor += 1
+  }
+
+  // Read field IDs
+  const fieldIds: number[] = []
+  for (let i = 0; i < numElements; i++) {
+    fieldIds.push(readUnsigned(buf, cursor, idSize))
+    cursor += idSize
+  }
+
+  // Read offsets
+  const offsets: number[] = []
+  for (let i = 0; i <= numElements; i++) {
+    offsets.push(readUnsigned(buf, cursor, offsetSize))
+    cursor += offsetSize
+  }
+
+  // Read values
+  const valuesStart = cursor
+  const result: Record<string, unknown> = {}
+  for (let i = 0; i < numElements; i++) {
+    const key = dictionary[fieldIds[i]] ?? String(fieldIds[i])
+    const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary)
+    result[key] = decoded.result
+  }
+
+  const totalBytes = cursor - pos + offsets[numElements]
+  return { result, bytesRead: totalBytes }
+}
+
+/**
+ * Decode a VARIANT array value.
+ */
+function decodeArray(buf: Uint8Array, pos: number, dictionary: string[]): { result: unknown[]; bytesRead: number } {
+  const header = buf[pos]
+  const offsetSize = ((header >> 2) & 0x03) + 1
+  const isLarge = (header & 0x10) !== 0
+
+  let cursor = pos + 1
+  let numElements: number
+  if (isLarge) {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    numElements = view.getUint32(cursor, true)
+    cursor += 4
+  } else {
+    numElements = buf[cursor]
+    cursor += 1
+  }
+
+  // Read offsets
+  const offsets: number[] = []
+  for (let i = 0; i <= numElements; i++) {
+    offsets.push(readUnsigned(buf, cursor, offsetSize))
+    cursor += offsetSize
+  }
+
+  // Read values
+  const valuesStart = cursor
+  const result: unknown[] = []
+  for (let i = 0; i < numElements; i++) {
+    const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary)
+    result.push(decoded.result)
+  }
+
+  const totalBytes = cursor - pos + offsets[numElements]
+  return { result, bytesRead: totalBytes }
+}
+
+/**
+ * Decode VARIANT metadata + value buffers back into a JavaScript value.
+ *
+ * This is the inverse of hyparquet-writer's encodeVariant().
+ */
+export function decodeVariant(metadata: Uint8Array, value: Uint8Array): unknown {
+  const dictionary = decodeMetadata(metadata)
+  const { result } = decodeValue(value, 0, dictionary)
+  return result
+}
+
+/**
+ * Decode a git object from Parquet VARIANT storage.
+ *
+ * Reconstructs the original git object from the VARIANT-encoded data
+ * plus the shredded column values (type, storage, etc.).
+ *
+ * For inline storage, returns the raw object bytes in content.
+ * For r2/lfs storage, returns the R2 key as a string in content,
+ * plus LFS metadata (oid, lfsSize) for lfs objects.
+ */
+export function decodeGitObject(
+  sha: string,
+  type: ObjectType,
+  size: number,
+  path: string | null,
+  storage: StorageMode,
+  variantMetadata: Uint8Array,
+  variantValue: Uint8Array,
+): DecodedGitObject {
+  const decoded = decodeVariant(variantMetadata, variantValue)
+
+  switch (storage) {
+    case 'inline': {
+      // Inline: VARIANT contains the raw data encoded as an object with numeric keys
+      // (because Uint8Array keys are "0","1","2",... when passed to encodeVariant)
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+        const obj = decoded as Record<string, unknown>
+        const keys = Object.keys(obj)
+        // Check if this is a numeric-keyed object (serialized Uint8Array)
+        if (keys.length > 0 && keys.every(k => /^\d+$/.test(k))) {
+          const bytes = new Uint8Array(keys.length)
+          for (const k of keys) {
+            bytes[Number(k)] = Number(obj[k])
+          }
+          return { sha, type, size, path, storage, content: bytes }
+        }
+      }
+      // Fallback: if it was somehow stored differently
+      const encoder = new TextEncoder()
+      return { sha, type, size, path, storage, content: encoder.encode(String(decoded)) }
+    }
+
+    case 'r2': {
+      // R2: VARIANT contains { r2_key, size }
+      const obj = decoded as Record<string, unknown>
+      return { sha, type, size, path, storage, content: String(obj.r2_key) }
+    }
+
+    case 'lfs': {
+      // LFS: VARIANT contains { r2_key, oid, size, pointer }
+      const obj = decoded as Record<string, unknown>
+      return { sha, type, size, path, storage, content: String(obj.r2_key) }
+    }
+  }
+}
+
 /**
  * Encode multiple git objects into column-oriented arrays for Parquet writing.
  *

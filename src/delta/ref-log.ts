@@ -64,10 +64,15 @@ export class RefLog {
   private nextVersion: number = 1
   private bucket: RefLogBucket | null
   private prefix: string
+  private snapshotInterval: number = 100
+  private latestSnapshot?: { version: number; state: Map<string, RefState> }
 
-  constructor(bucket: RefLogBucket | null, prefix: string) {
+  constructor(bucket: RefLogBucket | null, prefix: string, options?: { snapshotInterval?: number }) {
     this.bucket = bucket
     this.prefix = prefix
+    if (options?.snapshotInterval !== undefined) {
+      this.snapshotInterval = options.snapshotInterval
+    }
   }
 
   /** Get the current version (number of entries). */
@@ -98,6 +103,12 @@ export class RefLog {
       timestamp: timestamp ?? Date.now(),
     }
     this.entries.push(entry)
+
+    // Auto-checkpoint every snapshotInterval entries
+    if (this.entries.length % this.snapshotInterval === 0) {
+      this.checkpoint()
+    }
+
     return entry
   }
 
@@ -106,8 +117,26 @@ export class RefLog {
    * Applies entries in order; deletions (new_sha='') remove the ref.
    */
   replayState(): Map<string, RefState> {
-    const state = new Map<string, RefState>()
-    for (const entry of this.entries) {
+    // Start from snapshot if available
+    let state: Map<string, RefState>
+    let startIndex: number
+
+    if (this.latestSnapshot) {
+      // Clone snapshot state so we don't mutate the cached copy
+      state = new Map(this.latestSnapshot.state)
+      // Find the index of the first entry after the snapshot version
+      startIndex = this.entries.findIndex(e => e.version > this.latestSnapshot!.version)
+      if (startIndex === -1) {
+        // All entries are covered by the snapshot
+        return state
+      }
+    } else {
+      state = new Map<string, RefState>()
+      startIndex = 0
+    }
+
+    for (let i = startIndex; i < this.entries.length; i++) {
+      const entry = this.entries[i]!
       if (entry.new_sha === '') {
         // Deletion
         state.delete(entry.ref_name)
@@ -120,6 +149,44 @@ export class RefLog {
       }
     }
     return state
+  }
+
+  /**
+   * Save the current replayState as a snapshot at the current version.
+   * Future calls to replayState() will start from this snapshot.
+   */
+  checkpoint(): void {
+    if (this.entries.length === 0) return
+    // Compute full state without using snapshot (to get a clean checkpoint)
+    const state = new Map<string, RefState>()
+    for (const entry of this.entries) {
+      if (entry.new_sha === '') {
+        state.delete(entry.ref_name)
+      } else {
+        state.set(entry.ref_name, {
+          ref_name: entry.ref_name,
+          sha: entry.new_sha,
+          version: entry.version,
+        })
+      }
+    }
+    this.latestSnapshot = {
+      version: this.version,
+      state,
+    }
+  }
+
+  /**
+   * Restore a snapshot from persisted storage.
+   * After loading, replayState() will start from this snapshot version.
+   */
+  loadSnapshot(version: number, state: Map<string, RefState>): void {
+    this.latestSnapshot = { version, state: new Map(state) }
+  }
+
+  /** Get the latest snapshot, if any. */
+  getSnapshot(): { version: number; state: Map<string, RefState> } | undefined {
+    return this.latestSnapshot
   }
 
   /**

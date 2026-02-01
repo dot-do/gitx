@@ -186,6 +186,94 @@ describe('RefLog', () => {
     })
   })
 
+  describe('snapshot checkpointing', () => {
+    it('replayState with snapshot skips earlier entries', () => {
+      // Append some entries
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+      log.append('refs/heads/main', 'aaa', 'ccc', 3000)
+
+      // Checkpoint at version 3
+      log.checkpoint()
+
+      // Append more entries after checkpoint
+      log.append('refs/heads/main', 'ccc', 'ddd', 4000)
+
+      const state = log.replayState()
+      expect(state.get('refs/heads/main')?.sha).toBe('ddd')
+      expect(state.get('refs/heads/feature')?.sha).toBe('bbb')
+
+      // Verify snapshot exists at version 3
+      const snap = log.getSnapshot()
+      expect(snap).toBeDefined()
+      expect(snap!.version).toBe(3)
+      expect(snap!.state.get('refs/heads/main')?.sha).toBe('ccc')
+    })
+
+    it('auto-checkpoint triggers at interval', () => {
+      const smallIntervalLog = new RefLog(bucket, 'test-repo', { snapshotInterval: 5 })
+
+      // Append 5 entries to trigger auto-checkpoint
+      for (let i = 1; i <= 5; i++) {
+        smallIntervalLog.append('refs/heads/main', i === 1 ? '' : `sha${i - 1}`, `sha${i}`, i * 1000)
+      }
+
+      const snap = smallIntervalLog.getSnapshot()
+      expect(snap).toBeDefined()
+      expect(snap!.version).toBe(5)
+      expect(snap!.state.get('refs/heads/main')?.sha).toBe('sha5')
+
+      // Append more entries
+      smallIntervalLog.append('refs/heads/main', 'sha5', 'sha6', 6000)
+      const state = smallIntervalLog.replayState()
+      expect(state.get('refs/heads/main')?.sha).toBe('sha6')
+    })
+
+    it('loadSnapshot restores state correctly', () => {
+      // Pre-populate some entries
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+      log.append('refs/heads/main', 'aaa', 'ccc', 3000)
+
+      // Load a snapshot as if restored from persistence
+      const snapshotState = new Map([
+        ['refs/heads/main', { ref_name: 'refs/heads/main', sha: 'ccc', version: 3 }],
+        ['refs/heads/feature', { ref_name: 'refs/heads/feature', sha: 'bbb', version: 2 }],
+      ])
+      log.loadSnapshot(3, snapshotState)
+
+      // Append after snapshot
+      log.append('refs/heads/develop', '', 'ddd', 4000)
+
+      const state = log.replayState()
+      expect(state.get('refs/heads/main')?.sha).toBe('ccc')
+      expect(state.get('refs/heads/feature')?.sha).toBe('bbb')
+      expect(state.get('refs/heads/develop')?.sha).toBe('ddd')
+    })
+
+    it('replayState returns snapshot state when no entries follow', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.checkpoint()
+
+      const state = log.replayState()
+      expect(state.get('refs/heads/main')?.sha).toBe('aaa')
+    })
+
+    it('loadSnapshot does not mutate the provided state map', () => {
+      const original = new Map([
+        ['refs/heads/main', { ref_name: 'refs/heads/main', sha: 'aaa', version: 1 }],
+      ])
+      log.loadSnapshot(1, original)
+
+      // Append an entry that modifies state during replay
+      log.append('refs/heads/main', 'aaa', 'bbb', 2000)
+      log.replayState()
+
+      // Original map should be unchanged
+      expect(original.get('refs/heads/main')?.sha).toBe('aaa')
+    })
+  })
+
   describe('flush', () => {
     it('should return null for empty log', async () => {
       const key = await log.flush()

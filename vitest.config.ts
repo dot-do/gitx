@@ -30,10 +30,10 @@ export default defineWorkersConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/index.ts'],
       thresholds: {
-        statements: 65,
-        branches: 50,
-        functions: 50,
-        lines: 65
+        statements: 75,
+        branches: 60,
+        functions: 60,
+        lines: 75
       }
     },
     testTimeout: 30000

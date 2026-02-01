@@ -14,6 +14,9 @@ function createMockR2(): R2Bucket {
         store.set(key, value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
       } else if (value instanceof ArrayBuffer) {
         store.set(key, value)
+      } else if (typeof value === 'string') {
+        const encoded = new TextEncoder().encode(value)
+        store.set(key, encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength))
       }
       return {} as R2Object
     }),
@@ -463,6 +466,89 @@ describe('ParquetStore', () => {
         expect(result).not.toBeNull()
         expect(result!.type).toBe('blob')
       }
+    })
+  })
+
+  describe('iceberg integration', () => {
+    it('should write iceberg metadata.json to R2 after flush when icebergEnabled', async () => {
+      const icebergStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        icebergEnabled: true,
+      })
+
+      const data = encoder.encode('iceberg test object')
+      await icebergStore.putObject('blob', data)
+      await icebergStore.flush()
+
+      // Verify metadata.json was written to R2
+      const metadataObj = await mockR2.get('test-repo/iceberg/metadata.json')
+      expect(metadataObj).not.toBeNull()
+
+      const metadataText = await metadataObj!.arrayBuffer()
+      const metadata = JSON.parse(new TextDecoder().decode(metadataText))
+
+      expect(metadata['format-version']).toBe(2)
+      expect(metadata.snapshots).toHaveLength(1)
+      expect(metadata['current-snapshot-id']).toBeGreaterThan(0)
+      expect(metadata.snapshots[0].summary.operation).toBe('append')
+      expect(metadata.snapshots[0]['manifest-list']).toContain('test-repo/iceberg/manifest-lists/')
+    })
+
+    it('should chain snapshots across multiple flushes', async () => {
+      const icebergStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        icebergEnabled: true,
+      })
+
+      await icebergStore.putObject('blob', encoder.encode('first'))
+      await icebergStore.flush()
+
+      await icebergStore.putObject('blob', encoder.encode('second'))
+      await icebergStore.flush()
+
+      const metadataObj = await mockR2.get('test-repo/iceberg/metadata.json')
+      const metadata = JSON.parse(new TextDecoder().decode(await metadataObj!.arrayBuffer()))
+
+      expect(metadata.snapshots).toHaveLength(2)
+      expect(metadata.snapshots[1]['parent-snapshot-id']).toBe(metadata.snapshots[0]['snapshot-id'])
+    })
+
+    it('should write manifest JSON to R2', async () => {
+      const icebergStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        icebergEnabled: true,
+      })
+
+      await icebergStore.putObject('blob', encoder.encode('manifest test'))
+      await icebergStore.flush()
+
+      // Find the manifest file in R2 puts
+      const putCalls = (mockR2.put as ReturnType<typeof vi.fn>).mock.calls
+      const manifestCall = putCalls.find(([key]: [string]) =>
+        key.startsWith('test-repo/iceberg/manifests/') && key.endsWith('.json')
+      )
+      expect(manifestCall).toBeDefined()
+
+      // Verify the manifest content
+      const manifestObj = await mockR2.get(manifestCall![0])
+      const manifest = JSON.parse(new TextDecoder().decode(await manifestObj!.arrayBuffer()))
+      expect(manifest.entries).toHaveLength(1)
+      expect(manifest.entries[0]['data-file']['file-format']).toBe('PARQUET')
+    })
+
+    it('should not write iceberg metadata when icebergEnabled is false', async () => {
+      const data = encoder.encode('no iceberg')
+      await store.putObject('blob', data)
+      await store.flush()
+
+      const metadataObj = await mockR2.get('test-repo/iceberg/metadata.json')
+      expect(metadataObj).toBeNull()
     })
   })
 

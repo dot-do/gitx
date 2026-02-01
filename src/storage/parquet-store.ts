@@ -32,6 +32,19 @@ interface AsyncBuffer {
 import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
+import type { IcebergTableMetadata } from '../iceberg/metadata'
+import {
+  createTableMetadata,
+  addSnapshot,
+  serializeMetadata,
+} from '../iceberg/metadata'
+import {
+  createManifestEntry,
+  createManifest,
+  serializeManifest,
+  createManifestList,
+  serializeManifestList,
+} from '../iceberg/manifest'
 
 // ============================================================================
 // Type Guards
@@ -77,6 +90,8 @@ export interface ParquetStoreOptions {
   flushBytesThreshold?: number
   /** Compression codec */
   codec?: 'SNAPPY' | 'LZ4_RAW' | 'UNCOMPRESSED'
+  /** Enable Iceberg metadata generation on flush */
+  icebergEnabled?: boolean
 }
 
 /** Buffered object awaiting flush to Parquet */
@@ -133,6 +148,8 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
   private tombstones: Set<string> = new Set()
   private initialized = false
   private initPromise?: Promise<void>
+  private icebergEnabled: boolean
+  private icebergMetadata: IcebergTableMetadata | null = null
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
@@ -141,6 +158,7 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     this.flushThreshold = options.flushThreshold ?? FLUSH_THRESHOLD
     this.flushBytesThreshold = options.flushBytesThreshold ?? FLUSH_BYTES_THRESHOLD
     this.codec = options.codec ?? 'SNAPPY'
+    this.icebergEnabled = options.icebergEnabled ?? false
   }
 
   /**
@@ -300,7 +318,76 @@ export class ParquetStore implements Pick<StorageBackend, 'putObject' | 'getObje
     // Persist bloom filter
     await this.bloomCache.persist()
 
+    // Iceberg metadata generation
+    if (this.icebergEnabled) {
+      await this.updateIcebergMetadata(key, buffer.byteLength, objects.length)
+    }
+
     return key
+  }
+
+  /**
+   * Generate and write Iceberg manifest, manifest list, and table metadata
+   * for a newly flushed Parquet file.
+   */
+  private async updateIcebergMetadata(
+    parquetKey: string,
+    fileSizeBytes: number,
+    recordCount: number,
+  ): Promise<void> {
+    // Use a combination of timestamp and random bits to ensure unique snapshot IDs
+    const snapshotId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
+
+    // (a) Create a manifest entry for the new Parquet file
+    const entry = createManifestEntry({
+      filePath: parquetKey,
+      fileSizeBytes,
+      recordCount,
+    })
+
+    // (b) Create a manifest containing that entry
+    const manifestId = crypto.randomUUID()
+    const manifestPath = `${this.prefix}/iceberg/manifests/${manifestId}.json`
+    const manifest = createManifest({
+      entries: [entry],
+      schemaId: 0,
+      manifestPath,
+    })
+
+    // (c) Write manifest JSON to R2
+    await this.r2.put(manifestPath, serializeManifest(manifest))
+
+    // (d) Create manifest list
+    const manifestListId = crypto.randomUUID()
+    const manifestListPath = `${this.prefix}/iceberg/manifest-lists/${manifestListId}.json`
+    const manifestList = createManifestList({
+      manifests: [manifest],
+      snapshotId,
+    })
+
+    // (e) Write manifest list to R2
+    await this.r2.put(manifestListPath, serializeManifestList(manifestList))
+
+    // (f) Load or create table metadata, add snapshot pointing to manifest list
+    if (!this.icebergMetadata) {
+      this.icebergMetadata = createTableMetadata({
+        location: `${this.prefix}/iceberg`,
+      })
+    }
+
+    this.icebergMetadata = addSnapshot(this.icebergMetadata, {
+      manifestListPath,
+      snapshotId,
+      summary: {
+        operation: 'append',
+        'added-data-files': '1',
+        'added-records': String(recordCount),
+      },
+    })
+
+    // (g) Write metadata.json to R2
+    const metadataPath = `${this.prefix}/iceberg/metadata.json`
+    await this.r2.put(metadataPath, serializeMetadata(this.icebergMetadata))
   }
 
   // ===========================================================================
