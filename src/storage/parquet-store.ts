@@ -48,11 +48,17 @@ function isValidStorageMode(s: unknown): s is StorageMode {
 // Constants
 // ============================================================================
 
+/** Default maximum objects to buffer before flushing to Parquet */
+const DEFAULT_FLUSH_THRESHOLD = 1000
+
+/** Default maximum buffer size in bytes before flushing */
+const DEFAULT_FLUSH_BYTES_THRESHOLD = 10 * 1024 * 1024 // 10MB
+
 /** Maximum objects to buffer before flushing to Parquet */
-const FLUSH_THRESHOLD = 1000
+const FLUSH_THRESHOLD = DEFAULT_FLUSH_THRESHOLD
 
 /** Maximum buffer size in bytes before flushing */
-const FLUSH_BYTES_THRESHOLD = 10 * 1024 * 1024 // 10MB
+const FLUSH_BYTES_THRESHOLD = DEFAULT_FLUSH_BYTES_THRESHOLD
 
 // ============================================================================
 // Types

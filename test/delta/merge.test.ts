@@ -152,10 +152,12 @@ describe('Delta Merge', () => {
 
       expect(result.success).toBe(false)
       expect(result.conflicts).toHaveLength(1)
+      expect(result.conflicts[0]!.kind).toBe('divergent')
       expect(result.conflicts[0]!.ref_name).toBe('refs/heads/main')
-      expect(result.conflicts[0]!.base_sha).toBe('aaa')
-      expect(result.conflicts[0]!.ours_sha).toBe('bbb')
-      expect(result.conflicts[0]!.theirs_sha).toBe('ccc')
+      const c = result.conflicts[0]! as { kind: 'divergent'; base_sha: string; ours_sha: string; theirs_sha: string }
+      expect(c.base_sha).toBe('aaa')
+      expect(c.ours_sha).toBe('bbb')
+      expect(c.theirs_sha).toBe('ccc')
     })
 
     it('should detect conflict: update vs delete', () => {
@@ -171,8 +173,11 @@ describe('Delta Merge', () => {
 
       expect(result.success).toBe(false)
       expect(result.conflicts).toHaveLength(1)
-      expect(result.conflicts[0]!.ours_sha).toBe('bbb')
-      expect(result.conflicts[0]!.theirs_sha).toBeUndefined()
+      expect(result.conflicts[0]!.kind).toBe('delete-update')
+      const c = result.conflicts[0]! as { kind: 'delete-update'; deleted_by: string; kept_sha: string; base_sha: string }
+      expect(c.deleted_by).toBe('theirs')
+      expect(c.kept_sha).toBe('bbb')
+      expect(c.base_sha).toBe('aaa')
     })
 
     it('should handle one-sided deletion cleanly', () => {

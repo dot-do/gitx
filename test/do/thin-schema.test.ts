@@ -235,4 +235,97 @@ describe('ThinSchemaManager', () => {
       expect(LEGACY_TABLES).toContain('wal')
     })
   })
+
+  // ==========================================================================
+  // Schema Migration v1 → v2 Tests
+  // ==========================================================================
+
+  describe('schema migration v1 → v2', () => {
+    it('should detect legacy schema (v1) when full tables exist', async () => {
+      // Initialize legacy (v1) schema with all tables
+      await schemaManager.initializeLegacySchema()
+
+      // Legacy schema includes objects, object_index, etc. but also refs
+      // hasLegacyTables checks for any of the LEGACY_TABLES
+      expect(await schemaManager.hasLegacyTables()).toBe(true)
+
+      // getSchemaVersion returns 1 because legacy tables are present
+      // but thin tables (bloom_filter, sha_cache) are NOT present
+      const version = await schemaManager.getSchemaVersion()
+      expect(version).toBe(1)
+    })
+
+    it('should detect thin schema (v2) when only refs + bloom_filter + sha_cache exist', async () => {
+      // Initialize only thin schema (v2)
+      await schemaManager.initializeSchema()
+
+      const tables = storage.getTables()
+      expect(tables).toContain('refs')
+      expect(tables).toContain('bloom_filter')
+      expect(tables).toContain('sha_cache')
+
+      // No legacy tables should exist
+      expect(tables).not.toContain('objects')
+      expect(tables).not.toContain('object_index')
+      expect(tables).not.toContain('hot_objects')
+      expect(tables).not.toContain('wal')
+
+      const version = await schemaManager.getSchemaVersion()
+      expect(version).toBe(2)
+    })
+
+    it('should return correct version for each schema state', async () => {
+      // Empty DB → version 0
+      expect(await schemaManager.getSchemaVersion()).toBe(0)
+
+      // After legacy init → version 1
+      await schemaManager.initializeLegacySchema()
+      expect(await schemaManager.getSchemaVersion()).toBe(1)
+
+      // Create a fresh storage + manager for thin-only test
+      const thinStorage = new MockDurableObjectStorage()
+      const thinManager = new ThinSchemaManager(thinStorage)
+
+      await thinManager.initializeSchema()
+      expect(await thinManager.getSchemaVersion()).toBe(2)
+    })
+
+    it('should initializeSchema on empty DB and create v2 schema', async () => {
+      // Verify DB is empty
+      expect(storage.getTables()).toHaveLength(0)
+      expect(await schemaManager.getSchemaVersion()).toBe(0)
+
+      // Initialize thin schema
+      await schemaManager.initializeSchema()
+
+      // Should now have exactly the v2 tables
+      const tables = storage.getTables()
+      expect(tables).toContain('refs')
+      expect(tables).toContain('bloom_filter')
+      expect(tables).toContain('sha_cache')
+      expect(tables).toHaveLength(3)
+
+      // Version should be 2
+      expect(await schemaManager.getSchemaVersion()).toBe(SCHEMA_VERSION)
+      expect(await schemaManager.getSchemaVersion()).toBe(2)
+    })
+
+    it('should report hasLegacyTables false after thin-only init', async () => {
+      await schemaManager.initializeSchema()
+      expect(await schemaManager.hasLegacyTables()).toBe(false)
+    })
+
+    it('should report hasLegacyTables true when legacy and thin coexist', async () => {
+      // Simulate a migration scenario: legacy schema exists, then thin schema added
+      await schemaManager.initializeLegacySchema()
+      await schemaManager.initializeSchema()
+
+      // Both legacy and thin tables exist
+      expect(await schemaManager.hasLegacyTables()).toBe(true)
+      // validateSchema should pass because thin tables exist
+      expect(await schemaManager.validateSchema()).toBe(true)
+      // Version should be 2 since thin tables are present
+      expect(await schemaManager.getSchemaVersion()).toBe(2)
+    })
+  })
 })

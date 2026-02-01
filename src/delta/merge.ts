@@ -17,15 +17,9 @@ import type { DeltaBranch } from './branch'
 // ============================================================================
 
 /** A conflict where both branches modified the same ref differently. */
-export interface MergeConflict {
-  ref_name: string
-  /** SHA from the common ancestor */
-  base_sha: string | undefined
-  /** SHA from the "ours" branch */
-  ours_sha: string | undefined
-  /** SHA from the "theirs" branch */
-  theirs_sha: string | undefined
-}
+export type MergeConflict =
+  | { kind: 'divergent'; ref_name: string; base_sha: string | undefined; ours_sha: string; theirs_sha: string }
+  | { kind: 'delete-update'; ref_name: string; base_sha: string; deleted_by: 'ours' | 'theirs'; kept_sha: string }
 
 /** Result of a three-way merge. */
 export interface MergeResult {
@@ -116,13 +110,23 @@ export function threeWayMerge(
         } else {
           merged.set(ref, { ref_name: ref, sha: oursSha, version: 0 })
         }
-      } else {
-        // Conflict!
+      } else if (oursSha === '' || theirsSha === '') {
+        // One side deleted, the other updated → delete-update conflict
         conflicts.push({
+          kind: 'delete-update',
+          ref_name: ref,
+          base_sha: baseSha!,
+          deleted_by: oursSha === '' ? 'ours' : 'theirs',
+          kept_sha: oursSha === '' ? theirsSha : oursSha,
+        })
+      } else {
+        // Both sides modified to different values → divergent conflict
+        conflicts.push({
+          kind: 'divergent',
           ref_name: ref,
           base_sha: baseSha,
-          ours_sha: oursSha === '' ? undefined : oursSha,
-          theirs_sha: theirsSha === '' ? undefined : theirsSha,
+          ours_sha: oursSha,
+          theirs_sha: theirsSha,
         })
       }
     } else if (oursChanged) {

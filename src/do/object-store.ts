@@ -1797,6 +1797,36 @@ export class ObjectStore {
       Date.now()
     )
   }
+
+  /**
+   * Truncate WAL by deleting flushed entries.
+   *
+   * @description
+   * Removes all entries from the write-ahead log that have been marked as flushed.
+   * This is a maintenance operation to free up disk space without losing durability
+   * for unflushed entries.
+   *
+   * @returns Number of WAL entries deleted
+   *
+   * @example
+   * ```typescript
+   * const deletedCount = await store.truncateWAL()
+   * console.log(`Deleted ${deletedCount} flushed WAL entries`)
+   * ```
+   */
+  async truncateWAL(): Promise<number> {
+    const result = this.storage.sql.exec(
+      'DELETE FROM wal WHERE flushed = 1'
+    )
+    // Get the number of rows affected - SQLite returns this via changes
+    const changesResult = this.storage.sql.exec('SELECT changes() as count')
+    const rows = changesResult.toArray() as { count: number }[]
+    const deletedCount = rows.length > 0 ? rows[0].count : 0
+
+    this.log('info', `WAL truncation: deleted ${deletedCount} flushed entries`)
+
+    return deletedCount
+  }
 }
 
 // ============================================================================

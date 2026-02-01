@@ -8,6 +8,7 @@
  */
 
 import { RefLog, type RefLogEntry, type RefLogBucket, type RefState } from './ref-log'
+import { DeltaVersionError } from './errors'
 
 // ============================================================================
 // Types
@@ -143,9 +144,9 @@ export function createBranchAtVersion(
   bucket: RefLogBucket,
   prefix: string,
 ): DeltaBranch {
-  if (atVersion < 0) throw new Error(`Cannot fork at negative version: ${atVersion}`)
+  if (atVersion < 0) throw new DeltaVersionError(atVersion, parentLog.version)
   if (atVersion > parentLog.version) {
-    throw new Error(`Cannot fork at version ${atVersion}: parent log only has ${parentLog.version} entries`)
+    throw new DeltaVersionError(atVersion, parentLog.version)
   }
   return new DeltaBranch(name, parentLog, atVersion, bucket, prefix)
 }

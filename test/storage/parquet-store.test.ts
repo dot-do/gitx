@@ -376,4 +376,134 @@ describe('ParquetStore', () => {
       expect(stats.parquetFiles).toBe(0)
     })
   })
+
+  describe('concurrent operations', () => {
+    it('multiple concurrent initialize() calls should only initialize once (promise dedup)', async () => {
+      // Track how many times R2.list is called (called during _doInitialize -> discoverObjectFiles)
+      const listSpy = mockR2.list as ReturnType<typeof vi.fn>
+      listSpy.mockClear()
+
+      // Create a fresh store to test initialization
+      const freshStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+
+      // Call initialize() concurrently multiple times
+      const results = await Promise.all([
+        freshStore.initialize(),
+        freshStore.initialize(),
+        freshStore.initialize(),
+        freshStore.initialize(),
+        freshStore.initialize(),
+      ])
+
+      // All should resolve successfully
+      expect(results).toHaveLength(5)
+
+      // R2.list should have been called exactly once (deduplication via initPromise)
+      expect(listSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('putObject during flush should not lose data (objects go to new buffer)', async () => {
+      // Put an initial object and start flushing
+      const data1 = encoder.encode('object before flush')
+      const sha1 = await store.putObject('blob', data1)
+
+      // Start the flush (this moves buffer to local variable and resets this.buffer)
+      const flushPromise = store.flush()
+
+      // While flush is in progress, put another object
+      const data2 = encoder.encode('object during flush')
+      const sha2 = await store.putObject('blob', data2)
+
+      // Wait for flush to complete
+      const key = await flushPromise
+      expect(key).not.toBeNull()
+
+      // The second object should be in the new buffer (not lost)
+      const stats = store.getStats()
+      expect(stats.bufferedObjects).toBe(1)
+
+      // First object should be findable (flushed to Parquet)
+      const result1 = await store.getObject(sha1)
+      expect(result1).not.toBeNull()
+      expect(new TextDecoder().decode(result1!.content)).toBe('object before flush')
+
+      // Second object should also be findable (still in buffer)
+      const result2 = await store.getObject(sha2)
+      expect(result2).not.toBeNull()
+      expect(new TextDecoder().decode(result2!.content)).toBe('object during flush')
+    })
+
+    it('concurrent putObject calls should not corrupt buffer state', async () => {
+      // Issue multiple putObject calls concurrently
+      const objects = Array.from({ length: 10 }, (_, i) =>
+        encoder.encode(`concurrent object ${i}`)
+      )
+
+      const shas = await Promise.all(
+        objects.map(data => store.putObject('blob', data))
+      )
+
+      // All SHAs should be unique and valid
+      expect(new Set(shas).size).toBe(10)
+      for (const sha of shas) {
+        expect(sha).toHaveLength(40)
+        expect(/^[0-9a-f]{40}$/.test(sha)).toBe(true)
+      }
+
+      // All objects should be retrievable
+      const stats = store.getStats()
+      expect(stats.bufferedObjects).toBe(10)
+
+      for (let i = 0; i < shas.length; i++) {
+        const result = await store.getObject(shas[i])
+        expect(result).not.toBeNull()
+        expect(result!.type).toBe('blob')
+      }
+    })
+  })
+
+  describe('error handling', () => {
+    it('R2 put failure during flush should throw', async () => {
+      const failingR2 = createMockR2()
+      failingR2.put = vi.fn(async () => { throw new Error('R2 write failed') })
+      const failStore = new ParquetStore({
+        r2: failingR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+
+      await failStore.putObject('blob', encoder.encode('will fail'))
+      await expect(failStore.flush()).rejects.toThrow('R2 write failed')
+    })
+
+    it('R2 get failure during readObjectFromParquet should propagate', async () => {
+      // First, flush an object with a working R2
+      const data = encoder.encode('test object')
+      const sha = await store.putObject('blob', data)
+      await store.flush()
+
+      // Now make R2 get fail
+      ;(mockR2.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('R2 read failed'))
+
+      // getObject scans Parquet files via R2 get — error propagates
+      await expect(store.getObject(sha)).rejects.toThrow('R2 read failed')
+    })
+
+    it('R2 list failure during discoverObjectFiles should handle gracefully', async () => {
+      const failingR2 = createMockR2()
+      ;(failingR2.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('R2 list failed'))
+      const failStore = new ParquetStore({
+        r2: failingR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+
+      // Any operation that triggers initialize() will call discoverObjectFiles
+      await expect(failStore.putObject('blob', encoder.encode('test'))).rejects.toThrow('R2 list failed')
+    })
+  })
 })

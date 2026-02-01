@@ -10,7 +10,7 @@
 
 import type { GitBackend, GitObject, Ref, PackedRefs } from '../core/backend'
 import type { ObjectType } from '../types/objects'
-import { ObjectStore } from './object-store'
+import { ObjectStore, type CASBackend } from './object-store'
 import { SchemaManager, type DurableObjectStorage } from './schema'
 
 /**
@@ -26,10 +26,10 @@ export class GitBackendAdapter implements GitBackend {
   private refs: Map<string, string> = new Map()
   private schemaInitialized = false
 
-  constructor(storage: DurableObjectStorage) {
+  constructor(storage: DurableObjectStorage, backend?: CASBackend) {
     this.storage = storage
     this.schemaManager = new SchemaManager(storage)
-    this.store = new ObjectStore(storage)
+    this.store = new ObjectStore(storage, backend ? { backend } : undefined)
   }
 
   /**
@@ -147,6 +147,6 @@ export class GitBackendAdapter implements GitBackend {
 /**
  * Create a GitBackend adapter for the given DO storage.
  */
-export function createGitBackendAdapter(storage: DurableObjectStorage): GitBackendAdapter {
-  return new GitBackendAdapter(storage)
+export function createGitBackendAdapter(storage: DurableObjectStorage, backend?: CASBackend): GitBackendAdapter {
+  return new GitBackendAdapter(storage, backend)
 }

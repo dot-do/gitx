@@ -211,5 +211,17 @@ describe('RefLog', () => {
       expect(bytes[2]).toBe(0x52) // R
       expect(bytes[3]).toBe(0x31) // 1
     })
+
+    it('flush when R2 put fails should throw', async () => {
+      const failingBucket: RefLogBucket = {
+        async put() { throw new Error('R2 write failed') },
+        async get() { return null },
+        async list() { return { objects: [] } },
+      }
+      const failLog = new RefLog(failingBucket, 'test-repo')
+      failLog.append('refs/heads/main', '', 'abc', 1000)
+
+      await expect(failLog.flush()).rejects.toThrow('R2 write failed')
+    })
   })
 })

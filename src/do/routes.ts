@@ -12,6 +12,7 @@ import type {
   InitializeOptions,
 } from './types'
 import type { DurableObjectStorage } from './schema'
+import type { ParquetStore } from '../storage/parquet-store'
 import { clone, discoverRefs } from '../ops/clone'
 import { createGitBackendAdapter } from './git-backend-adapter'
 import { ObjectStore } from './object-store'
@@ -23,6 +24,7 @@ import type {
   GitRefData,
 } from '../export/git-parquet'
 import * as lz4js from 'lz4js'
+import { LfsInterop, type LfsBatchRequest, type LfsBatchResponse } from '../storage/lfs-interop'
 
 // ============================================================================
 // Sync/Export Types
@@ -98,6 +100,10 @@ export interface GitRepoDOInstance {
   getStorage(): DurableObjectStorage
   /** Access to R2 analytics bucket for Parquet export */
   getAnalyticsBucket(): R2Bucket | undefined
+  /** Access to ParquetStore for buffered Parquet writes to R2 */
+  getParquetStore(): ParquetStore | undefined
+  /** Schedule background work that doesn't block the response */
+  waitUntil(promise: Promise<unknown>): void
 }
 
 /**
@@ -208,9 +214,9 @@ export async function handleSync(
       }, 400)
     }
 
-    // Create GitBackend adapter for DO storage
+    // Create GitBackend adapter for DO storage, wired to ParquetStore if available
     const storage = instance.getStorage()
-    const backend = createGitBackendAdapter(storage)
+    const backend = createGitBackendAdapter(storage, instance.getParquetStore())
 
     // First, discover refs to see what's available
     let refAdvertisement
@@ -249,6 +255,14 @@ export async function handleSync(
         syncId,
         timestamp,
       }, 500)
+    }
+
+    // Flush buffered objects to Parquet on R2 (background)
+    const parquetStore = instance.getParquetStore()
+    if (parquetStore) {
+      instance.waitUntil(
+        parquetStore.flush().catch(err => console.error('Parquet flush failed:', err))
+      )
     }
 
     // Return success with details
@@ -332,7 +346,9 @@ export async function handleExport(
     const storage = instance.getStorage()
     const schemaManager = new SchemaManager(storage)
     await schemaManager.initializeSchema()
-    const objectStore = new ObjectStore(storage)
+    const objectStore = new ObjectStore(storage, {
+      backend: instance.getParquetStore(),
+    })
 
     const results: ExportJobStatus['results'] = []
 
@@ -582,6 +598,54 @@ export async function handleExportStatus(
   })
 }
 
+/**
+ * LFS batch API endpoint handler.
+ *
+ * @description
+ * Handles Git LFS batch API requests for download/upload operations.
+ * This endpoint is used by git-lfs clients to check object availability
+ * and get signed URLs for direct R2 access.
+ *
+ * TODO: This implementation requires:
+ * 1. R2 bucket binding in the DO environment
+ * 2. Access to LfsInterop instance or factory method
+ * 3. Proper integration with the ParquetStore or ObjectStore
+ * 4. Base URL configuration for generating download/upload hrefs
+ *
+ * @param c - Hono context
+ * @param _instance - GitRepoDO instance
+ * @returns LFS batch response
+ */
+export async function handleLfsBatch(
+  c: RouteContext,
+  _instance: GitRepoDOInstance
+): Promise<Response> {
+  try {
+    const body = await c.req.json<LfsBatchRequest>()
+
+    // TODO: Implement LFS batch handler
+    // This requires:
+    // 1. Get R2 bucket from instance or environment
+    // 2. Create LfsInterop instance with bucket
+    // 3. Call lfsInterop.handleBatchRequest(body)
+    // 4. Return LfsBatchResponse
+
+    const response: LfsBatchResponse = {
+      transfer: 'basic',
+      objects: body.objects.map(obj => ({
+        oid: obj.oid,
+        size: obj.size,
+        error: { code: 501, message: 'Not Implemented' },
+      })),
+    }
+
+    return c.json(response, 501)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'LFS batch request failed'
+    return c.json({ error: { code: 500, message } }, 500)
+  }
+}
+
 // ============================================================================
 // Route Setup
 // ============================================================================
@@ -611,6 +675,9 @@ export function setupRoutes(
   // Export endpoints - trigger Parquet export
   router.post('/export', (c) => handleExport(c, instance))
   router.get('/export/status/:jobId', (c) => handleExportStatus(c, instance))
+
+  // LFS batch API endpoint
+  router.post('/objects/batch', (c) => handleLfsBatch(c, instance))
 
   // Catch-all for 404
   router.all('*', (c) => {

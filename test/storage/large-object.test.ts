@@ -225,4 +225,32 @@ describe('LargeObjectStorage', () => {
       expect(await store.exists(ref.r2Key)).toBe(false)
     })
   })
+
+  // ---- error handling ----
+
+  describe('error handling', () => {
+    class FailingPutR2Bucket extends MockR2Bucket {
+      async put(): Promise<void> { throw new Error('R2 write failed') }
+    }
+
+    class FailingGetR2Bucket extends MockR2Bucket {
+      async get(): Promise<null> { throw new Error('R2 read failed') }
+    }
+
+    it('upload when R2 put fails should throw', async () => {
+      const failBucket = new FailingPutR2Bucket()
+      const failStore = new LargeObjectStorage(failBucket as unknown as R2Bucket)
+      const data = makeLargeBlob(INLINE_THRESHOLD + 1)
+      const sha = 'fa' + '0'.repeat(38)
+
+      await expect(failStore.upload(sha, data)).rejects.toThrow('R2 write failed')
+    })
+
+    it('download when R2 get fails should throw', async () => {
+      const failBucket = new FailingGetR2Bucket()
+      const failStore = new LargeObjectStorage(failBucket as unknown as R2Bucket)
+
+      await expect(failStore.download('objects/00/missing')).rejects.toThrow('R2 read failed')
+    })
+  })
 })

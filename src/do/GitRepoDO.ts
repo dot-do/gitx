@@ -411,6 +411,14 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     return this._refLog
   }
 
+  /**
+   * Schedule background work that doesn't block the response.
+   * Delegates to the underlying Durable Object state.waitUntil.
+   */
+  waitUntil(promise: Promise<unknown>): void {
+    this.state.waitUntil(promise)
+  }
+
   // ===========================================================================
   // Lifecycle Methods
   // ===========================================================================

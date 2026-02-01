@@ -18,11 +18,14 @@ import type { SQLStorage } from './types'
 // Constants
 // ============================================================================
 
-/** Default bloom filter size in bits (1MB = ~8 million bits) */
+/** Default bloom filter size in bits (8MB) */
 const DEFAULT_FILTER_BITS = 8 * 1024 * 1024
 
-/** Default number of hash functions */
+/** Default number of hash functions for bloom filter */
 const DEFAULT_HASH_COUNT = 7
+
+/** Default maximum number of exact SHAs to cache in SHA cache table */
+const DEFAULT_EXACT_CACHE_LIMIT = 100_000
 
 /** SQLite table name for bloom filter persistence */
 const BLOOM_TABLE = 'bloom_filter'
@@ -172,7 +175,7 @@ export class BloomCache {
       filterBits: options?.filterBits ?? DEFAULT_FILTER_BITS,
       hashCount: options?.hashCount ?? DEFAULT_HASH_COUNT,
       enableExactCache: options?.enableExactCache ?? true,
-      exactCacheLimit: options?.exactCacheLimit ?? 100_000,
+      exactCacheLimit: options?.exactCacheLimit ?? DEFAULT_EXACT_CACHE_LIMIT,
     }
     this.filter = new BloomFilter(this.options.filterBits, this.options.hashCount)
   }

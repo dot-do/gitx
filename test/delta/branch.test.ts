@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { RefLog, type RefLogBucket } from '../../src/delta/ref-log'
 import { DeltaBranch, createBranch, createBranchAtVersion } from '../../src/delta/branch'
+import { DeltaVersionError } from '../../src/delta/errors'
 
 // ============================================================================
 // Mock R2 Bucket
@@ -63,15 +64,15 @@ describe('DeltaBranch', () => {
       expect(branch.info.baseVersion).toBe(2)
     })
 
-    it('should throw if version is negative', () => {
-      expect(() => createBranchAtVersion('test', parentLog, -1, bucket, 'repo')).toThrow('negative')
+    it('should throw DeltaVersionError if version is negative', () => {
+      expect(() => createBranchAtVersion('test', parentLog, -1, bucket, 'repo')).toThrow(DeltaVersionError)
     })
 
-    it('should throw if version exceeds parent', () => {
+    it('should throw DeltaVersionError if version exceeds parent', () => {
       parentLog.append('refs/heads/main', '', 'aaa', 1000)
 
       expect(() => createBranchAtVersion('feature', parentLog, 5, bucket, 'repo'))
-        .toThrow('Cannot fork at version 5')
+        .toThrow(DeltaVersionError)
     })
   })
 
