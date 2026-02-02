@@ -1229,6 +1229,54 @@ export {
   type ColdTierBackend,
 } from './tiered/read-path'
 
+/**
+ * Background tier migration with DO alarms.
+ *
+ * @description
+ * Functions for background tier migration using Durable Object alarms:
+ * - Schedule migration cycles via DO alarms
+ * - Migrate objects from hot to warm to cold based on access patterns
+ * - Exponential backoff on failures
+ * - Persistent state tracking
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   TierMigrationScheduler,
+ *   createMigrationScheduler,
+ *   DEFAULT_MIGRATION_CONFIG
+ * } from 'gitx.do'
+ *
+ * // Create scheduler
+ * const scheduler = createMigrationScheduler(storage, tieredStorage, {
+ *   hotToWarmAgeMs: 24 * 60 * 60 * 1000,  // 24 hours
+ *   batchSize: 50
+ * })
+ *
+ * // Schedule background migration
+ * await scheduler.scheduleBackgroundMigration()
+ *
+ * // In alarm handler
+ * await scheduler.runMigrationCycle()
+ * ```
+ */
+export {
+  // Class
+  TierMigrationScheduler,
+  // Factory
+  createMigrationScheduler,
+  // Constants
+  DEFAULT_MIGRATION_CONFIG,
+  // Types
+  type BackgroundMigrationConfig,
+  type MigrationDOStorage,
+  type TieredStorageBackend,
+  type MigrationCandidate,
+  type MigrationResult as BackgroundMigrationResult,
+  type MigrationCycleResult,
+  type MigrationSchedulerState,
+} from './tiered/background-migration'
+
 // =============================================================================
 // UI Components - App dashboard and Site marketing page
 // =============================================================================
