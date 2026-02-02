@@ -937,7 +937,7 @@ export class PackObjectIterator implements Iterable<ParsedPackObject> {
       // Calculate compressed size
       const inflator = new pako.Inflate()
       inflator.push(compressed, true)
-      const compressedSize = (inflator as any).strm?.next_in ?? size
+      const compressedSize = inflator.strm?.next_in ?? size
 
       offset += compressedSize
 

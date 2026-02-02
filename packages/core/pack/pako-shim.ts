@@ -15,10 +15,24 @@ export interface CompressionApi {
   Inflate: new () => InflateStream
 }
 
+/** Internal zlib stream state for tracking compression/decompression progress */
+export interface ZlibStreamState {
+  /** Number of bytes remaining in input buffer (unconsumed bytes) */
+  avail_in?: number
+  /** Current position in input buffer */
+  next_in?: number
+}
+
 export interface InflateStream {
   push(data: Uint8Array, final: boolean): void
   result: Uint8Array
   err: number
+  /** Error message if err is non-zero */
+  msg?: string
+  /** Whether the stream has finished processing */
+  ended?: boolean
+  /** Internal zlib stream state */
+  strm?: ZlibStreamState
 }
 
 // =============================================================================
@@ -33,15 +47,21 @@ class ZlibImpl implements CompressionApi {
   Inflate = class ZlibInflate implements InflateStream {
     result: Uint8Array = new Uint8Array(0)
     err: number = 0
-    strm: { next_in?: number } = {}
+    msg?: string
+    ended: boolean = false
+    strm: ZlibStreamState = {}
 
     push(data: Uint8Array, _final: boolean): void {
       try {
         const result = zlibInflate(data)
         this.result = result
-        this.strm.next_in = this.findCompressedLength(data)
-      } catch {
+        const compressedLength = this.findCompressedLength(data)
+        this.strm.next_in = compressedLength
+        this.strm.avail_in = data.length - compressedLength
+        this.ended = true
+      } catch (e) {
         this.err = 1
+        this.msg = e instanceof Error ? e.message : 'Unknown error'
       }
     }
 

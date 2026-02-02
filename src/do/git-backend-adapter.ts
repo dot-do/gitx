@@ -18,6 +18,21 @@ import { applyDelta } from '../pack/delta'
 import pako from 'pako'
 
 /**
+ * Extended type for pako's Inflate class that includes internal stream state.
+ * These properties are not exposed in pako's public type definitions but are
+ * needed to track how many compressed bytes were consumed during decompression.
+ */
+interface PakoInflateWithStreamState extends pako.Inflate {
+  /** Whether the stream has finished processing */
+  ended?: boolean
+  /** Internal zlib stream state */
+  strm?: {
+    /** Number of bytes remaining in input buffer (unconsumed bytes) */
+    avail_in?: number
+  }
+}
+
+/**
  * Adapter that wraps ObjectStore to implement GitBackend interface.
  *
  * This allows the clone() function from ops/clone.ts to work with
@@ -386,8 +401,7 @@ export class GitBackendAdapter implements GitBackend {
  * @returns The offset immediately after the end of the zlib stream
  */
 function advancePastZlibStream(data: Uint8Array, offset: number): number {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const inflator: any = new pako.Inflate()
+  const inflator = new pako.Inflate() as PakoInflateWithStreamState
   // Feed data in small chunks to track consumption accurately
   const chunkSize = 1024
   let consumed = 0
