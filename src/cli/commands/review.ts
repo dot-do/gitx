@@ -288,7 +288,7 @@ export async function reviewCommand(ctx: CommandContext): Promise<void> {
   const { cwd, args, options, stdout, stderr } = ctx
 
   // Handle --help flag
-  if (options.help || options.h) {
+  if (options['help'] || options['h']) {
     stdout(`gitx review - PR-style diff review between branches or commits
 
 Usage: gitx review [options] [<base>] [<head>]
@@ -376,7 +376,7 @@ Examples:
     }
 
     // If split view requested, render files in split format
-    if (options.split || options.s) {
+    if (options['split'] || options['s']) {
       stdout('')
       stdout('--- Split View ---')
       const terminalWidth = process.stdout.columns || 120
@@ -400,7 +400,7 @@ Examples:
     }
 
     // Interactive mode note
-    if (options.interactive || options.i) {
+    if (options['interactive'] || options['i']) {
       stdout('')
       stdout('Interactive mode: Use j/k to navigate, q to quit, enter to toggle collapse')
       // Note: Full interactive mode would require terminal UI library

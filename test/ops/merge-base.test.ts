@@ -44,7 +44,7 @@ function createMockCommit(
   return {
     type: 'commit',
     data: new Uint8Array(),
-    tree: 'tree'.padEnd(40, '0'),
+    tree: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', // Valid hex SHA
     parents,
     author: createAuthor('Author', timestamp),
     committer: createAuthor('Committer', timestamp),
@@ -67,10 +67,14 @@ function createMockProvider(
 
 /**
  * Helper to generate deterministic SHA-like strings
- * Uses a delimiter to prevent collisions (e.g., commit1 vs commit10)
+ * Uses only valid hex characters (0-9, a-f)
  */
 function makeSha(prefix: string): string {
-  return (prefix + '_').padEnd(40, '0')
+  // Convert each character to a hex code and pad to 40 chars
+  const hex = Array.from(prefix)
+    .map(c => c.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join('')
+  return hex.padEnd(40, '0').slice(0, 40).toLowerCase()
 }
 
 /**

@@ -53,7 +53,9 @@ import {
   TagObject,
   TreeEntry,
   Author,
-  isValidObjectType
+  isValidObjectType,
+  isValidSha,
+  isValidShortSha
 } from '../types/objects'
 
 import { hashObject, HashCache } from '../utils/hash'
@@ -67,6 +69,14 @@ import type { CASBackend } from '../storage/backend'
 export type { CASBackend } from '../storage/backend'
 import type { BasicObjectStore } from '../types/storage'
 import { typedQuery, validateRow } from '../utils/sql-validate'
+import {
+  CHUNK_SIZE,
+  CHUNKED_BLOB_PREFIX,
+  shouldChunk,
+  getChunkKey,
+  splitIntoChunks,
+  reassembleChunks
+} from '../storage/chunk-utils'
 
 // ============================================================================
 // Constants
@@ -88,14 +98,9 @@ const STREAM_CHUNK_SIZE = 64 * 1024
  * DO SQLite charges per row read/write, not per-byte.
  * By chunking large blobs into 2MB segments, we optimize storage costs.
  * Objects >= BLOB_CHUNK_SIZE will be chunked.
+ * @deprecated Use CHUNK_SIZE from chunk-utils.ts instead
  */
-export const BLOB_CHUNK_SIZE = 2 * 1024 * 1024 // 2MB
-
-/**
- * Prefix for chunked blob storage keys.
- * Chunks are stored as: __chunked_blob__{sha}:{chunkIndex}
- */
-const CHUNKED_BLOB_PREFIX = '__chunked_blob__'
+export const BLOB_CHUNK_SIZE = CHUNK_SIZE
 
 // ============================================================================
 // Types and Interfaces
@@ -431,7 +436,7 @@ export class SqliteObjectStore implements BasicObjectStore {
   async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
     const startTime = this.options.enableMetrics ? Date.now() : 0
     const isLargeBlob = type === 'blob' && data.length > LARGE_BLOB_THRESHOLD
-    const shouldChunk = type === 'blob' && data.length > BLOB_CHUNK_SIZE
+    const needsChunking = type === 'blob' && shouldChunk(data.length)
 
     // Delegate to backend if available
     if (this.backend) {
@@ -466,23 +471,22 @@ export class SqliteObjectStore implements BasicObjectStore {
     // This avoids recomputing hashes for content we've seen before
     const sha = await this.hashCache.getOrCompute(data, () => hashObject(type, data))
 
-    this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)${isLargeBlob ? ' [LARGE]' : ''}${shouldChunk ? ' [CHUNKED]' : ''}`)
+    this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)${isLargeBlob ? ' [LARGE]' : ''}${needsChunking ? ' [CHUNKED]' : ''}`)
 
     // Log to WAL first
     await this.logToWAL('PUT', sha, type, data)
 
     const now = Date.now()
 
-    // Handle chunked storage for large blobs (>2MB)
-    if (shouldChunk) {
-      const chunkCount = Math.ceil(data.length / BLOB_CHUNK_SIZE)
+    // Handle chunked storage for large blobs (>2MB) using shared chunk-utils
+    if (needsChunking) {
+      const chunks = splitIntoChunks(data)
+      const chunkCount = chunks.length
 
       // Store each chunk
       for (let i = 0; i < chunkCount; i++) {
-        const start = i * BLOB_CHUNK_SIZE
-        const end = Math.min(start + BLOB_CHUNK_SIZE, data.length)
-        const chunkData = data.slice(start, end)
-        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+        const chunkData = chunks[i]
+        const chunkKey = getChunkKey(sha, i)
 
         this.storage.sql.exec(
           'INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -848,7 +852,8 @@ export class SqliteObjectStore implements BasicObjectStore {
   async getObject(sha: string): Promise<StoredObject | null> {
     const startTime = this.options.enableMetrics ? Date.now() : 0
 
-    if (!sha || sha.length < 4) {
+    // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
+    if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
       return null
     }
 
@@ -904,18 +909,17 @@ export class SqliteObjectStore implements BasicObjectStore {
     const indexRows = typedQuery<{ sha: string; tier: string; size: number; type: string; chunked: number; chunk_count: number }>(indexResult, validateRow(['sha', 'tier', 'size', 'type', 'chunked', 'chunk_count']))
 
     if (indexRows.length > 0 && indexRows[0].chunked === 1) {
-      // This is a chunked blob - reassemble from chunks
+      // This is a chunked blob - reassemble from chunks using shared chunk-utils
       const indexEntry = indexRows[0]
       const chunkCount = indexEntry.chunk_count
 
       this.log('debug', `Reassembling chunked blob: ${sha} (${chunkCount} chunks)`)
 
       // Fetch all chunks in order
-      const data = new Uint8Array(indexEntry.size)
-      let offset = 0
+      const chunks: Uint8Array[] = []
 
       for (let i = 0; i < chunkCount; i++) {
-        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+        const chunkKey = getChunkKey(sha, i)
         const chunkResult = this.storage.sql.exec(
           'SELECT data FROM objects WHERE sha = ?',
           chunkKey
@@ -931,10 +935,11 @@ export class SqliteObjectStore implements BasicObjectStore {
           return null
         }
 
-        const chunkData = chunkRows[0].data
-        data.set(new Uint8Array(chunkData), offset)
-        offset += chunkData.byteLength
+        chunks.push(new Uint8Array(chunkRows[0].data))
       }
+
+      // Reassemble chunks using shared utility
+      const data = reassembleChunks(chunks, indexEntry.size)
 
       const obj: StoredObject = {
         sha,
@@ -1049,13 +1054,13 @@ export class SqliteObjectStore implements BasicObjectStore {
     // Log to WAL
     await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0))
 
-    // If this is a chunked blob, delete all chunks
+    // If this is a chunked blob, delete all chunks using shared chunk-utils
     if (indexRows.length > 0 && indexRows[0].chunked === 1) {
       const chunkCount = indexRows[0].chunk_count
       this.log('debug', `Deleting ${chunkCount} chunks for chunked blob: ${sha}`)
 
       for (let i = 0; i < chunkCount; i++) {
-        const chunkKey = `${CHUNKED_BLOB_PREFIX}${sha}:${i}`
+        const chunkKey = getChunkKey(sha, i)
         this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', chunkKey)
       }
     } else {
@@ -1094,7 +1099,8 @@ export class SqliteObjectStore implements BasicObjectStore {
    * ```
    */
   async hasObject(sha: string): Promise<boolean> {
-    if (!sha || sha.length < 4) {
+    // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
+    if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
       return false
     }
 

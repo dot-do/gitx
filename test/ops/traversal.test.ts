@@ -36,6 +36,17 @@ function createAuthor(name: string = 'Test User', timestamp: number = 1704067200
 }
 
 /**
+ * Helper to generate deterministic SHA-like strings using valid hex characters
+ */
+function makeSha(prefix: string): string {
+  // Convert each character to a hex code and pad to 40 chars
+  const hex = Array.from(prefix)
+    .map(c => c.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join('')
+  return hex.padEnd(40, '0').slice(0, 40).toLowerCase()
+}
+
+/**
  * Create a mock commit object for testing
  */
 function createMockCommit(
@@ -47,7 +58,7 @@ function createMockCommit(
   return {
     type: 'commit',
     data: new Uint8Array(),
-    tree: 'tree'.padEnd(40, '0'),
+    tree: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', // Valid hex SHA
     parents,
     author: createAuthor('Author', timestamp),
     committer: createAuthor('Committer', timestamp),
@@ -87,7 +98,7 @@ function buildLinearHistory(count: number, startTimestamp: number = 1704067200):
   const shas: string[] = []
 
   for (let i = 0; i < count; i++) {
-    const sha = `commit${String(i).padStart(36, '0')}`
+    const sha = makeSha(`lh${i}`)
     const parents = i > 0 ? [shas[i - 1]] : []
     const timestamp = startTimestamp + i * 3600 // 1 hour apart
     const commit = createMockCommit(sha, parents, `Commit ${i}`, timestamp)
@@ -116,10 +127,10 @@ function buildDiamondHistory(): {
 } {
   const commits = new Map<string, CommitObject>()
 
-  const A = 'commitA'.padEnd(40, '0')
-  const B = 'commitB'.padEnd(40, '0')
-  const C = 'commitC'.padEnd(40, '0')
-  const D = 'commitD'.padEnd(40, '0')
+  const A = makeSha('ca')
+  const B = makeSha('cb')
+  const C = makeSha('cc')
+  const D = makeSha('cd')
 
   commits.set(A, createMockCommit(A, [], 'Initial commit', 1704067200))
   commits.set(B, createMockCommit(B, [A], 'Branch B commit', 1704070800))
@@ -148,13 +159,13 @@ function buildComplexHistory(): {
 } {
   const commits = new Map<string, CommitObject>()
 
-  const A = 'commitA'.padEnd(40, '0')
-  const B = 'commitB'.padEnd(40, '0')
-  const C = 'commitC'.padEnd(40, '0')
-  const D = 'commitD'.padEnd(40, '0')
-  const E = 'commitE'.padEnd(40, '0')
-  const F = 'commitF'.padEnd(40, '0')
-  const G = 'commitG'.padEnd(40, '0')
+  const A = makeSha('ca')
+  const B = makeSha('cb')
+  const C = makeSha('cc')
+  const D = makeSha('cd')
+  const E = makeSha('ce')
+  const F = makeSha('cf')
+  const G = makeSha('cg')
 
   commits.set(A, createMockCommit(A, [], 'A: Initial', 1704067200))
   commits.set(B, createMockCommit(B, [A], 'B: Feature 1', 1704070800))
@@ -270,7 +281,7 @@ describe('Commit Graph Traversal', () => {
         const provider = createMockProvider(new Map())
 
         const walked: TraversalCommit[] = []
-        for await (const commit of walkCommits(provider, 'nonexistent'.padEnd(40, '0'))) {
+        for await (const commit of walkCommits(provider, makeSha('nonexistent'))) {
           walked.push(commit)
         }
 
@@ -652,8 +663,8 @@ describe('Commit Graph Traversal', () => {
 
     it('should sort by author date when specified', async () => {
       const commits = new Map<string, CommitObject>()
-      const A = 'commitA'.padEnd(40, '0')
-      const B = 'commitB'.padEnd(40, '0')
+      const A = makeSha('ca')
+      const B = makeSha('cb')
 
       // Create commits with different author and committer dates
       const commitA = createMockCommit(A, [], 'A', 1704067200)
@@ -683,9 +694,9 @@ describe('Commit Graph Traversal', () => {
       const commits = new Map<string, CommitObject>()
       const sameTime = 1704067200
 
-      const A = 'commitA'.padEnd(40, '0')
-      const B = 'commitB'.padEnd(40, '0')
-      const C = 'commitC'.padEnd(40, '0')
+      const A = makeSha('ca')
+      const B = makeSha('cb')
+      const C = makeSha('cc')
 
       commits.set(A, createMockCommit(A, [], 'A', sameTime))
       commits.set(B, createMockCommit(B, [], 'B', sameTime))
@@ -793,8 +804,8 @@ describe('Commit Graph Traversal', () => {
     it('should return null when no common ancestor exists', async () => {
       // Create two completely separate histories
       const commits = new Map<string, CommitObject>()
-      const A = 'commitA'.padEnd(40, '0')
-      const B = 'commitB'.padEnd(40, '0')
+      const A = makeSha('ca')
+      const B = makeSha('cb')
 
       commits.set(A, createMockCommit(A, [], 'A'))
       commits.set(B, createMockCommit(B, [], 'B'))
@@ -808,8 +819,8 @@ describe('Commit Graph Traversal', () => {
 
     it('should return empty array from findMergeBase when no common ancestor', async () => {
       const commits = new Map<string, CommitObject>()
-      const A = 'commitA'.padEnd(40, '0')
-      const B = 'commitB'.padEnd(40, '0')
+      const A = makeSha('ca')
+      const B = makeSha('cb')
 
       commits.set(A, createMockCommit(A, [], 'A'))
       commits.set(B, createMockCommit(B, [], 'B'))
@@ -867,8 +878,8 @@ describe('Commit Graph Traversal', () => {
 
     it('should return false for unrelated commits', async () => {
       const commits = new Map<string, CommitObject>()
-      const A = 'commitA'.padEnd(40, '0')
-      const B = 'commitB'.padEnd(40, '0')
+      const A = makeSha('ca')
+      const B = makeSha('cb')
 
       commits.set(A, createMockCommit(A, [], 'A'))
       commits.set(B, createMockCommit(B, [], 'B'))
@@ -883,7 +894,7 @@ describe('Commit Graph Traversal', () => {
       const { commits, shas } = buildLinearHistory(3)
       const provider = createMockProvider(commits)
 
-      const nonexistent = 'nonexistent'.padEnd(40, '0')
+      const nonexistent = makeSha('nonexistent')
       const result = await isAncestor(provider, nonexistent, shas[2])
 
       expect(result).toBe(false)
@@ -1066,7 +1077,7 @@ describe('Commit Graph Traversal', () => {
       it('should return 0 for non-existent commit', async () => {
         const provider = createMockProvider(new Map())
 
-        const count = await countCommits(provider, 'nonexistent'.padEnd(40, '0'))
+        const count = await countCommits(provider, makeSha('nonexistent'))
 
         expect(count).toBe(0)
       })
@@ -1116,7 +1127,7 @@ describe('Commit Graph Traversal', () => {
     describe('Author/committer filters', () => {
       it('should filter by author name', async () => {
         const commits = new Map<string, CommitObject>()
-        const shas = ['a', 'b', 'c'].map(c => `commit${c}`.padEnd(40, '0'))
+        const shas = ['a', 'b', 'c'].map(c => makeSha(`c${c}`))
 
         commits.set(shas[0], createMockCommit(shas[0], [], 'A'))
         commits.set(shas[1], {
@@ -1138,7 +1149,7 @@ describe('Commit Graph Traversal', () => {
 
       it('should filter by committer name', async () => {
         const commits = new Map<string, CommitObject>()
-        const shas = ['a', 'b', 'c'].map(c => `commit${c}`.padEnd(40, '0'))
+        const shas = ['a', 'b', 'c'].map(c => makeSha(`c${c}`))
 
         commits.set(shas[0], createMockCommit(shas[0], [], 'A'))
         commits.set(shas[1], {
@@ -1214,7 +1225,7 @@ describe('Commit Graph Traversal', () => {
     describe('Grep message filter', () => {
       it('should filter by commit message string', async () => {
         const commits = new Map<string, CommitObject>()
-        const shas = ['a', 'b', 'c'].map(c => `commit${c}`.padEnd(40, '0'))
+        const shas = ['a', 'b', 'c'].map(c => makeSha(`c${c}`))
 
         commits.set(shas[0], createMockCommit(shas[0], [], 'Initial commit'))
         commits.set(shas[1], createMockCommit(shas[1], [shas[0]], 'Fix: resolve bug #123'))
@@ -1233,7 +1244,7 @@ describe('Commit Graph Traversal', () => {
 
       it('should filter by commit message regex', async () => {
         const commits = new Map<string, CommitObject>()
-        const shas = ['a', 'b', 'c', 'd'].map(c => `commit${c}`.padEnd(40, '0'))
+        const shas = ['a', 'b', 'c', 'd'].map(c => makeSha(`c${c}`))
 
         commits.set(shas[0], createMockCommit(shas[0], [], 'Initial commit'))
         commits.set(shas[1], createMockCommit(shas[1], [shas[0]], 'Fix bug #123'))

@@ -431,7 +431,7 @@ export async function blameCommand(ctx: CommandContext): Promise<void> {
   const { cwd, args, options, stdout, stderr } = ctx
 
   // Handle --help flag
-  if (options.help || options.h) {
+  if (options['help'] || options['h']) {
     stdout(`gitx blame - Show what revision and author last modified each line of a file
 
 Usage: gitx blame [options] <file>
@@ -473,17 +473,17 @@ Examples:
   // Build options
   const blameOptions: BlameOptions = {}
 
-  if (options.L) {
-    blameOptions.lineRange = String(options.L)
+  if (options['L']) {
+    blameOptions.lineRange = String(options['L'])
   }
 
-  if (options.C) {
+  if (options['C']) {
     blameOptions.followRenames = true
   }
 
-  if (options.highlight) {
+  if (options['highlight']) {
     blameOptions.highlight = true
-    blameOptions.theme = options.theme || 'github-dark'
+    blameOptions.theme = (options['theme'] as string) || 'github-dark'
   }
 
   try {

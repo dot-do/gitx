@@ -51,6 +51,7 @@
  */
 
 import type { TreeEntry } from '../types/objects'
+import { assertValidSha } from '../types/objects'
 import type { TreeDiffObjectStore as ObjectStore } from '../types/storage'
 
 /**
@@ -382,6 +383,7 @@ export async function walkTree(
   treeSha: string,
   prefix?: string
 ): Promise<Array<TreeEntry & { fullPath: string }>> {
+  assertValidSha(treeSha, 'tree')
   const tree = await store.getTree(treeSha)
   if (!tree) {
     return []
@@ -447,6 +449,14 @@ export async function diffTrees(
     detectBinary = false,
     recursive = true
   } = options
+
+  // Validate SHA parameters (if provided)
+  if (oldTreeSha !== null) {
+    assertValidSha(oldTreeSha, 'old tree')
+  }
+  if (newTreeSha !== null) {
+    assertValidSha(newTreeSha, 'new tree')
+  }
 
   // Handle null on both sides
   if (oldTreeSha === null && newTreeSha === null) {

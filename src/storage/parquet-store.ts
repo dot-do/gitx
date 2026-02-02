@@ -25,6 +25,7 @@
 import { parquetWriteBuffer } from 'hyparquet-writer'
 import { parquetReadObjects } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
+import { assertValidSha, isValidSha } from '../types/objects'
 import type { CASBackend, StoredObjectResult } from './backend'
 import {
   encodeObjectBatch,
@@ -515,6 +516,11 @@ export class ParquetStore implements CASBackend {
   // ===========================================================================
 
   async getObject(sha: string): Promise<StoredObjectResult | null> {
+    // Validate SHA format - return null for invalid SHAs (graceful handling)
+    if (!isValidSha(sha)) {
+      return null
+    }
+
     const startTime = performance.now()
     await this.initialize()
 
@@ -568,6 +574,11 @@ export class ParquetStore implements CASBackend {
   }
 
   async hasObject(sha: string): Promise<boolean> {
+    // Validate SHA format - return false for invalid SHAs (graceful handling)
+    if (!isValidSha(sha)) {
+      return false
+    }
+
     await this.initialize()
 
     // Use read lock - multiple checks can happen concurrently, but not during compaction

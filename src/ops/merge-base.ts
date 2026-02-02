@@ -39,6 +39,7 @@
  */
 
 import type { BasicCommitProvider as CommitProvider } from '../types/storage'
+import { assertValidSha } from '../types/objects'
 
 /**
  * CommitProvider interface for merge base operations.
@@ -363,6 +364,11 @@ export async function findMergeBase(
   commits: string[],
   options: MergeBaseOptions = {}
 ): Promise<MergeBaseResult> {
+  // Validate all commit SHAs
+  for (const sha of commits) {
+    assertValidSha(sha, 'commit')
+  }
+
   // Handle edge cases
   if (commits.length === 0) {
     return {
@@ -535,6 +541,15 @@ export async function findForkPoint(
   baseRef: string,
   reflog?: string[]
 ): Promise<ForkPointResult> {
+  assertValidSha(ref, 'ref')
+  assertValidSha(baseRef, 'base ref')
+  // Validate reflog SHAs if provided
+  if (reflog) {
+    for (const sha of reflog) {
+      assertValidSha(sha, 'reflog entry')
+    }
+  }
+
   // If reflog is provided, use it for better detection
   if (reflog && reflog.length > 0) {
     // Get ancestors of ref
@@ -629,6 +644,9 @@ export async function isAncestor(
   potentialAncestor: string,
   commit: string
 ): Promise<boolean> {
+  assertValidSha(potentialAncestor, 'potential ancestor')
+  assertValidSha(commit, 'commit')
+
   // Same commit is considered its own ancestor
   if (potentialAncestor === commit) {
     return true
@@ -673,6 +691,9 @@ export async function checkAncestor(
   potentialAncestor: string,
   commit: string
 ): Promise<AncestorCheckResult> {
+  assertValidSha(potentialAncestor, 'potential ancestor')
+  assertValidSha(commit, 'commit')
+
   // Same commit
   if (potentialAncestor === commit) {
     return {

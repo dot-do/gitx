@@ -40,7 +40,7 @@
  * @module ops/commit-traversal
  */
 
-import { CommitObject } from '../types/objects'
+import { CommitObject, assertValidSha } from '../types/objects'
 import type { CommitProvider } from '../types/storage'
 
 /**
@@ -411,6 +411,19 @@ export async function* walkCommits(
   options: TraversalOptions = {}
 ): AsyncGenerator<TraversalCommit, void, unknown> {
   const startShas = Array.isArray(start) ? start : [start]
+
+  // Validate all start SHAs
+  for (const sha of startShas) {
+    assertValidSha(sha, 'start commit')
+  }
+
+  // Validate exclude SHAs if provided
+  if (options.exclude) {
+    for (const sha of options.exclude) {
+      assertValidSha(sha, 'exclude commit')
+    }
+  }
+
   const {
     maxCount,
     skip = 0,
@@ -636,6 +649,9 @@ export async function isAncestor(
   ancestor: string,
   descendant: string
 ): Promise<boolean> {
+  assertValidSha(ancestor, 'ancestor')
+  assertValidSha(descendant, 'descendant')
+
   // Same commit is considered its own ancestor
   if (ancestor === descendant) {
     return true
@@ -682,6 +698,9 @@ export async function findCommonAncestor(
   commit2: string,
   all?: boolean
 ): Promise<string | string[] | null> {
+  assertValidSha(commit1, 'commit1')
+  assertValidSha(commit2, 'commit2')
+
   // Get all ancestors of commit1
   const ancestors1 = new Set<string>()
   const queue1 = [commit1]
@@ -749,6 +768,11 @@ export async function findMergeBase(
   provider: CommitProvider,
   commits: string[]
 ): Promise<string[]> {
+  // Validate all commit SHAs
+  for (const sha of commits) {
+    assertValidSha(sha, 'commit')
+  }
+
   if (commits.length === 0) {
     return []
   }

@@ -32,6 +32,17 @@ const sampleTreeSha = 'd'.repeat(40)
 const sampleTreeSha2 = 'e'.repeat(40)
 
 /**
+ * Helper to generate deterministic SHA-like strings using valid hex characters
+ */
+function makeSha(prefix: string): string {
+  // Convert each character to a hex code and pad to 40 chars
+  const hex = Array.from(prefix)
+    .map(c => c.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join('')
+  return hex.padEnd(40, '0').slice(0, 40).toLowerCase()
+}
+
+/**
  * Create a mock tree object for testing
  */
 function createMockTree(entries: TreeEntry[]): TreeObject {
@@ -157,13 +168,13 @@ describe('Tree Diff Algorithm', () => {
       ])
       const oldTree = createMockTree([])
       const newTree = createMockTree([
-        createTreeEntry('src', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('subtree0'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -298,14 +309,14 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('nested.txt', sampleBlobSha)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('src', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('subtree0'), FileMode.TREE)
       ])
       const newTree = createMockTree([])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -355,18 +366,18 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('deep.txt', sampleBlobSha)
       ])
       const subTree = createMockTree([
-        createTreeEntry('nested', 'deeptree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('nested', makeSha('deeptree'), FileMode.TREE)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('src', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('subtree0'), FileMode.TREE)
       ])
       const newTree = createMockTree([])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree],
-        ['deeptree'.padEnd(40, '0'), deepTree]
+        [makeSha('subtree0'), subTree],
+        [makeSha('deeptree'), deepTree]
       ])
       store = createMockStore(trees)
 
@@ -478,17 +489,17 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('nested.txt', sampleBlobSha2)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('src', 'oldsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('oldsubtree'), FileMode.TREE)
       ])
       const newTree = createMockTree([
-        createTreeEntry('src', 'newsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('newsubtree'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['oldsubtree'.padEnd(40, '0'), oldSubTree],
-        ['newsubtree'.padEnd(40, '0'), newSubTree]
+        [makeSha('oldsubtree'), oldSubTree],
+        [makeSha('newsubtree'), newSubTree]
       ])
       store = createMockStore(trees)
 
@@ -645,17 +656,17 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('file.txt', sampleBlobSha)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('old-dir', 'oldsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('old-dir', makeSha('oldsubtree'), FileMode.TREE)
       ])
       const newTree = createMockTree([
-        createTreeEntry('new-dir', 'newsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('new-dir', makeSha('newsubtree'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['oldsubtree'.padEnd(40, '0'), oldSubTree],
-        ['newsubtree'.padEnd(40, '0'), newSubTree]
+        [makeSha('oldsubtree'), oldSubTree],
+        [makeSha('newsubtree'), newSubTree]
       ])
       const blobs = new Map<string, Uint8Array>([
         [sampleBlobSha, blobContent]
@@ -776,13 +787,13 @@ describe('Tree Diff Algorithm', () => {
       ])
       const oldTree = createMockTree([])
       const newTree = createMockTree([
-        createTreeEntry('new-dir', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('new-dir', makeSha('subtree0'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -797,14 +808,14 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('file2.txt', sampleBlobSha2)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('old-dir', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('old-dir', makeSha('subtree0'), FileMode.TREE)
       ])
       const newTree = createMockTree([])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -823,13 +834,13 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('name', sampleBlobSha, FileMode.REGULAR)
       ])
       const newTree = createMockTree([
-        createTreeEntry('name', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('name', makeSha('subtree0'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -846,7 +857,7 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('inside.txt', sampleBlobSha)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('name', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('name', makeSha('subtree0'), FileMode.TREE)
       ])
       const newTree = createMockTree([
         createTreeEntry('name', sampleBlobSha2, FileMode.REGULAR)
@@ -855,7 +866,7 @@ describe('Tree Diff Algorithm', () => {
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -872,29 +883,29 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('file.txt', sampleBlobSha)
       ])
       const midTree = createMockTree([
-        createTreeEntry('deep', 'deeptree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('deep', makeSha('deeptree'), FileMode.TREE)
       ])
       const topTree = createMockTree([
-        createTreeEntry('mid', 'midtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('mid', makeSha('midtree'), FileMode.TREE)
       ])
 
       const newDeepTree = createMockTree([
         createTreeEntry('file.txt', sampleBlobSha2) // Modified
       ])
       const newMidTree = createMockTree([
-        createTreeEntry('deep', 'newdeeptree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('deep', makeSha('newdeeptree'), FileMode.TREE)
       ])
       const newTopTree = createMockTree([
-        createTreeEntry('mid', 'newmidtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('mid', makeSha('newmidtree'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, topTree],
         [sampleTreeSha2, newTopTree],
-        ['midtree'.padEnd(40, '0'), midTree],
-        ['newmidtree'.padEnd(40, '0'), newMidTree],
-        ['deeptree'.padEnd(40, '0'), deepTree],
-        ['newdeeptree'.padEnd(40, '0'), newDeepTree]
+        [makeSha('midtree'), midTree],
+        [makeSha('newmidtree'), newMidTree],
+        [makeSha('deeptree'), deepTree],
+        [makeSha('newdeeptree'), newDeepTree]
       ])
       store = createMockStore(trees)
 
@@ -911,16 +922,16 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('file.txt', sampleBlobSha)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('old-dir', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('old-dir', makeSha('subtree0'), FileMode.TREE)
       ])
       const newTree = createMockTree([
-        createTreeEntry('new-dir', 'subtree0'.padEnd(40, '0'), FileMode.TREE) // Same subtree SHA
+        createTreeEntry('new-dir', makeSha('subtree0'), FileMode.TREE) // Same subtree SHA
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       const blobs = new Map<string, Uint8Array>([
         [sampleBlobSha, content]
@@ -945,17 +956,17 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('nested.txt', sampleBlobSha)
       ])
       const oldTree = createMockTree([
-        createTreeEntry('src', 'oldsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('oldsubtree'), FileMode.TREE)
       ])
       const newTree = createMockTree([
-        createTreeEntry('src', 'newsubtree'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('newsubtree'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, oldTree],
         [sampleTreeSha2, newTree],
-        ['oldsubtree'.padEnd(40, '0'), subTree],
-        ['newsubtree'.padEnd(40, '0'), subTree]
+        [makeSha('oldsubtree'), subTree],
+        [makeSha('newsubtree'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -1275,12 +1286,12 @@ describe('Tree Diff Algorithm', () => {
         createTreeEntry('nested.txt', sampleBlobSha)
       ])
       const tree = createMockTree([
-        createTreeEntry('src', 'subtree0'.padEnd(40, '0'), FileMode.TREE)
+        createTreeEntry('src', makeSha('subtree0'), FileMode.TREE)
       ])
 
       const trees = new Map<string, TreeObject>([
         [sampleTreeSha, tree],
-        ['subtree0'.padEnd(40, '0'), subTree]
+        [makeSha('subtree0'), subTree]
       ])
       store = createMockStore(trees)
 
@@ -1574,7 +1585,7 @@ describe('Tree Diff Algorithm', () => {
 
     it('should handle very deep directory structures', async () => {
       // Create a chain of nested directories
-      let currentTreeSha = 'leaf'.padEnd(40, '0')
+      let currentTreeSha = makeSha('leaf')
       const trees = new Map<string, TreeObject>()
 
       // Leaf tree with a file
@@ -1586,7 +1597,7 @@ describe('Tree Diff Algorithm', () => {
       // Use zero-padded numbers to avoid SHA collisions (e.g., level01 vs level10)
       for (let i = 19; i >= 0; i--) {
         const paddedNum = i.toString().padStart(2, '0')
-        const parentSha = `level${paddedNum}`.padEnd(40, '0')
+        const parentSha = makeSha(`level${paddedNum}`)
         trees.set(parentSha, createMockTree([
           createTreeEntry(`dir${i}`, currentTreeSha, FileMode.TREE)
         ]))

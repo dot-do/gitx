@@ -1076,7 +1076,7 @@ export async function formatHighlightedDiff(
   options?: DiffOptions
 ): Promise<string[]> {
   // Check for NO_COLOR environment variable
-  const noColor = options?.noColor || process.env.NO_COLOR !== undefined
+  const noColor = options?.noColor || process.env['NO_COLOR'] !== undefined
 
   if (noColor) {
     return formatPlainDiff(diff)

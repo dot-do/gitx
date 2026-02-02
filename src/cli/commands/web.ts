@@ -133,10 +133,10 @@ void _DEFAULT_ENDPOINT // Reserved for production use
  */
 export async function webCommand(ctx: CommandContext): Promise<WebResult> {
   const options: WebOptions = {
-    expires: ctx.options.expires,
-    open: ctx.options.open,
-    endpoint: ctx.options.endpoint,
-    timeout: ctx.options.timeout,
+    expires: ctx.options['expires'],
+    open: ctx.options['open'],
+    endpoint: ctx.options['endpoint'],
+    timeout: ctx.options['timeout'],
   }
 
   // Get diff from working directory

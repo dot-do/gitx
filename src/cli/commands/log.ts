@@ -142,7 +142,7 @@ export async function logCommand(ctx: CommandContext): Promise<void> {
   const { cwd, args, options, stdout, stderr } = ctx
 
   // Handle --help flag
-  if (options.help || options.h) {
+  if (options['help'] || options['h']) {
     stdout(`gitx log - Show commit logs
 
 Usage: gitx log [options] [<revision-range>] [[--] <path>...]
@@ -187,36 +187,36 @@ Examples:
   // Build log options from CLI options
   const logOptions: LogOptions = {}
 
-  if (options.n !== undefined) {
-    logOptions.n = typeof options.n === 'number' ? options.n : parseInt(String(options.n), 10)
+  if (options['n'] !== undefined) {
+    logOptions.n = typeof options['n'] === 'number' ? options['n'] : parseInt(String(options['n']), 10)
   }
 
-  if (options.oneline) {
+  if (options['oneline']) {
     logOptions.oneline = true
   }
 
-  if (options.graph) {
+  if (options['graph']) {
     logOptions.graph = true
   }
 
-  if (options.all) {
+  if (options['all']) {
     logOptions.all = true
   }
 
-  if (options.format) {
-    logOptions.format = String(options.format)
+  if (options['format']) {
+    logOptions.format = String(options['format'])
   }
 
-  if (options.author) {
-    logOptions.author = String(options.author)
+  if (options['author']) {
+    logOptions.author = String(options['author'])
   }
 
-  if (options.since) {
-    logOptions.since = String(options.since)
+  if (options['since']) {
+    logOptions.since = String(options['since'])
   }
 
-  if (options.until) {
-    logOptions.until = String(options.until)
+  if (options['until']) {
+    logOptions.until = String(options['until'])
   }
 
   // Check for path filter in args
