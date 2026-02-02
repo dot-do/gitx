@@ -647,10 +647,13 @@ function computeLCS(oldLines: string[], newLines: string[]): number[][] {
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
+      const dpRow = dp[i]
+      const dpRowPrev = dp[i - 1]
+      if (!dpRow || !dpRowPrev) continue
       if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
+        dpRow[j] = (dpRowPrev[j - 1] ?? 0) + 1
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+        dpRow[j] = Math.max(dpRowPrev[j] ?? 0, dpRow[j - 1] ?? 0)
       }
     }
   }
@@ -680,22 +683,22 @@ function generateDiffFromLCS(oldLines: string[], newLines: string[], dp: number[
         type: 'context',
         oldLineNo: i,
         newLineNo: j,
-        content: oldLines[i - 1]
+        content: oldLines[i - 1] ?? ''
       })
       i--
       j--
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+    } else if (j > 0 && (i === 0 || (dp[i]?.[j - 1] ?? 0) >= (dp[i - 1]?.[j] ?? 0))) {
       result.unshift({
         type: 'addition',
         newLineNo: j,
-        content: newLines[j - 1]
+        content: newLines[j - 1] ?? ''
       })
       j--
     } else if (i > 0) {
       result.unshift({
         type: 'deletion',
         oldLineNo: i,
-        content: oldLines[i - 1]
+        content: oldLines[i - 1] ?? ''
       })
       i--
     }
@@ -727,12 +730,16 @@ function groupIntoHunks(
 
   // Group changes into hunks (merge if within 2*context of each other)
   const hunks: DiffHunk[] = []
-  let hunkStart = Math.max(0, changePositions[0] - contextLines)
-  let hunkEnd = Math.min(diff.length - 1, changePositions[0] + contextLines)
+  const firstChangePos = changePositions[0]
+  if (firstChangePos === undefined) return []
+  let hunkStart = Math.max(0, firstChangePos - contextLines)
+  let hunkEnd = Math.min(diff.length - 1, firstChangePos + contextLines)
 
   for (let i = 1; i < changePositions.length; i++) {
-    const nextStart = Math.max(0, changePositions[i] - contextLines)
-    const nextEnd = Math.min(diff.length - 1, changePositions[i] + contextLines)
+    const changePos = changePositions[i]
+    if (changePos === undefined) continue
+    const nextStart = Math.max(0, changePos - contextLines)
+    const nextEnd = Math.min(diff.length - 1, changePos + contextLines)
 
     if (nextStart <= hunkEnd + 1) {
       // Merge hunks
@@ -772,12 +779,13 @@ function createHunk(diff: DiffOp[], start: number, end: number): DiffHunk {
       foundFirst = true
     }
 
-    lines.push({
+    const lineEntry: DiffLine = {
       type: op.type,
       content: op.content,
-      oldLineNo: op.oldLineNo,
-      newLineNo: op.newLineNo
-    })
+    }
+    if (op.oldLineNo !== undefined) lineEntry.oldLineNo = op.oldLineNo
+    if (op.newLineNo !== undefined) lineEntry.newLineNo = op.newLineNo
+    lines.push(lineEntry)
 
     if (op.type === 'context') {
       oldCount++
@@ -830,13 +838,16 @@ export function computeWordDiff(
   let lcsIdx = 0
 
   while (oldIdx < oldTokens.length || newIdx < newTokens.length) {
+    const lcsToken = lcs[lcsIdx]
+    const oldToken = oldTokens[oldIdx]
+    const newToken = newTokens[newIdx]
     if (lcsIdx < lcs.length &&
         oldIdx < oldTokens.length &&
         newIdx < newTokens.length &&
-        oldTokens[oldIdx] === lcs[lcsIdx] &&
-        newTokens[newIdx] === lcs[lcsIdx]) {
+        oldToken === lcsToken &&
+        newToken === lcsToken) {
       // Common token
-      changes.push({ type: 'unchanged', text: oldTokens[oldIdx] })
+      changes.push({ type: 'unchanged', text: oldToken ?? '' })
       oldIdx++
       newIdx++
       lcsIdx++
@@ -844,13 +855,13 @@ export function computeWordDiff(
       // Deleted from old
       while (oldIdx < oldTokens.length &&
              (lcsIdx >= lcs.length || oldTokens[oldIdx] !== lcs[lcsIdx])) {
-        changes.push({ type: 'removed', text: oldTokens[oldIdx] })
+        changes.push({ type: 'removed', text: oldTokens[oldIdx] ?? '' })
         oldIdx++
       }
       // Added in new
       while (newIdx < newTokens.length &&
              (lcsIdx >= lcs.length || newTokens[newIdx] !== lcs[lcsIdx])) {
-        changes.push({ type: 'added', text: newTokens[newIdx] })
+        changes.push({ type: 'added', text: newTokens[newIdx] ?? '' })
         newIdx++
       }
     }
@@ -901,10 +912,13 @@ function computeWordLCS(oldTokens: string[], newTokens: string[]): string[] {
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
+      const dpRow = dp[i]
+      const dpRowPrev = dp[i - 1]
+      if (!dpRow || !dpRowPrev) continue
       if (oldTokens[i - 1] === newTokens[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
+        dpRow[j] = (dpRowPrev[j - 1] ?? 0) + 1
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+        dpRow[j] = Math.max(dpRowPrev[j] ?? 0, dpRow[j - 1] ?? 0)
       }
     }
   }
@@ -915,11 +929,12 @@ function computeWordLCS(oldTokens: string[], newTokens: string[]): string[] {
   let j = n
 
   while (i > 0 && j > 0) {
-    if (oldTokens[i - 1] === newTokens[j - 1]) {
-      lcs.unshift(oldTokens[i - 1])
+    const oldToken = oldTokens[i - 1]
+    if (oldToken === newTokens[j - 1]) {
+      lcs.unshift(oldToken ?? '')
       i--
       j--
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+    } else if ((dp[i - 1]?.[j] ?? 0) > (dp[i]?.[j - 1] ?? 0)) {
       i--
     } else {
       j--

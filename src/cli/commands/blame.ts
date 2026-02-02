@@ -385,10 +385,13 @@ function computeLineMapping(oldLines: string[], newLines: string[]): Map<number,
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
+      const dpRow = dp[i]
+      const dpRowPrev = dp[i - 1]
+      if (!dpRow || !dpRowPrev) continue
       if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
+        dpRow[j] = (dpRowPrev[j - 1] ?? 0) + 1
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+        dpRow[j] = Math.max(dpRowPrev[j] ?? 0, dpRow[j - 1] ?? 0)
       }
     }
   }
@@ -400,7 +403,7 @@ function computeLineMapping(oldLines: string[], newLines: string[]): Map<number,
       mapping.set(i - 1, j - 1)
       i--
       j--
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+    } else if ((dp[i - 1]?.[j] ?? 0) > (dp[i]?.[j - 1] ?? 0)) {
       i--
     } else {
       j--
@@ -489,7 +492,7 @@ Examples:
   }
 
   try {
-    const result = await getBlame(adapter, filePath, blameOptions)
+    const result = await getBlame(adapter, filePath ?? '', blameOptions)
 
     // Handle binary file
     if (result.isBinary) {
@@ -736,16 +739,18 @@ export async function getBlame(
       for (const [origIdx, mappedChildIdx] of childToOriginal) {
         if (mappedChildIdx === childIdx) {
           // This line exists in parent - attribute to parent
-          blameInfo[origIdx].commitSha = parentSha
-          blameInfo[origIdx].shortSha = parentSha.substring(0, 8)
-          blameInfo[origIdx].author = parentCommit.author.name
-          blameInfo[origIdx].authorEmail = parentCommit.author.email
-          blameInfo[origIdx].date = new Date(parentCommit.author.timestamp * 1000)
-          blameInfo[origIdx].originalLineNumber = parentIdx + 1
+          const blameEntry = blameInfo[origIdx]
+          if (!blameEntry) continue
+          blameEntry.commitSha = parentSha
+          blameEntry.shortSha = parentSha.substring(0, 8)
+          blameEntry.author = parentCommit.author.name
+          blameEntry.authorEmail = parentCommit.author.email
+          blameEntry.date = new Date(parentCommit.author.timestamp * 1000)
+          blameEntry.originalLineNumber = parentIdx + 1
 
           // Track original path when following renames
           if (pathInParent !== childPath) {
-            blameInfo[origIdx].originalPath = pathInParent
+            blameEntry.originalPath = pathInParent
           }
         }
       }
@@ -879,23 +884,25 @@ export function parseLineRange(rangeStr: string): LineRange {
     throw new Error(`Invalid line range format: ${rangeStr}`)
   }
 
-  const start = parseInt(parts[0], 10)
+  const part0 = parts[0] ?? ''
+  const part1 = parts[1] ?? ''
+  const start = parseInt(part0, 10)
   if (isNaN(start)) {
-    throw new Error(`Invalid start line: ${parts[0]}`)
+    throw new Error(`Invalid start line: ${part0}`)
   }
 
   let end: number
-  if (parts[1].startsWith('+')) {
+  if (part1.startsWith('+')) {
     // Relative offset: start + offset
-    const offset = parseInt(parts[1].slice(1), 10)
+    const offset = parseInt(part1.slice(1), 10)
     if (isNaN(offset)) {
-      throw new Error(`Invalid line offset: ${parts[1]}`)
+      throw new Error(`Invalid line offset: ${part1}`)
     }
     end = start + offset
   } else {
-    end = parseInt(parts[1], 10)
+    end = parseInt(part1, 10)
     if (isNaN(end)) {
-      throw new Error(`Invalid end line: ${parts[1]}`)
+      throw new Error(`Invalid end line: ${part1}`)
     }
   }
 

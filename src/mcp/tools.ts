@@ -1097,7 +1097,7 @@ export const gitTools: MCPTool[] = [
 
         // Walk commits
         const traversalOptions: TraversalOptions = {
-          maxCount: maxCount,
+          ...(maxCount !== undefined && { maxCount }),
           sort: 'date'
         }
 
@@ -2377,7 +2377,7 @@ export const gitTools: MCPTool[] = [
             if (commitSha && (targetRevision.includes('~') || targetRevision.includes('^'))) {
               const commit = await ctx.objectStore.getCommit(commitSha)
               if (commit && commit.parents.length > 0) {
-                commitSha = commit.parents[0]
+                commitSha = commit.parents[0] ?? null
               } else {
                 return {
                   content: [{ type: 'text', text: `fatal: bad revision '${targetRevision}'` }],
@@ -2999,7 +2999,7 @@ export const gitTools: MCPTool[] = [
                     const blob = await ctx!.objectStore.getBlob(entry.sha)
                     size = blob?.length
                   }
-                  entries.push({ mode: entry.mode, type: typeStr, sha: entry.sha, name: entry.name, path: fullPath, size })
+                  entries.push({ mode: entry.mode, type: typeStr, sha: entry.sha, name: entry.name, path: fullPath, ...(size !== undefined && { size }) })
                 }
               }
             }
@@ -3671,7 +3671,7 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
         getCommit: (sha: string) => ctx.objectStore.getCommit(sha),
       }
       const traversalOptions: TraversalOptions = {
-        maxCount: options?.maxCount,
+        ...(options?.maxCount !== undefined && { maxCount: options.maxCount }),
         sort: 'date',
       }
 
@@ -3698,7 +3698,7 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
         commit2: options?.commit2,
         path: options?.path,
       })
-      return result.content[0].text
+      return result.content[0]?.text ?? ''
     },
 
     async show(revision: string, options?: GitShowOptions): Promise<Record<string, unknown>> {
@@ -3708,7 +3708,7 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
         format: options?.format,
         context_lines: options?.contextLines,
       })
-      const text = result.content[0].text
+      const text = result.content[0]?.text ?? ''
       // Try to return structured data
       try { return JSON.parse(text) } catch { /* ignore */ }
       // For commit show, parse the text output into structured form
@@ -3737,10 +3737,10 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
         email: options.email,
         amend: options.amend,
       })
-      const text = result.content[0].text
+      const text = result.content[0]?.text ?? ''
       // Parse "[$branch $sha] $message" format
       const match = text.match(/\[.+\s+([a-f0-9]{7,})\]/)
-      return { sha: match ? match[1] : 'unknown' }
+      return { sha: match?.[1] ?? 'unknown' }
     },
 
     async add(files: string | string[], options?: GitAddOptions): Promise<void> {
@@ -3772,11 +3772,11 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
       })
       const current = await getCurrentBranch(ctx.refStore)
       return {
-        current: current || undefined,
+        ...(current && { current }),
         branches: branches.map(b => ({
           name: b.name,
           sha: b.sha,
-          remote: b.remote,
+          remote: b.ref.startsWith('refs/remotes/'),
         })),
       }
     },
@@ -3787,17 +3787,17 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
     },
 
     async push(options?: GitPushOptions): Promise<{ pushed: boolean; remote?: string; branch?: string }> {
-      const result = await invokeTool('git_push', options ?? {})
-      return { pushed: !result.isError, remote: options?.remote, branch: options?.branch }
+      const result = await invokeTool('git_push', (options ?? {}) as Record<string, unknown>)
+      return { pushed: !result.isError, ...(options?.remote && { remote: options.remote }), ...(options?.branch && { branch: options.branch }) }
     },
 
     async pull(options?: GitPullOptions): Promise<{ pulled: boolean; commits?: number }> {
-      const result = await invokeTool('git_pull', options ?? {})
+      const result = await invokeTool('git_pull', (options ?? {}) as Record<string, unknown>)
       return { pulled: !result.isError }
     },
 
     async fetch(options?: GitFetchOptions): Promise<{ fetched: boolean; refs?: string[] }> {
-      const result = await invokeTool('git_fetch', options ?? {})
+      const result = await invokeTool('git_fetch', (options ?? {}) as Record<string, unknown>)
       return { fetched: !result.isError }
     },
 
@@ -3807,7 +3807,7 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
     },
 
     async init(options?: GitInitOptions): Promise<{ initialized: boolean; path?: string }> {
-      const result = await invokeTool('git_init', options ?? {})
+      const result = await invokeTool('git_init', (options ?? {}) as Record<string, unknown>)
       return { initialized: !result.isError }
     },
   }

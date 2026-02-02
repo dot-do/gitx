@@ -884,14 +884,14 @@ export function createMockBackend(): MockBackend {
   /**
    * Wrap a method to record calls before executing.
    */
-  function wrapMethod<T extends (...args: unknown[]) => unknown>(
+  function wrapMethod<TArgs extends unknown[], TReturn>(
     method: string,
-    fn: T
-  ): T {
-    return (async (...args: unknown[]) => {
+    fn: (...args: TArgs) => TReturn
+  ): (...args: TArgs) => TReturn {
+    return ((...args: TArgs) => {
       recordCall(method, args)
       return fn(...args)
-    }) as T
+    })
   }
 
   return {

@@ -368,7 +368,16 @@ export async function findMergeBase(
   }
 
   if (commits.length === 1) {
-    const commit = await provider.getCommit(commits[0])
+    const firstCommit = commits[0]
+    if (!firstCommit) {
+      return {
+        bases: [],
+        isUnique: false,
+        hasCommonHistory: false,
+        count: 0
+      }
+    }
+    const commit = await provider.getCommit(firstCommit)
     if (!commit) {
       return {
         bases: [],
@@ -378,7 +387,7 @@ export async function findMergeBase(
       }
     }
     return {
-      bases: [commits[0]],
+      bases: [firstCommit],
       isUnique: true,
       hasCommonHistory: true,
       count: 1
@@ -409,7 +418,17 @@ export async function findMergeBase(
 
   // Handle fork point option
   if (options.forkPoint && commits.length === 2) {
-    const result = await findForkPoint(provider, commits[0], commits[1])
+    const forkCommit0 = commits[0]
+    const forkCommit1 = commits[1]
+    if (!forkCommit0 || !forkCommit1) {
+      return {
+        bases: [],
+        isUnique: false,
+        hasCommonHistory: false,
+        count: 0
+      }
+    }
+    const result = await findForkPoint(provider, forkCommit0, forkCommit1)
     if (result.found && result.forkPoint) {
       return {
         bases: [result.forkPoint],
@@ -421,7 +440,17 @@ export async function findMergeBase(
   }
 
   // Standard two-commit merge base
-  const [sha1, sha2] = commits
+  const sha1 = commits[0]
+  const sha2 = commits[1]
+
+  if (!sha1 || !sha2) {
+    return {
+      bases: [],
+      isUnique: false,
+      hasCommonHistory: false,
+      count: 0
+    }
+  }
 
   // Check if either commit doesn't exist
   const commit1 = await provider.getCommit(sha1)
@@ -461,8 +490,9 @@ export async function findMergeBase(
   }
 
   // Default: return just one merge base
+  const firstBase = maximalBases[0]
   return {
-    bases: maximalBases.length > 0 ? [maximalBases[0]] : [],
+    bases: firstBase ? [firstBase] : [],
     isUnique: maximalBases.length === 1,
     hasCommonHistory: maximalBases.length > 0,
     count: 1
@@ -540,8 +570,8 @@ export async function findForkPoint(
         // Found a common point in the reflog
         // Calculate commits since fork
         let commitsSinceFork = 0
-        let current = ref
-        while (current !== entry) {
+        let current: string | undefined = ref
+        while (current && current !== entry) {
           const commit = await provider.getCommit(current)
           if (!commit || commit.parentShas.length === 0) break
           commitsSinceFork++
@@ -587,11 +617,13 @@ export async function findForkPoint(
     commitsSinceFork++
 
     if (commit.parentShas.length === 0) break
-    current = commit.parentShas[0]
+    const nextParent = commit.parentShas[0]
+    if (!nextParent) break
+    current = nextParent
   }
 
   return {
-    forkPoint,
+    forkPoint: forkPoint ?? null,
     ref,
     found: true,
     commitsSinceFork
@@ -790,17 +822,23 @@ export async function findOctopusMergeBase(
   }
 
   if (commits.length === 1) {
-    const commit = await provider.getCommit(commits[0])
-    return commit ? [commits[0]] : []
+    const firstSha = commits[0]
+    if (!firstSha) return []
+    const commit = await provider.getCommit(firstSha)
+    return commit ? [firstSha] : []
   }
 
+  const commit0 = commits[0]
+  const commit1 = commits[1]
+  if (!commit0 || !commit1) return []
+
   if (commits.length === 2) {
-    return findAllMergeBases(provider, commits[0], commits[1])
+    return findAllMergeBases(provider, commit0, commit1)
   }
 
   // For 3+ commits, iteratively find the merge base
   // Start with the first two commits
-  let currentBases = await findAllMergeBases(provider, commits[0], commits[1])
+  let currentBases = await findAllMergeBases(provider, commit0, commit1)
 
   if (currentBases.length === 0) {
     return []
@@ -809,6 +847,7 @@ export async function findOctopusMergeBase(
   // For each additional commit, find the merge base with current bases
   for (let i = 2; i < commits.length; i++) {
     const nextCommit = commits[i]
+    if (!nextCommit) continue
     const newBases: string[] = []
 
     for (const base of currentBases) {
@@ -882,7 +921,10 @@ export async function hasCommonHistory(
   // Check pairwise - for common history, all pairs must have a common ancestor
   for (let i = 0; i < commits.length; i++) {
     for (let j = i + 1; j < commits.length; j++) {
-      const common = await findCommonAncestors(provider, commits[i], commits[j])
+      const commitI = commits[i]
+      const commitJ = commits[j]
+      if (!commitI || !commitJ) continue
+      const common = await findCommonAncestors(provider, commitI, commitJ)
       if (common.size === 0) {
         return false
       }
@@ -952,11 +994,22 @@ export async function computeRecursiveMergeBase(
   // In a real implementation, this would create virtual merge commits
   // For now, we return the result of recursively finding merge bases of the bases
   let currentBase = allBases[0]
+  if (!currentBase) {
+    return {
+      bases: [],
+      isUnique: false,
+      hasCommonHistory: false,
+      count: 0
+    }
+  }
 
   for (let i = 1; i < allBases.length; i++) {
-    const result = await findMergeBase(provider, [currentBase, allBases[i]])
-    if (result.bases.length > 0) {
-      currentBase = result.bases[0]
+    const nextBase = allBases[i]
+    if (!nextBase) continue
+    const result = await findMergeBase(provider, [currentBase, nextBase])
+    const firstResultBase = result.bases[0]
+    if (firstResultBase) {
+      currentBase = firstResultBase
     }
   }
 

@@ -222,7 +222,7 @@ Examples:
   }
 
   // Check for path filter in args
-  if (args.length > 0) {
+  if (args.length > 0 && args[0] !== undefined) {
     logOptions.path = args[0]
   }
 
@@ -240,6 +240,7 @@ Examples:
     // Output entries
     for (let i = 0; i < result.entries.length; i++) {
       const entry = result.entries[i]
+      if (!entry) continue
 
       let output: string
       if (logOptions.format) {
@@ -249,9 +250,9 @@ Examples:
       }
 
       // Prepend graph if enabled
-      if (graphLines && graphLines[i]) {
+      const graphPrefix = graphLines?.[i]
+      if (graphPrefix) {
         const lines = output.split('\n')
-        const graphPrefix = graphLines[i]
         output = lines.map((line, lineIdx) => {
           if (lineIdx === 0) {
             return `${graphPrefix} ${line}`
@@ -614,13 +615,13 @@ export function formatWithString(entry: LogEntry, formatStr: string): string {
 
   // %s - subject (first line of message)
   const lines = entry.message.split('\n')
-  const subject = lines[0]
+  const subject = lines[0] ?? ''
   result = result.replace(/%s/g, subject)
 
   // %b - body (everything after first line)
   const bodyLines = lines.slice(1)
   // Skip leading empty lines
-  while (bodyLines.length > 0 && bodyLines[0].trim() === '') {
+  while (bodyLines.length > 0 && bodyLines[0]?.trim() === '') {
     bodyLines.shift()
   }
   const body = bodyLines.join('\n')
@@ -660,7 +661,8 @@ export function generateGraph(entries: LogEntry[]): string[] {
   // Build a map of sha to index for parent lookups
   const shaToIndex = new Map<string, number>()
   for (let i = 0; i < entries.length; i++) {
-    shaToIndex.set(entries[i].sha, i)
+    const e = entries[i]
+    if (e) shaToIndex.set(e.sha, i)
   }
 
   // Track active branches (columns) - stores the SHA we're expecting to see
@@ -668,6 +670,7 @@ export function generateGraph(entries: LogEntry[]): string[] {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]
+    if (!entry) continue
 
     // Find column for this commit
     let col = activeBranches.indexOf(entry.sha)
@@ -699,20 +702,23 @@ export function generateGraph(entries: LogEntry[]): string[] {
     result.push(graphLine)
 
     // Update active branches based on parents
+    const firstParent = entry.parents[0]
     if (entry.parents.length === 0) {
       // Root commit - remove from active branches
       activeBranches[col] = ''
-    } else if (entry.parents.length === 1) {
+    } else if (entry.parents.length === 1 && firstParent !== undefined) {
       // Single parent - continue in same column
-      activeBranches[col] = entry.parents[0]
-    } else {
+      activeBranches[col] = firstParent
+    } else if (firstParent !== undefined) {
       // Merge commit - first parent stays, others get new columns
-      activeBranches[col] = entry.parents[0]
+      activeBranches[col] = firstParent
       for (let p = 1; p < entry.parents.length; p++) {
+        const parent = entry.parents[p]
+        if (parent === undefined) continue
         // Check if parent is already in a column
-        const existingCol = activeBranches.indexOf(entry.parents[p])
+        const existingCol = activeBranches.indexOf(parent)
         if (existingCol === -1) {
-          activeBranches.push(entry.parents[p])
+          activeBranches.push(parent)
         }
       }
     }
@@ -744,7 +750,7 @@ export function generateGraph(entries: LogEntry[]): string[] {
 export function parseDateFilter(dateStr: string): Date {
   // Check if it's a simple date format like "2024-01-15" (without time)
   const simpleDateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (simpleDateMatch) {
+  if (simpleDateMatch && simpleDateMatch[1] && simpleDateMatch[2] && simpleDateMatch[3]) {
     const year = parseInt(simpleDateMatch[1], 10)
     const month = parseInt(simpleDateMatch[2], 10) - 1 // 0-indexed
     const day = parseInt(simpleDateMatch[3], 10)
@@ -770,7 +776,7 @@ export function parseDateFilter(dateStr: string): Date {
 
   // "X days ago"
   const daysAgoMatch = dateStr.match(/^(\d+)\s+days?\s+ago$/i)
-  if (daysAgoMatch) {
+  if (daysAgoMatch && daysAgoMatch[1]) {
     const days = parseInt(daysAgoMatch[1], 10)
     const date = new Date(now)
     date.setDate(date.getDate() - days)
@@ -780,7 +786,7 @@ export function parseDateFilter(dateStr: string): Date {
 
   // "X weeks ago"
   const weeksAgoMatch = dateStr.match(/^(\d+)\s+weeks?\s+ago$/i)
-  if (weeksAgoMatch) {
+  if (weeksAgoMatch && weeksAgoMatch[1]) {
     const weeks = parseInt(weeksAgoMatch[1], 10)
     const date = new Date(now)
     date.setDate(date.getDate() - weeks * 7)
@@ -790,7 +796,7 @@ export function parseDateFilter(dateStr: string): Date {
 
   // "X months ago"
   const monthsAgoMatch = dateStr.match(/^(\d+)\s+months?\s+ago$/i)
-  if (monthsAgoMatch) {
+  if (monthsAgoMatch && monthsAgoMatch[1]) {
     const months = parseInt(monthsAgoMatch[1], 10)
     const date = new Date(now)
     date.setMonth(date.getMonth() - months)
@@ -800,7 +806,7 @@ export function parseDateFilter(dateStr: string): Date {
 
   // "X years ago"
   const yearsAgoMatch = dateStr.match(/^(\d+)\s+years?\s+ago$/i)
-  if (yearsAgoMatch) {
+  if (yearsAgoMatch && yearsAgoMatch[1]) {
     const years = parseInt(yearsAgoMatch[1], 10)
     const date = new Date(now)
     date.setFullYear(date.getFullYear() - years)

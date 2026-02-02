@@ -135,7 +135,9 @@ export class SandboxError extends Error {
     super(message)
     this.name = 'SandboxError'
     this.code = code
-    this.data = data
+    if (data !== undefined) {
+      this.data = data
+    }
   }
 
   /**
@@ -611,11 +613,21 @@ export class MCPSandbox extends EventEmitter {
 
     // Apply resource limits from config
     if (config.resourceLimits) {
-      this.config.memoryLimit = config.resourceLimits.memoryLimit ?? this.config.memoryLimit
-      this.config.cpuTimeLimit = config.resourceLimits.cpuTimeLimit ?? this.config.cpuTimeLimit
-      this.config.maxOpenFiles = config.resourceLimits.maxOpenFiles ?? this.config.maxOpenFiles
-      this.config.maxProcesses = config.resourceLimits.maxProcesses ?? this.config.maxProcesses
-      this.config.diskWriteLimit = config.resourceLimits.diskWriteLimit ?? this.config.diskWriteLimit
+      if (config.resourceLimits.memoryLimit !== undefined) {
+        this.config.memoryLimit = config.resourceLimits.memoryLimit
+      }
+      if (config.resourceLimits.cpuTimeLimit !== undefined) {
+        this.config.cpuTimeLimit = config.resourceLimits.cpuTimeLimit
+      }
+      if (config.resourceLimits.maxOpenFiles !== undefined) {
+        this.config.maxOpenFiles = config.resourceLimits.maxOpenFiles
+      }
+      if (config.resourceLimits.maxProcesses !== undefined) {
+        this.config.maxProcesses = config.resourceLimits.maxProcesses
+      }
+      if (config.resourceLimits.diskWriteLimit !== undefined) {
+        this.config.diskWriteLimit = config.resourceLimits.diskWriteLimit
+      }
     }
 
     // Set permissions from preset or config
@@ -671,13 +683,23 @@ export class MCPSandbox extends EventEmitter {
    * @returns Copy of resource limits
    */
   getResourceLimits(): ResourceLimits {
-    return {
-      memoryLimit: this.config.memoryLimit,
-      cpuTimeLimit: this.config.cpuTimeLimit,
-      maxOpenFiles: this.config.maxOpenFiles,
-      maxProcesses: this.config.maxProcesses,
-      diskWriteLimit: this.config.diskWriteLimit,
+    const limits: ResourceLimits = {}
+    if (this.config.memoryLimit !== undefined) {
+      limits.memoryLimit = this.config.memoryLimit
     }
+    if (this.config.cpuTimeLimit !== undefined) {
+      limits.cpuTimeLimit = this.config.cpuTimeLimit
+    }
+    if (this.config.maxOpenFiles !== undefined) {
+      limits.maxOpenFiles = this.config.maxOpenFiles
+    }
+    if (this.config.maxProcesses !== undefined) {
+      limits.maxProcesses = this.config.maxProcesses
+    }
+    if (this.config.diskWriteLimit !== undefined) {
+      limits.diskWriteLimit = this.config.diskWriteLimit
+    }
+    return limits
   }
 
   /**
@@ -870,9 +892,7 @@ export class MCPSandbox extends EventEmitter {
 
       this.resourceStats.executionCount++
 
-      return {
-        value: result.value,
-        error: result.error,
+      const sandboxResult: SandboxResult<T> = {
         sandboxId: this.id,
         metadata: {
           startTime,
@@ -884,6 +904,13 @@ export class MCPSandbox extends EventEmitter {
           cpuTimeUsed: this.resourceStats.cpuTimeUsed,
         },
       }
+      if (result.value !== undefined) {
+        sandboxResult.value = result.value
+      }
+      if (result.error !== undefined) {
+        sandboxResult.error = result.error
+      }
+      return sandboxResult
     } finally {
       this.activeExecutions--
     }
@@ -1066,7 +1093,7 @@ export class MCPSandbox extends EventEmitter {
       // Check for file descriptor limits with openSync
       if (fnStr.includes('openSync') && this.config.maxOpenFiles) {
         const match = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+)/)
-        if (match) {
+        if (match && match[1] !== undefined) {
           const count = parseInt(match[1], 10)
           if (count > this.config.maxOpenFiles) {
             return new SandboxError(
@@ -1116,7 +1143,7 @@ export class MCPSandbox extends EventEmitter {
     if (this.config.memoryLimit) {
       // Check for large for loop allocations that push to arrays
       const forLoopMatch = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+(?:e\d+)?|\d+)/)
-      if (forLoopMatch && (fnStr.includes('.push') || fnStr.includes('arr.push'))) {
+      if (forLoopMatch && forLoopMatch[1] !== undefined && (fnStr.includes('.push') || fnStr.includes('arr.push'))) {
         const iterations = parseFloat(forLoopMatch[1])
         // Check if iterations would exceed reasonable memory (10M+ items)
         if (iterations >= 10000000) {
@@ -1131,7 +1158,7 @@ export class MCPSandbox extends EventEmitter {
     // Check for CPU-intensive operations (massive loops)
     if (this.config.cpuTimeLimit !== undefined || fnStr.includes('1000000000') || fnStr.includes('1e9')) {
       const cpuLoopMatch = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+(?:e\d+)?|\d+)/)
-      if (cpuLoopMatch) {
+      if (cpuLoopMatch && cpuLoopMatch[1] !== undefined) {
         const iterations = parseFloat(cpuLoopMatch[1])
         if (iterations >= 1000000000) {
           return new SandboxError(
@@ -1351,8 +1378,8 @@ export class MCPSandbox extends EventEmitter {
     const sandboxGlobal: Record<string, unknown> = {}
 
     // Clear any global test values between executions
-    delete (global as Record<string, unknown>).testValue
-    delete (global as Record<string, unknown>).sharedVar
+    delete (global as Record<string, unknown>)['testValue']
+    delete (global as Record<string, unknown>)['sharedVar']
 
     // Create isolated process object
     const isolatedProcess = this.createIsolatedProcess()
@@ -1417,8 +1444,8 @@ export class MCPSandbox extends EventEmitter {
     })
 
     // Make sandboxGlobal reference itself for globalThis patterns
-    sandboxGlobal.globalThis = sandboxGlobal
-    sandboxGlobal.global = sandboxGlobal
+    sandboxGlobal['globalThis'] = sandboxGlobal
+    sandboxGlobal['global'] = sandboxGlobal
 
     // Override the dynamic import in the function's scope
     // The function will use our secure import for any dynamic imports
@@ -1428,8 +1455,8 @@ export class MCPSandbox extends EventEmitter {
       return wrappedFn()
     } finally {
       // Clear test values after execution
-      delete (global as Record<string, unknown>).testValue
-      delete (global as Record<string, unknown>).sharedVar
+      delete (global as Record<string, unknown>)['testValue']
+      delete (global as Record<string, unknown>)['sharedVar']
     }
   }
 
@@ -1446,7 +1473,7 @@ export class MCPSandbox extends EventEmitter {
 
     return function wrappedExecution(): T | Promise<T> {
       // Temporarily replace global process
-      ;(global as Record<string, unknown>).process = isolatedProcess
+      ;(global as Record<string, unknown>)['process'] = isolatedProcess
 
       // Store original import for restoration
       // Note: We can't fully replace import() in V8, but we intercept it
@@ -1469,15 +1496,15 @@ export class MCPSandbox extends EventEmitter {
               throw error
             })
             .finally(() => {
-              ;(global as Record<string, unknown>).process = originalProcess
+              ;(global as Record<string, unknown>)['process'] = originalProcess
             }) as Promise<T>
         }
 
         // Restore process for sync results
-        ;(global as Record<string, unknown>).process = originalProcess
+        ;(global as Record<string, unknown>)['process'] = originalProcess
         return result
       } catch (error) {
-        ;(global as Record<string, unknown>).process = originalProcess
+        ;(global as Record<string, unknown>)['process'] = originalProcess
         throw error
       }
     }
@@ -1572,7 +1599,9 @@ export class MCPSandbox extends EventEmitter {
     const sandboxError = new SandboxError(SandboxErrorCode.EXECUTION_ERROR, message, {
       context: options.context,
     })
-    sandboxError.stack = stack
+    if (stack !== undefined) {
+      sandboxError.stack = stack
+    }
     return sandboxError
   }
 }
