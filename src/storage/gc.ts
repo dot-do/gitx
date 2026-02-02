@@ -153,6 +153,7 @@ export interface GCResult {
 // ============================================================================
 
 /** Default grace period: 2 weeks in milliseconds */
+const decoder = new TextDecoder()
 const DEFAULT_GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000
 
 // ============================================================================
@@ -425,7 +426,7 @@ export class GarbageCollector {
     reachable: Set<string>,
     visited: Set<string>
   ): Promise<void> {
-    const text = new TextDecoder().decode(content)
+    const text = decoder.decode(content)
     const lines = text.split('\n')
 
     for (const line of lines) {
@@ -511,7 +512,7 @@ export class GarbageCollector {
     reachable: Set<string>,
     visited: Set<string>
   ): Promise<void> {
-    const text = new TextDecoder().decode(content)
+    const text = decoder.decode(content)
     const lines = text.split('\n')
 
     for (const line of lines) {

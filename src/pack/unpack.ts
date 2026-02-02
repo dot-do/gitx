@@ -117,6 +117,7 @@ interface ParsedObjectEntry {
 // ============================================================================
 
 /** Maximum delta chain depth to prevent stack overflow */
+const encoder = new TextEncoder()
 const DEFAULT_MAX_DELTA_DEPTH = 50
 
 // ============================================================================
@@ -627,7 +628,7 @@ function packTypeToObjectType(type: PackObjectType): ObjectType {
  */
 function computeObjectSha(type: ObjectType, data: Uint8Array): string {
   const header = `${type} ${data.length}\0`
-  const headerBytes = new TextEncoder().encode(header)
+  const headerBytes = encoder.encode(header)
   const combined = new Uint8Array(headerBytes.length + data.length)
   combined.set(headerBytes, 0)
   combined.set(data, headerBytes.length)

@@ -36,6 +36,8 @@
 import { Author, TagObject, ObjectType } from '../types/objects'
 import { RefErrorCode } from './storage'
 
+const encoder = new TextEncoder()
+
 /**
  * Simplified ref storage interface for TagManager.
  *
@@ -524,7 +526,6 @@ export class TagManager {
             throw new TagError('GPG signer not available', 'GPG_ERROR', name)
           }
           // Sign the tag content
-          const encoder = new TextEncoder()
           signature = await this.gpgSigner.sign(encoder.encode(formattedMessage), options?.keyId)
           // Append signature to message (Git stores signature in the tag object)
           finalMessage = formattedMessage + '\n' + signature
@@ -911,7 +912,6 @@ export class TagManager {
       return { valid: false, error: 'GPG signer not available' }
     }
 
-    const encoder = new TextEncoder()
     return this.gpgSigner.verify(encoder.encode(parsed.message), parsed.signature)
   }
 

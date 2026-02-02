@@ -635,6 +635,8 @@ export class R2PackError extends Error {
 }
 
 // PACK signature bytes: "PACK"
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
 const PACK_SIGNATURE = new Uint8Array([0x50, 0x41, 0x43, 0x4b])
 
 // Multi-pack index signature
@@ -1719,7 +1721,7 @@ export class R2PackStorage {
       stolenCount: 0
     }
 
-    const lockData = new TextEncoder().encode(JSON.stringify(lockContent))
+    const lockData = encoder.encode(JSON.stringify(lockContent))
 
     // Try to check if there's an existing lock
     const existingObj = await this._bucket.head(lockKey)
@@ -1730,7 +1732,7 @@ export class R2PackStorage {
       if (existingLockObj) {
         try {
           const existingContent = JSON.parse(
-            new TextDecoder().decode(new Uint8Array(await existingLockObj.arrayBuffer()))
+            decoder.decode(new Uint8Array(await existingLockObj.arrayBuffer()))
           ) as LockFileContent
 
           // Check if lock is still valid (not expired)
@@ -1764,7 +1766,7 @@ export class R2PackStorage {
             previousLockId: existingContent.lockId
           }
 
-          const stolenLockData = new TextEncoder().encode(JSON.stringify(stolenLockContent))
+          const stolenLockData = encoder.encode(JSON.stringify(stolenLockContent))
 
           // Use the existing etag to ensure atomicity
           try {
@@ -1815,7 +1817,7 @@ export class R2PackStorage {
       const verifyObj = await this._bucket.get(lockKey)
       if (verifyObj) {
         const content = JSON.parse(
-          new TextDecoder().decode(new Uint8Array(await verifyObj.arrayBuffer()))
+          decoder.decode(new Uint8Array(await verifyObj.arrayBuffer()))
         ) as LockFileContent
 
         if (content.lockId !== lockId) {
@@ -1873,7 +1875,7 @@ export class R2PackStorage {
 
     try {
       const content = JSON.parse(
-        new TextDecoder().decode(new Uint8Array(await lockObj.arrayBuffer()))
+        decoder.decode(new Uint8Array(await lockObj.arrayBuffer()))
       ) as LockFileContent
 
       const now = Date.now()
@@ -1953,7 +1955,7 @@ export class R2PackStorage {
         previousLockId: existingContent.lockId
       }
 
-      const lockData = new TextEncoder().encode(JSON.stringify(stolenLockContent))
+      const lockData = encoder.encode(JSON.stringify(stolenLockContent))
 
       try {
         await this._bucket.put(lockKey, lockData, {
@@ -2010,7 +2012,7 @@ export class R2PackStorage {
     if (existingObj) {
       try {
         const content = JSON.parse(
-          new TextDecoder().decode(new Uint8Array(await existingObj.arrayBuffer()))
+          decoder.decode(new Uint8Array(await existingObj.arrayBuffer()))
         ) as LockFileContent
 
         // Only delete if we own this lock (matching lockId)
@@ -2089,7 +2091,7 @@ export class R2PackStorage {
         expiresAt: newExpiresAt
       }
 
-      const lockData = new TextEncoder().encode(JSON.stringify(updatedContent))
+      const lockData = encoder.encode(JSON.stringify(updatedContent))
 
       // Update with conditional write using etag
       try {
@@ -2146,7 +2148,7 @@ export class R2PackStorage {
       if (lockObj) {
         try {
           const content = JSON.parse(
-            new TextDecoder().decode(new Uint8Array(await lockObj.arrayBuffer()))
+            decoder.decode(new Uint8Array(await lockObj.arrayBuffer()))
           ) as LockFileContent
 
           if (content.expiresAt <= now) {
@@ -2278,7 +2280,7 @@ function serializeMultiPackIndex(midx: MultiPackIndex): Uint8Array {
 
   let packIdsSize = 0
   for (const packId of midx.packIds) {
-    packIdsSize += 4 + new TextEncoder().encode(packId).length
+    packIdsSize += 4 + encoder.encode(packId).length
   }
 
   const entriesSize = midx.entries.length * 52
@@ -2305,7 +2307,6 @@ function serializeMultiPackIndex(midx: MultiPackIndex): Uint8Array {
   offset += 4
 
   // Pack IDs
-  const encoder = new TextEncoder()
   for (const packId of midx.packIds) {
     const encoded = encoder.encode(packId)
     view.setUint32(offset, encoded.length, false)
@@ -2568,7 +2569,6 @@ export function parseMultiPackIndex(data: Uint8Array): MultiPackIndex {
   offset += 4
 
   // Read pack IDs
-  const decoder = new TextDecoder()
   const packIds: string[] = []
   for (let i = 0; i < packCount; i++) {
     const len = view.getUint32(offset, false)

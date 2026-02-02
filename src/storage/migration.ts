@@ -370,6 +370,7 @@ export const DEFAULT_LOOSE_PREFIX = 'objects/'
 export const DEFAULT_BUNDLE_PREFIX = 'bundles/'
 
 /** Key prefix for migration checkpoints */
+const decoder = new TextDecoder()
 const CHECKPOINT_PREFIX = 'migration:checkpoint:'
 
 /** Key prefix for migration locks */
@@ -834,7 +835,7 @@ export class LooseToBundleMigrator {
         MigrationErrorCode.READ_FAILED
       )
     }
-    const header = new TextDecoder().decode(data.slice(0, nullIndex))
+    const header = decoder.decode(data.slice(0, nullIndex))
     const [type] = header.split(' ')
 
     // Initialize bundle if needed

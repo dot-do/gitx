@@ -38,6 +38,8 @@ import { generatePackfile } from '../wire/upload-pack'
 // Default Server Capabilities
 // ============================================================================
 
+const decoder = new TextDecoder()
+
 const DEFAULT_SERVER_CAPABILITIES: ServerCapabilities = {
   sideBand64k: true,
   thinPack: true,
@@ -238,7 +240,7 @@ export class DORepositoryProvider implements RepositoryProvider {
         const obj = await objectStore.getObject(sha)
         if (!obj || obj.type !== 'commit') return []
 
-        const text = new TextDecoder().decode(obj.data)
+        const text = decoder.decode(obj.data)
         const parents: string[] = []
         const regex = /^parent ([0-9a-f]{40})/gm
         let match
@@ -282,7 +284,7 @@ export class DORepositoryProvider implements RepositoryProvider {
 
           if (obj.type === 'commit') {
             // Extract tree SHA
-            const text = new TextDecoder().decode(obj.data)
+            const text = decoder.decode(obj.data)
             const treeMatch = text.match(/^tree ([0-9a-f]{40})/m)
             if (treeMatch) {
               queue.push(treeMatch[1]!)
@@ -300,7 +302,7 @@ export class DORepositoryProvider implements RepositoryProvider {
               queue.push(entry.sha)
             }
           } else if (obj.type === 'tag') {
-            const text = new TextDecoder().decode(obj.data)
+            const text = decoder.decode(obj.data)
             const objMatch = text.match(/^object ([0-9a-f]{40})/m)
             if (objMatch) {
               queue.push(objMatch[1]!)
@@ -332,13 +334,13 @@ function parseTreeData(data: Uint8Array): { mode: string; name: string; sha: str
     const spaceIdx = data.indexOf(0x20, offset)
     if (spaceIdx === -1) break
 
-    const mode = new TextDecoder().decode(data.slice(offset, spaceIdx))
+    const mode = decoder.decode(data.slice(offset, spaceIdx))
 
     // Find the null byte after name
     const nullIdx = data.indexOf(0x00, spaceIdx + 1)
     if (nullIdx === -1) break
 
-    const name = new TextDecoder().decode(data.slice(spaceIdx + 1, nullIdx))
+    const name = decoder.decode(data.slice(spaceIdx + 1, nullIdx))
 
     // Next 20 bytes are the binary SHA
     const shaBytes = data.slice(nullIdx + 1, nullIdx + 21)

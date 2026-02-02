@@ -1423,6 +1423,9 @@ export class CDCEventCapture {
 // Parquet Schema
 // ============================================================================
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /**
  * Default field definitions for CDC event Parquet schema.
  * @internal
@@ -1635,8 +1638,6 @@ export class ParquetTransformer {
   async toParquetBuffer(batch: ParquetBatch): Promise<Uint8Array> {
     // Build a simplified Parquet-like buffer
     // Real implementation would use a proper Parquet library
-    const encoder = new TextEncoder()
-
     // Magic bytes
     const magic = encoder.encode('PAR1')
 
@@ -2563,7 +2564,7 @@ export function serializeEvent(event: CDCEvent): Uint8Array {
     }
   }
   const json = JSON.stringify(serializable)
-  return new TextEncoder().encode(json)
+  return encoder.encode(json)
 }
 
 /**
@@ -2587,7 +2588,7 @@ export function serializeEvent(event: CDCEvent): Uint8Array {
  * @see {@link serializeEvent} - Reverse operation
  */
 export function deserializeEvent(bytes: Uint8Array): CDCEvent {
-  const json = new TextDecoder().decode(bytes)
+  const json = decoder.decode(bytes)
   const parsed = JSON.parse(json)
 
   // Restore Uint8Array if data was serialized

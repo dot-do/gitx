@@ -13,6 +13,7 @@
 
 const ALGORITHM = 'SHA-256'
 const SIGNATURE_PREFIX = 'sha256='
+const encoder = new TextEncoder()
 
 // ============================================================================
 // Signature Verification
@@ -69,7 +70,6 @@ export async function verifyGitHubSignature(
 
   try {
     // Import the secret as a CryptoKey
-    const encoder = new TextEncoder()
     const key = await crypto.subtle.importKey(
       'raw',
       encoder.encode(secret),
@@ -185,7 +185,6 @@ export async function createGitHubSignature(
   payload: string,
   secret: string
 ): Promise<string> {
-  const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),

@@ -41,6 +41,9 @@ import {
  * Blobs smaller than this will be packed together into super-chunks.
  * Default: 64KB (blobs under 64KB can be efficiently packed)
  */
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 export const DEFAULT_COMPACTION_THRESHOLD = 64 * 1024 // 64KB
 
 /**
@@ -214,14 +217,14 @@ export function getCompactionIndexKey(sha: string): string {
  */
 export function encodeSuperChunkMetadata(metadata: SuperChunkMetadata): Uint8Array {
   const json = JSON.stringify(metadata)
-  return new TextEncoder().encode(json)
+  return encoder.encode(json)
 }
 
 /**
  * Decode super-chunk metadata from bytes.
  */
 export function decodeSuperChunkMetadata(data: Uint8Array): SuperChunkMetadata {
-  const json = new TextDecoder().decode(data)
+  const json = decoder.decode(data)
   return JSON.parse(json) as SuperChunkMetadata
 }
 
@@ -230,14 +233,14 @@ export function decodeSuperChunkMetadata(data: Uint8Array): SuperChunkMetadata {
  */
 export function encodeIndexEntry(entry: CompactionIndexEntry): Uint8Array {
   const json = JSON.stringify(entry)
-  return new TextEncoder().encode(json)
+  return encoder.encode(json)
 }
 
 /**
  * Decode a compaction index entry from bytes.
  */
 export function decodeIndexEntry(data: Uint8Array): CompactionIndexEntry {
-  const json = new TextDecoder().decode(data)
+  const json = decoder.decode(data)
   return JSON.parse(json) as CompactionIndexEntry
 }
 
@@ -278,7 +281,7 @@ export function packSuperChunk(
     blobCount: blobs.length,
     totalSize: totalDataSize,
   })
-  const headerBytes = new TextEncoder().encode(headerJson + '\0')
+  const headerBytes = encoder.encode(headerJson + '\0')
 
   // Allocate super-chunk buffer
   const superChunkData = new Uint8Array(headerBytes.length + totalDataSize)

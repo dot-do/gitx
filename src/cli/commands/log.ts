@@ -27,6 +27,8 @@ import type { CommandContext } from '../index'
 import type { FSAdapter } from '../fs-adapter'
 import { parseCommit } from '../../types/objects'
 
+const encoder = new TextEncoder()
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -367,7 +369,7 @@ export async function getLog(
 
     // Parse commit
     const headerAndData = new Uint8Array(obj.data.length + 100)
-    const header = new TextEncoder().encode(`commit ${obj.data.length}\0`)
+    const header = encoder.encode(`commit ${obj.data.length}\0`)
     headerAndData.set(header)
     headerAndData.set(obj.data, header.length)
 

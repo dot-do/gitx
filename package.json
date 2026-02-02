@@ -93,6 +93,7 @@
     "shiki": "^1.24.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",
+    "miniflare": "^3.20241106.0",
     "wrangler": "^3.99.0"
   },
   "dependencies": {
@@ -110,7 +111,6 @@
     "hyparquet-writer": "file:../hyparquet-writer",
     "lz4": "^0.6.5",
     "lz4js": "^0.2.0",
-    "miniflare": "^3.20241106.0",
     "pako": "^2.1.0",
     "react": "^18.2.0"
   }

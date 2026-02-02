@@ -37,6 +37,8 @@
 import { DurableObjectStorage } from './schema'
 import { ReadWriteLock } from '../utils/async-mutex'
 
+const encoder = new TextEncoder()
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -419,7 +421,7 @@ export class WALManager {
     )
 
     // Append TX_BEGIN entry to WAL
-    await this.append('TX_BEGIN', new TextEncoder().encode(JSON.stringify({ txId })), txId)
+    await this.append('TX_BEGIN', encoder.encode(JSON.stringify({ txId })), txId)
 
     return txId
   }
@@ -463,7 +465,7 @@ export class WALManager {
     }
 
     // Append TX_COMMIT entry to WAL
-    await this.append('TX_COMMIT', new TextEncoder().encode(JSON.stringify({ txId: transactionId })), transactionId)
+    await this.append('TX_COMMIT', encoder.encode(JSON.stringify({ txId: transactionId })), transactionId)
 
     // Update transaction state
     tx.state = 'COMMITTED'
@@ -524,7 +526,7 @@ export class WALManager {
     )
 
     // Append TX_ROLLBACK entry to WAL
-    await this.append('TX_ROLLBACK', new TextEncoder().encode(JSON.stringify({ txId: transactionId })), transactionId)
+    await this.append('TX_ROLLBACK', encoder.encode(JSON.stringify({ txId: transactionId })), transactionId)
 
     // Update transaction state
     tx.state = 'ROLLED_BACK'

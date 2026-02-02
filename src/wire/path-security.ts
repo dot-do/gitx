@@ -30,16 +30,15 @@
  * ```
  */
 
+import { WireError } from '../errors'
+
 /**
  * Error thrown when a path security violation is detected.
  */
-export class PathSecurityError extends Error {
-  readonly code: string
-
+export class PathSecurityError extends WireError {
   constructor(message: string, code: string = 'PATH_SECURITY_VIOLATION') {
-    super(message)
+    super(message, code as any)
     this.name = 'PathSecurityError'
-    this.code = code
   }
 }
 

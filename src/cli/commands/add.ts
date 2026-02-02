@@ -33,6 +33,8 @@ import pako from 'pako'
 import type { CommandContext } from '../index'
 import { hashObjectStreamingHex } from '../../utils/sha1'
 
+const encoder = new TextEncoder()
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -337,7 +339,7 @@ async function storeBlob(gitDir: string, sha: string, content: Uint8Array): Prom
 
   // Create blob content with header
   const header = `blob ${content.length}\0`
-  const headerBytes = new TextEncoder().encode(header)
+  const headerBytes = encoder.encode(header)
   const combined = new Uint8Array(headerBytes.length + content.length)
   combined.set(headerBytes, 0)
   combined.set(content, headerBytes.length)

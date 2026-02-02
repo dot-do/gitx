@@ -70,6 +70,8 @@ import {
   DEFAULT_MIN_DELTA_SIZE
 } from './utils'
 
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -563,7 +565,6 @@ export function computeObjectDependencies(objects: PackableObject[]): ObjectDepe
   }
 
   // Parse commit and tree objects to find dependencies
-  const decoder = new TextDecoder()
   for (const obj of objects) {
     if (obj.type === PackObjectType.OBJ_COMMIT) {
       // Parse commit to find tree and parent references

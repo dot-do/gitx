@@ -88,6 +88,7 @@ export interface LfsPointer {
 // Encoding
 // ============================================================================
 
+const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 /**
@@ -486,7 +487,6 @@ export function decodeGitObject(
         }
       }
       // Fallback: if it was somehow stored differently
-      const encoder = new TextEncoder()
       return { sha, type, size, path, storage, content: encoder.encode(String(decoded)) }
     }
 

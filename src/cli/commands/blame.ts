@@ -159,6 +159,7 @@ export interface LineRange {
 // Helper Functions
 // ============================================================================
 
+const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 /**
@@ -234,7 +235,7 @@ function extensionToLanguage(ext: string): string {
  */
 function parseCommitObject(obj: FSObject): CommitObject {
   // Build the full git object format: "commit <size>\0<data>"
-  const header = new TextEncoder().encode(`commit ${obj.data.length}\0`)
+  const header = encoder.encode(`commit ${obj.data.length}\0`)
   const fullData = new Uint8Array(header.length + obj.data.length)
   fullData.set(header)
   fullData.set(obj.data, header.length)
@@ -245,7 +246,7 @@ function parseCommitObject(obj: FSObject): CommitObject {
  * Parse a tree object from raw data
  */
 function parseTreeObject(obj: FSObject): TreeObject {
-  const header = new TextEncoder().encode(`tree ${obj.data.length}\0`)
+  const header = encoder.encode(`tree ${obj.data.length}\0`)
   const fullData = new Uint8Array(header.length + obj.data.length)
   fullData.set(header)
   fullData.set(obj.data, header.length)

@@ -380,6 +380,9 @@ export const S_IFLNK = 0o120000 // Symbolic link
 /**
  * SQL schema for filesystem metadata.
  */
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -809,7 +812,7 @@ export class FsModule {
     this.sql.exec('UPDATE files SET atime = ? WHERE id = ?', Date.now(), file.id)
 
     if (options?.encoding) {
-      return new TextDecoder().decode(result)
+      return decoder.decode(result)
     }
 
     return result
@@ -848,7 +851,7 @@ export class FsModule {
     }
 
     // Convert data to bytes
-    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    const bytes = typeof data === 'string' ? encoder.encode(data) : data
 
     // Determine tier
     const tier = options?.tier ?? this.selectTier(bytes.length)

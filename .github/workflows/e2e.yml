@@ -1,0 +1,43 @@
+name: E2E Tests
+
+on:
+  schedule:
+    # Weekly on Sunday at 3am UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ['20']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Node.js tests
+        run: pnpm test:node
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+        continue-on-error: true
+        env:
+          GITX_TEST_SERVER: ${{ secrets.GITX_TEST_SERVER }}
+          GITX_TEST_TOKEN: ${{ secrets.GITX_TEST_TOKEN }}

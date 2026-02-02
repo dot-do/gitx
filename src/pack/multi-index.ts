@@ -53,6 +53,9 @@
 
 import { parsePackIndex, type PackIndex, type PackIndexEntry } from './index'
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /**
  * Location of an object within a pack file.
  */
@@ -707,8 +710,6 @@ export class MultiIndexManager {
    * @returns Serialized index data
    */
   serialize(): Uint8Array {
-    const encoder = new TextEncoder()
-
     // Calculate total size
     const headerSize = 16 // signature + version + packCount + entryCount
     const packIdsData = Array.from(this._registry.packs.keys())
@@ -754,7 +755,7 @@ export class MultiIndexManager {
       data.set(packIdData, offset)
       offset += packIdData.length
 
-      const packId = new TextDecoder().decode(packIdData)
+      const packId = decoder.decode(packIdData)
       packIdToIndex.set(packId, packIndex++)
     }
 
@@ -802,7 +803,6 @@ export class MultiIndexManager {
   static deserialize(data: Uint8Array, config?: MultiIndexConfig): MultiIndexManager {
     const manager = new MultiIndexManager(config)
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
-    const decoder = new TextDecoder()
     let offset = 0
 
     // Verify signature

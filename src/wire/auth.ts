@@ -47,6 +47,8 @@
  * ```
  */
 
+const encoder = new TextEncoder()
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -488,7 +490,7 @@ export function createUnauthorizedResponse(
       'Content-Type': 'text/plain',
       'WWW-Authenticate': wwwAuthenticate,
     },
-    body: new TextEncoder().encode(message),
+    body: encoder.encode(message),
   }
 }
 

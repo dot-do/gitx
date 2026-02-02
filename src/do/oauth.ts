@@ -151,6 +151,7 @@ export interface OAuthMiddlewareOptions {
 // ============================================================================
 
 /** Cookie names to check for auth tokens */
+const encoder = new TextEncoder()
 const AUTH_COOKIE_NAMES = ['auth_token', 'session_token']
 
 /** Default session cache TTL (5 minutes) */
@@ -465,7 +466,6 @@ async function verifySignature(
   algorithm: string
 ): Promise<boolean> {
   try {
-    const encoder = new TextEncoder()
     const dataBuffer = encoder.encode(data)
 
     // Decode signature from base64url

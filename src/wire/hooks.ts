@@ -33,6 +33,8 @@ export type HookMode = 'sync' | 'async'
  */
 export type HookPoint = 'pre-receive' | 'update' | 'post-receive' | 'post-update'
 
+const encoder = new TextEncoder()
+
 /**
  * Base configuration for all hook types.
  */
@@ -972,7 +974,6 @@ export class HookExecutor {
    * @returns Hexadecimal signature string
    */
   private async signPayload(payload: string, secret: string): Promise<string> {
-    const encoder = new TextEncoder()
     const key = await crypto.subtle.importKey(
       'raw',
       encoder.encode(secret),

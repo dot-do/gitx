@@ -41,6 +41,8 @@ import type { GitBackend, GitObject } from '../core/backend'
 import type { ObjectType } from '../types/objects'
 import * as pako from 'pako'
 
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -583,7 +585,6 @@ function buildUploadPackRequest(wants: string[], options?: CloneOptions): string
  * @internal
  */
 export function extractPackData(response: Uint8Array): Uint8Array {
-  const decoder = new TextDecoder()
   let offset = 0
 
   // Skip NAK/ACK lines and find the start of pack data
@@ -664,7 +665,6 @@ export function extractPackData(response: Uint8Array): Uint8Array {
  * @internal
  */
 function demultiplexSideBand(response: Uint8Array, startOffset: number): Uint8Array {
-  const decoder = new TextDecoder()
   const packParts: Uint8Array[] = []
   let offset = startOffset
 

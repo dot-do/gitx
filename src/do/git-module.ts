@@ -58,6 +58,9 @@ export type { R2BucketLike, R2ObjectLike, R2ObjectsLike } from '../types/interfa
 import type { R2BucketLike } from '../types/interfaces'
 import type { ObjectType } from '../types/objects'
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /**
  * Database storage interface for GitModule persistence.
  * Provides access to the git, git_branches, and git_content tables.
@@ -609,7 +612,7 @@ export class GitModule {
         objectsFetched++
 
         // Parse commit to get tree SHA
-        const commitContent = new TextDecoder().decode(commitObject)
+        const commitContent = decoder.decode(commitObject)
         const treeMatch = commitContent.match(/^tree ([a-f0-9]{40})/m)
 
         if (treeMatch) {
@@ -788,8 +791,6 @@ export class GitModule {
       throw new Error('Nothing to commit - no files staged')
     }
 
-    const encoder = new TextEncoder()
-
     // Create blob objects for each staged file
     const treeEntries: Array<{ mode: string; name: string; sha: string }> = []
 
@@ -877,7 +878,6 @@ export class GitModule {
    * Format: mode name\0sha20bytes (repeated)
    */
   private buildTreeContent(entries: Array<{ mode: string; name: string; sha: string }>): Uint8Array {
-    const encoder = new TextEncoder()
     const parts: Uint8Array[] = []
 
     for (const entry of entries) {
@@ -1005,8 +1005,6 @@ export class GitModule {
     // Parse tree entries
     // Tree format: mode name\0sha20bytes (repeated)
     let offset = 0
-    const decoder = new TextDecoder()
-
     while (offset < treeData.length) {
       // Find the null byte
       let nullIdx = offset

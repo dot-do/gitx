@@ -35,6 +35,9 @@
 import { Author, CommitObject } from '../types/objects'
 import type { BasicObjectStore as ObjectStore } from '../types/storage'
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -713,7 +716,6 @@ export function addSignatureToCommit(
  * @internal
  */
 function extractTreeFromCommitData(data: Uint8Array): string | null {
-  const decoder = new TextDecoder()
   const content = decoder.decode(data)
   const match = content.match(/tree ([0-9a-f]{40})/)
   return match ? match[1] : null
@@ -877,7 +879,6 @@ function serializeCommitContent(commit: {
   message: string
   gpgsig?: string
 }): Uint8Array {
-  const encoder = new TextEncoder()
   const lines: string[] = []
 
   lines.push(`tree ${commit.tree}`)
@@ -1068,7 +1069,6 @@ function parseStoredCommit(data: Uint8Array): {
   committer: Author
   message: string
 } {
-  const decoder = new TextDecoder()
   const content = decoder.decode(data)
 
   // Try to parse as JSON first (for test compatibility)

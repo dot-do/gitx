@@ -735,6 +735,7 @@ export interface MCPTool {
  * Internal registry for custom-registered tools.
  * @internal
  */
+const decoder = new TextDecoder()
 const toolRegistry: Map<string, MCPTool> = new Map()
 
 /**
@@ -2454,7 +2455,7 @@ export const gitTools: MCPTool[] = [
               }
             }
 
-            const content = new TextDecoder().decode(blob)
+            const content = decoder.decode(blob)
             return {
               content: [{ type: 'text', text: format === 'raw' ? content : content }],
               isError: false,
@@ -2517,7 +2518,7 @@ export const gitTools: MCPTool[] = [
 
                   const blob = await ctx.objectStore.getBlob(entry.sha)
                   if (blob) {
-                    const content = new TextDecoder().decode(blob)
+                    const content = decoder.decode(blob)
                     const contentLines = content.split('\n')
                     lines.push(`@@ -0,0 +1,${contentLines.length} @@`)
                     for (const contentLine of contentLines) {
@@ -2766,7 +2767,7 @@ export const gitTools: MCPTool[] = [
             }
           }
 
-          const content = new TextDecoder().decode(blob)
+          const content = decoder.decode(blob)
           const lines = content.split('\n')
           if (lines.length > 0 && lines[lines.length - 1] === '') {
             lines.pop()
@@ -3167,7 +3168,7 @@ export const gitTools: MCPTool[] = [
 
           // Show content based on type
           if (obj.type === 'blob') {
-            const content = new TextDecoder().decode(obj.data)
+            const content = decoder.decode(obj.data)
             return {
               content: [{ type: 'text', text: content }],
               isError: false,
@@ -3227,7 +3228,7 @@ export const gitTools: MCPTool[] = [
 
           // Default - show raw data
           return {
-            content: [{ type: 'text', text: new TextDecoder().decode(obj.data) }],
+            content: [{ type: 'text', text: decoder.decode(obj.data) }],
             isError: false,
           }
         } catch (error) {

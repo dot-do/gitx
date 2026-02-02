@@ -49,6 +49,9 @@ import { encodePktLine, MAX_PKT_LINE_DATA } from './pkt-line'
 import { PackObjectType, encodeTypeAndSize } from '../pack/format'
 import type { ObjectType } from '../types/objects'
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -264,7 +267,6 @@ export function createSideBandTransform(
   options: SideBandOptions = {}
 ): TransformStream<Uint8Array, Uint8Array> {
   const maxPayload = options.maxPayloadSize ?? MAX_SIDEBAND_PAYLOAD
-  const encoder = new TextEncoder()
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -314,7 +316,6 @@ export function createSideBandExtractTransform(options: {
   onProgress?: (message: string) => void
   onError?: (message: string) => void
 } = {}): TransformStream<Uint8Array, Uint8Array> {
-  const decoder = new TextDecoder()
   let buffer = new Uint8Array(0)
 
   return new TransformStream<Uint8Array, Uint8Array>({
@@ -382,7 +383,6 @@ export function createSideBandExtractTransform(options: {
  * ```
  */
 export function createPktLineTransform(): TransformStream<Uint8Array, Uint8Array> {
-  const encoder = new TextEncoder()
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -476,7 +476,6 @@ export class StreamingPackWriter {
    */
   private writeHeader(): void {
     const header = new Uint8Array(12)
-    const encoder = new TextEncoder()
 
     // PACK signature
     header.set(encoder.encode('PACK'), 0)
@@ -787,7 +786,6 @@ export function createStreamingPackReader(
 
       // Parse header if not done
       if (!headerParsed && buffer.length >= 12) {
-        const decoder = new TextDecoder()
         const signature = decoder.decode(buffer.subarray(0, 4))
 
         if (signature !== 'PACK') {
@@ -989,7 +987,7 @@ function isObjectType(type: PackTypeString): type is ObjectType {
  */
 function computeObjectSha(type: ObjectType, data: Uint8Array): string {
   const header = `${type} ${data.length}\0`
-  const headerBytes = new TextEncoder().encode(header)
+  const headerBytes = encoder.encode(header)
   const combined = new Uint8Array(headerBytes.length + data.length)
   combined.set(headerBytes, 0)
   combined.set(data, headerBytes.length)

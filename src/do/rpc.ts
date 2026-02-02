@@ -31,6 +31,9 @@ import {
 import type { GitScope, OAuthContext } from './oauth'
 import type { ObjectType, TreeEntry as CoreTreeEntry, Author } from '../types/objects'
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 // Re-export canonical types for convenience
 export type { ObjectType, CoreTreeEntry, Author }
 
@@ -572,7 +575,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
         if (this.serializer) {
           data = this.serializer.decode(event.data)
         } else {
-          const text = new TextDecoder().decode(event.data)
+          const text = decoder.decode(event.data)
           data = JSON.parse(text)
         }
       } else if (typeof event.data === 'string') {
@@ -944,7 +947,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
       return value
     })
 
-    const jsonBytes = new TextEncoder().encode(jsonPart)
+    const jsonBytes = encoder.encode(jsonPart)
     const binaryParts = this.extractBinaryParts(msg)
 
     let totalBinaryLength = 0
@@ -1118,7 +1121,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
     lines.push(message)
 
     const content = lines.join('\n')
-    const data = new TextEncoder().encode(content)
+    const data = encoder.encode(content)
 
     // Generate SHA
     const sha = await this.hashObject('commit', data)
@@ -1219,7 +1222,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
 
     // Determine type from content (simplified)
     let type: 'blob' | 'tree' | 'commit' | 'tag' = 'blob'
-    const content = new TextDecoder().decode(data)
+    const content = decoder.decode(data)
     if (content.startsWith('tree ')) type = 'commit'
     else if (content.includes('\0')) type = 'tree'
 
@@ -1284,7 +1287,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
     const parts: Uint8Array[] = []
 
     for (const entry of options.entries) {
-      const mode = new TextEncoder().encode(`${entry.mode} ${entry.name}\0`)
+      const mode = encoder.encode(`${entry.mode} ${entry.name}\0`)
       const shaBytes = this.hexToBytes(entry.sha)
       parts.push(new Uint8Array([...mode, ...shaBytes]))
     }
@@ -1323,7 +1326,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
     }
 
     const content = lines.join('\n')
-    const data = new TextEncoder().encode(content)
+    const data = encoder.encode(content)
 
     const sha = await this.hashObject('tag', data)
     await this.state.storage.put(`objects/${sha}`, data)
@@ -1352,7 +1355,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
 
   private async merge(options: { source: string; target: string; message?: string }): Promise<{ sha: string; conflicts: string[] }> {
     // Simplified merge - just create a merge commit
-    const sha = await this.hashObject('commit', new TextEncoder().encode(`merge ${options.source} into ${options.target}`))
+    const sha = await this.hashObject('commit', encoder.encode(`merge ${options.source} into ${options.target}`))
     return { sha, conflicts: [] }
   }
 
@@ -1459,7 +1462,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
   // ============================================================================
 
   private async hashObject(type: string, data: Uint8Array): Promise<string> {
-    const header = new TextEncoder().encode(`${type} ${data.length}\0`)
+    const header = encoder.encode(`${type} ${data.length}\0`)
     const fullData = new Uint8Array(header.length + data.length)
     fullData.set(header)
     fullData.set(data, header.length)

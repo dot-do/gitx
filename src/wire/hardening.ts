@@ -43,6 +43,9 @@ import { WireError } from '../errors'
 // Constants
 // ============================================================================
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /** SHA-1 hex pattern for validation */
 const SHA1_REGEX = /^[0-9a-f]{40}$/i
 
@@ -662,7 +665,6 @@ export function validatePacket(packet: Uint8Array): ValidationResult {
   }
 
   // Decode length prefix
-  const decoder = new TextDecoder()
   const hexLength = decoder.decode(packet.slice(0, 4))
 
   // Check for special packets
@@ -1059,7 +1061,6 @@ export function withErrorRecovery<T, R>(
  * @returns Error response bytes
  */
 export function createErrorResponse(error: Error, useSideBand: boolean = false): Uint8Array {
-  const encoder = new TextEncoder()
   let message = 'ERR '
 
   if (error instanceof NegotiationLimitError) {

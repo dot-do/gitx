@@ -35,6 +35,8 @@ import type { GitBackend, Ref } from './backend'
 import type { ObjectType, CommitObject, TreeEntry, Author } from '../types/objects'
 import { GitCommit, parseTreeEntries } from '../../core/objects'
 
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Repository Interface
 // ============================================================================
@@ -223,7 +225,7 @@ export class GitBackendRepository implements Repository {
     const obj = await this.backend.readObject(sha)
     if (!obj || obj.type !== 'commit') return null
     try {
-      const content = new TextDecoder().decode(obj.data)
+      const content = decoder.decode(obj.data)
       const gitCommit = GitCommit.fromContent(content)
       return {
         type: 'commit',

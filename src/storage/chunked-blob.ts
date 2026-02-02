@@ -32,6 +32,8 @@ import {
 export { CHUNK_SIZE, CHUNKED_BLOB_PREFIX }
 export type { ChunkedWriteResult, ChunkMetadata }
 
+const encoder = new TextEncoder()
+
 /**
  * Interface for chunked blob storage operations.
  */
@@ -118,7 +120,7 @@ interface BlobRecord {
  * Git format: "blob {size}\0{content}"
  */
 async function computeBlobSha(content: Uint8Array): Promise<string> {
-  const header = new TextEncoder().encode(`blob ${content.length}\0`)
+  const header = encoder.encode(`blob ${content.length}\0`)
   const data = new Uint8Array(header.length + content.length)
   data.set(header)
   data.set(content, header.length)

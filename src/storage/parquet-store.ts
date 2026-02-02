@@ -25,7 +25,7 @@
 import { parquetWriteBuffer } from 'hyparquet-writer'
 import { parquetReadObjects } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
-import { assertValidSha, isValidSha } from '../types/objects'
+import { assertValidSha, isValidSha, isValidObjectType } from '../types/objects'
 import type { CASBackend, StoredObjectResult } from './backend'
 import {
   encodeObjectBatch,
@@ -85,9 +85,6 @@ interface CompactionJournalEntry {
 // Type Guards
 // ============================================================================
 
-function isValidObjectType(t: unknown): t is ObjectType {
-  return t === 'blob' || t === 'tree' || t === 'commit' || t === 'tag'
-}
 function isValidStorageMode(s: unknown): s is StorageMode {
   return s === 'inline' || s === 'r2' || s === 'lfs'
 }
@@ -95,6 +92,8 @@ function isValidStorageMode(s: unknown): s is StorageMode {
 // ============================================================================
 // Constants
 // ============================================================================
+
+const encoder = new TextEncoder()
 
 /** Default maximum objects to buffer before flushing to Parquet */
 const DEFAULT_FLUSH_THRESHOLD = 1000
@@ -412,7 +411,7 @@ export class ParquetStore implements CASBackend {
       }
 
       // Validate object type
-      if (!isValidObjectType(row.type)) {
+      if (!isValidObjectType(row.type as string)) {
         console.warn(`[ParquetStore] WAL recovery: skipping invalid type ${row.type} for SHA ${row.sha}`)
         // Delete invalid WAL entry
         this.sql.sql.exec(`DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE id = ?`, row.id)
@@ -753,7 +752,7 @@ export class ParquetStore implements CASBackend {
         const sortedShas = objects.map(o => o.sha).sort()
         const shaDigest = await crypto.subtle.digest(
           'SHA-256',
-          new TextEncoder().encode(sortedShas.join(''))
+          encoder.encode(sortedShas.join(''))
         )
         const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
           .map(b => b.toString(16).padStart(2, '0'))
@@ -881,7 +880,7 @@ export class ParquetStore implements CASBackend {
             if (this.tombstones.has(sha) || seenShas.has(sha)) continue
             seenShas.add(sha)
 
-            const rawType = row['type']
+            const rawType = row['type'] as string
             const rawStorage = row['storage']
             if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) continue
             const type = rawType
@@ -892,7 +891,7 @@ export class ParquetStore implements CASBackend {
               const data = rawData instanceof Uint8Array
                 ? rawData
                 : typeof rawData === 'string'
-                  ? new TextEncoder().encode(rawData)
+                  ? encoder.encode(rawData)
                   : new Uint8Array(rawData as ArrayBuffer)
               allObjects.push({ sha, type, data })
             } else {
@@ -1035,7 +1034,7 @@ export class ParquetStore implements CASBackend {
     const row = allRows.find(r => r['sha'] === sha)
     if (!row) return null
 
-    const rawType = row['type']
+    const rawType = row['type'] as string
     const rawStorage = row['storage']
     if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) return null
     const type = rawType
@@ -1047,7 +1046,7 @@ export class ParquetStore implements CASBackend {
       const content = rawData instanceof Uint8Array
         ? rawData
         : typeof rawData === 'string'
-          ? new TextEncoder().encode(rawData)
+          ? encoder.encode(rawData)
           : new Uint8Array(rawData as ArrayBufferLike)
       return { type, content }
     }

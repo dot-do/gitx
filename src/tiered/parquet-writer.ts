@@ -1647,8 +1647,8 @@ export async function addRowGroup(
  */
 export function getMetadata(bytes: Uint8Array): ParquetMetadata {
   // Verify magic bytes
-  const startMagic = new TextDecoder().decode(bytes.slice(0, 4))
-  const endMagic = new TextDecoder().decode(bytes.slice(-4))
+  const startMagic = decoder.decode(bytes.slice(0, 4))
+  const endMagic = decoder.decode(bytes.slice(-4))
 
   if (startMagic !== 'PAR1' || endMagic !== 'PAR1') {
     throw new ParquetError('Invalid Parquet file: missing magic bytes', 'INVALID_MAGIC')
@@ -1679,7 +1679,7 @@ export function getMetadata(bytes: Uint8Array): ParquetMetadata {
   }
 
   // Parse metadata JSON
-  const metadataJson = new TextDecoder().decode(metadataBytes)
+  const metadataJson = decoder.decode(metadataBytes)
   const internal: InternalMetadata = JSON.parse(metadataJson)
 
   // Build column metadata map

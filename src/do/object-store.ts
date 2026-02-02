@@ -94,14 +94,6 @@ const LARGE_BLOB_THRESHOLD = 1024 * 1024
  */
 const STREAM_CHUNK_SIZE = 64 * 1024
 
-/**
- * Chunk size for blob storage (2MB).
- * DO SQLite charges per row read/write, not per-byte.
- * By chunking large blobs into 2MB segments, we optimize storage costs.
- * Objects >= BLOB_CHUNK_SIZE will be chunked.
- * @deprecated Use CHUNK_SIZE from chunk-utils.ts instead
- */
-export const BLOB_CHUNK_SIZE = CHUNK_SIZE
 
 // ============================================================================
 // Types and Interfaces
@@ -1115,10 +1107,10 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     // Check object_index to see if this is a chunked blob
     const indexResult = this.storage.sql.exec(
-      'SELECT chunked, chunk_count FROM object_index WHERE sha = ?',
+      'SELECT type, chunked, chunk_count FROM object_index WHERE sha = ?',
       sha
     )
-    const indexRows = typedQuery<{ chunked: number; chunk_count: number }>(indexResult, validateRow(['chunked', 'chunk_count']))
+    const indexRows = typedQuery<{ type: string; chunked: number; chunk_count: number }>(indexResult, validateRow(['type', 'chunked', 'chunk_count']))
 
     // Check if object exists (either in index or directly in objects table)
     const exists = await this.hasObject(sha)
@@ -1128,8 +1120,9 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     this.log('debug', `Deleting object: ${sha}`)
 
-    // Log to WAL
-    await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0))
+    // Log to WAL with actual object type
+    const objectType = indexRows.length > 0 ? indexRows[0].type : 'blob'
+    await this.logToWAL('DELETE', sha, objectType, new Uint8Array(0))
 
     // If this is a chunked blob, delete all chunks using shared chunk-utils
     if (indexRows.length > 0 && indexRows[0].chunked === 1) {

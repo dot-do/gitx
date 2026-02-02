@@ -55,6 +55,8 @@ import { BINARY_CHECK_BYTES } from '../constants'
 import { assertValidSha } from '../types/objects'
 import type { TreeDiffObjectStore as ObjectStore } from '../types/storage'
 
+const decoder = new TextDecoder()
+
 /**
  * Status of a file in a diff.
  *
@@ -234,8 +236,8 @@ export async function calculateSimilarity(
   // Use a simple character-by-character comparison for similarity
   // This is a basic approach; a more sophisticated algorithm would use
   // something like xdiff or Myers diff
-  const oldStr = new TextDecoder().decode(oldBlob)
-  const newStr = new TextDecoder().decode(newBlob)
+  const oldStr = decoder.decode(oldBlob)
+  const newStr = decoder.decode(newBlob)
 
   if (oldStr === newStr) {
     return 100

@@ -21,6 +21,8 @@ import {
 } from '../export/iceberg'
 import { COMMITS_SCHEMA, REFS_SCHEMA } from '../export/schemas'
 
+const decoder = new TextDecoder()
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -424,7 +426,7 @@ async function readCommitsFromStorage(store: SqliteObjectStore): Promise<GitComm
  */
 function parseCommitObject(sha: string, data: Uint8Array): GitCommitData | null {
   try {
-    const content = new TextDecoder().decode(data)
+    const content = decoder.decode(data)
     const lines = content.split('\n')
 
     let treeSha = ''

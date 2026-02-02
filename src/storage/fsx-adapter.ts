@@ -50,7 +50,7 @@ import * as pako from 'pako'
  */
 function createGitObject(type: string, content: Uint8Array): Uint8Array {
   const header = `${type} ${content.length}\0`
-  const headerBytes = new TextEncoder().encode(header)
+  const headerBytes = encoder.encode(header)
   const result = new Uint8Array(headerBytes.length + content.length)
   result.set(headerBytes, 0)
   result.set(content, headerBytes.length)
@@ -73,7 +73,7 @@ function parseGitObject(data: Uint8Array): { type: string; content: Uint8Array }
     throw new Error('Invalid git object: no null byte found')
   }
 
-  const headerStr = new TextDecoder().decode(data.subarray(0, nullIndex))
+  const headerStr = decoder.decode(data.subarray(0, nullIndex))
   const [type] = headerStr.split(' ')
   const content = data.subarray(nullIndex + 1)
 

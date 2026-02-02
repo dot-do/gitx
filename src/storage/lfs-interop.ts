@@ -13,6 +13,8 @@ import { parseLfsPointer, type LfsPointer } from './variant-codec'
 // Re-export for convenience
 export { parseLfsPointer, type LfsPointer }
 
+const encoder = new TextEncoder()
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -66,7 +68,7 @@ export function mapLfsOidToR2Key(oid: string, prefix = 'lfs'): string {
  */
 export function generateLfsPointerFile(oid: string, size: number): Uint8Array {
   const text = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${size}\n`
-  return new TextEncoder().encode(text)
+  return encoder.encode(text)
 }
 
 // ============================================================================

@@ -57,6 +57,9 @@
 // Protocol Constants
 // ============================================================================
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 /**
  * Length prefix size in bytes.
  *
@@ -278,12 +281,11 @@ export function encodePktLine(data: PktLineInput): string | Uint8Array {
 
   if (isPrintable) {
     // Return as string for printable content
-    return hexLength + new TextDecoder().decode(data)
+    return hexLength + decoder.decode(data)
   }
 
   // Return as Uint8Array for binary content
   const result = new Uint8Array(PKT_LINE_LENGTH_SIZE + data.length)
-  const encoder = new TextEncoder()
   result.set(encoder.encode(hexLength), 0)
   result.set(data, PKT_LINE_LENGTH_SIZE)
   return result
@@ -339,7 +341,7 @@ export function decodePktLine(input: PktLineInput): DecodedPktLine {
   if (typeof input === 'string') {
     str = input
   } else {
-    str = new TextDecoder().decode(input)
+    str = decoder.decode(input)
   }
 
   // Need at least PKT_LINE_LENGTH_SIZE bytes for length prefix
@@ -540,7 +542,7 @@ export function pktLineStream(input: PktLineInput): PktLineStreamResult {
   if (typeof input === 'string') {
     str = input
   } else {
-    str = new TextDecoder().decode(input)
+    str = decoder.decode(input)
   }
 
   let offset = 0
