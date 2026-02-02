@@ -90,3 +90,48 @@ export {
   type AuthenticationResult,
   type MemoryAuthProviderConfig,
 } from './auth-middleware'
+
+// Production Hardening
+export {
+  // Negotiation limits and context
+  getDefaultLimits,
+  createNegotiationContext,
+  validateNegotiationRound,
+  recordWants,
+  recordHaves,
+  isTimedOut,
+  getRemainingTime,
+  completeNegotiation,
+  abortNegotiation,
+  // Validation
+  validateSha,
+  validateShas,
+  validateCapabilities,
+  validateRefNameLength,
+  validatePacket,
+  safeParseWantLine,
+  safeParseHaveLine,
+  // Timeout handling
+  withTimeout,
+  createDeadlineChecker,
+  // Rate limiting
+  createInMemoryRateLimiter,
+  createNoopRateLimiterHook,
+  createRateLimiterHook,
+  // Error recovery
+  withErrorRecovery,
+  createErrorResponse as createHardeningErrorResponse,
+  // Error classes
+  MalformedPacketError,
+  NegotiationLimitError,
+  NegotiationTimeoutError,
+  // Types
+  type NegotiationLimits,
+  type NegotiationContext,
+  type ValidationResult,
+  type RateLimiterConfig,
+  type RateLimitRequest,
+  type RateLimitResult,
+  type RateLimiter,
+  type RateLimiterHook,
+} from './hardening'
