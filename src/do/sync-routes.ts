@@ -53,7 +53,10 @@ export async function handleFork(
       branch?: string
     }>()
 
-    await instance.initialize({ ns: body.ns, parent: body.parent })
+    const initOpts = body.parent
+      ? { ns: body.ns, parent: body.parent }
+      : { ns: body.ns }
+    await instance.initialize(initOpts)
 
     return c.json({ success: true })
   } catch (error) {

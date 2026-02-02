@@ -215,6 +215,7 @@ export {
 
   // Types
   type GitXFn,
+  type GitXPromise,
   type GitResult,
   type GitOptions,
   type GitContext,

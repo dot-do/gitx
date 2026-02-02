@@ -68,4 +68,28 @@ export declare function isValidMode(mode: string): boolean;
  * Validates an object type string
  */
 export declare function isValidObjectType(type: string): type is ObjectType;
+/**
+ * Validates a GitIdentity object at runtime
+ */
+export declare function isValidIdentity(identity: unknown): identity is GitIdentity;
+/**
+ * Validates a TreeEntry object at runtime
+ */
+export declare function isValidTreeEntry(entry: unknown): entry is TreeEntry;
+/**
+ * Validates BlobData at runtime
+ */
+export declare function isBlobData(data: unknown): data is BlobData;
+/**
+ * Validates TreeData at runtime
+ */
+export declare function isTreeData(data: unknown): data is TreeData;
+/**
+ * Validates CommitData at runtime
+ */
+export declare function isCommitData(data: unknown): data is CommitData;
+/**
+ * Validates TagData at runtime
+ */
+export declare function isTagData(data: unknown): data is TagData;
 //# sourceMappingURL=types.d.ts.map

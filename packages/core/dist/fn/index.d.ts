@@ -76,6 +76,50 @@ export interface GitContext {
  */
 export type GitXFn = AsyncFn<GitResult, string, GitOptions>;
 /**
+ * GitXPromise - A Promise that is also callable with options
+ *
+ * This type represents the "callable Promise" pattern used by GitX when
+ * using tagged template literals. It allows both:
+ * - Awaiting directly: `await gitx\`git status\``
+ * - Calling with options: `await gitx\`git status\`({ cwd: '/path' })`
+ *
+ * @typeParam T - The resolved value type of the promise (defaults to GitResult)
+ * @typeParam Opts - The options type accepted by the callable (defaults to GitOptions)
+ *
+ * @example
+ * ```typescript
+ * // Type can be awaited directly
+ * const result: GitResult = await gitx`git status`
+ *
+ * // Or called with options before awaiting
+ * const result: GitResult = await gitx`git status`({ cwd: '/repo' })
+ *
+ * // Both patterns have the same return type
+ * ```
+ */
+export interface GitXPromise<T = GitResult, Opts extends Record<string, unknown> = GitOptions> extends PromiseLike<T> {
+    /**
+     * Call with options to execute the command with custom configuration
+     */
+    (opts?: Opts): Promise<T>;
+    /**
+     * Attaches callbacks for the resolution and/or rejection of the Promise
+     */
+    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>;
+    /**
+     * Attaches a callback for only the rejection of the Promise
+     */
+    catch<TResult = never>(onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>;
+    /**
+     * Attaches a callback that is invoked when the Promise is settled (fulfilled or rejected)
+     */
+    finally(onfinally?: (() => void) | undefined | null): Promise<T>;
+    /**
+     * Identifies this object as a GitXPromise
+     */
+    readonly [Symbol.toStringTag]: 'GitXPromise';
+}
+/**
  * Create a GitX function with custom configuration
  *
  * @param context - Configuration context

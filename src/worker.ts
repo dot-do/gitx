@@ -9,7 +9,7 @@
  */
 
 import { Hono } from 'hono'
-import { GitRepoDO, GitRepoDOSQL } from './do/GitRepoDO'
+import { GitRepoDO, GitRepoDOSQL } from './do/git-repo-do'
 import { GitHubWebhookHandler } from './webhooks'
 import { authMiddleware } from './worker-auth'
 

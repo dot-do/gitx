@@ -61,6 +61,14 @@ import {
   OBJECT_TYPES,
   VALID_MODES,
 
+  // Runtime type guards
+  isValidIdentity,
+  isValidTreeEntry,
+  isBlobData,
+  isTreeData,
+  isCommitData,
+  isTagData,
+
   // Types
   type ObjectType,
   type GitObjectData,
@@ -1868,6 +1876,143 @@ describe('Object Type Detection', () => {
 
       expect(obj.type).toBe('tag')
       expect(obj).toBeInstanceOf(GitTag)
+    })
+
+    // Runtime type guard validation tests
+    describe('runtime type validation', () => {
+      it('should throw InvalidGitObjectDataError for invalid blob data', () => {
+        expect(() => {
+          createGitObject('blob', { content: 'not a Uint8Array' } as any)
+        }).toThrow('Invalid blob data')
+      })
+
+      it('should throw InvalidGitObjectDataError for blob with missing content', () => {
+        expect(() => {
+          createGitObject('blob', {} as any)
+        }).toThrow('Invalid blob data')
+      })
+
+      it('should throw InvalidGitObjectDataError for invalid tree entries', () => {
+        expect(() => {
+          createGitObject('tree', {
+            entries: [{ mode: 'invalid', name: 'file.txt', sha: SAMPLE_SHA }],
+          } as any)
+        }).toThrow('Invalid tree data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tree with invalid sha', () => {
+        expect(() => {
+          createGitObject('tree', {
+            entries: [{ mode: '100644', name: 'file.txt', sha: 'invalid' }],
+          } as any)
+        }).toThrow('Invalid tree data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tree with empty name', () => {
+        expect(() => {
+          createGitObject('tree', {
+            entries: [{ mode: '100644', name: '', sha: SAMPLE_SHA }],
+          } as any)
+        }).toThrow('Invalid tree data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tree with slash in name', () => {
+        expect(() => {
+          createGitObject('tree', {
+            entries: [{ mode: '100644', name: 'path/file.txt', sha: SAMPLE_SHA }],
+          } as any)
+        }).toThrow('Invalid tree data')
+      })
+
+      it('should throw InvalidGitObjectDataError for commit with invalid tree sha', () => {
+        expect(() => {
+          createGitObject('commit', {
+            tree: 'invalid',
+            author: sampleIdentity,
+            committer: sampleIdentity,
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid commit data')
+      })
+
+      it('should throw InvalidGitObjectDataError for commit with invalid author', () => {
+        expect(() => {
+          createGitObject('commit', {
+            tree: SAMPLE_SHA,
+            author: { name: 'Test', email: 'test@example.com', timestamp: 'not a number', timezone: '+0000' },
+            committer: sampleIdentity,
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid commit data')
+      })
+
+      it('should throw InvalidGitObjectDataError for commit with invalid timezone format', () => {
+        expect(() => {
+          createGitObject('commit', {
+            tree: SAMPLE_SHA,
+            author: { name: 'Test', email: 'test@example.com', timestamp: 1234567890, timezone: 'invalid' },
+            committer: sampleIdentity,
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid commit data')
+      })
+
+      it('should throw InvalidGitObjectDataError for commit with invalid parent sha', () => {
+        expect(() => {
+          createGitObject('commit', {
+            tree: SAMPLE_SHA,
+            parents: ['invalid'],
+            author: sampleIdentity,
+            committer: sampleIdentity,
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid commit data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tag with invalid object sha', () => {
+        expect(() => {
+          createGitObject('tag', {
+            object: 'invalid',
+            objectType: 'commit',
+            name: 'v1',
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid tag data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tag with invalid objectType', () => {
+        expect(() => {
+          createGitObject('tag', {
+            object: SAMPLE_SHA,
+            objectType: 'invalid',
+            name: 'v1',
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid tag data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tag with empty name', () => {
+        expect(() => {
+          createGitObject('tag', {
+            object: SAMPLE_SHA,
+            objectType: 'commit',
+            name: '',
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid tag data')
+      })
+
+      it('should throw InvalidGitObjectDataError for tag with invalid tagger', () => {
+        expect(() => {
+          createGitObject('tag', {
+            object: SAMPLE_SHA,
+            objectType: 'commit',
+            name: 'v1',
+            tagger: { name: 'Test' }, // missing required fields
+            message: 'test',
+          } as any)
+        }).toThrow('Invalid tag data')
+      })
     })
   })
 })

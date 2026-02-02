@@ -49,7 +49,7 @@ import {
   type ReaddirOptions,
   type MoveOptions,
   type CopyOptions,
-} from './FsModule'
+} from './fs-module'
 
 // ============================================================================
 // Types

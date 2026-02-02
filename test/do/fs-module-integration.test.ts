@@ -31,13 +31,13 @@ import {
   type R2ObjectLike,
   type Stats,
   type Dirent,
-} from '../../src/do/FsModule'
+} from '../../src/do/fs-module'
 import {
   withFs,
   hasFsCapability,
   type WithFsOptions,
   type WithFsCapability,
-} from '../../src/do/withFs'
+} from '../../src/do/with-fs'
 
 // ============================================================================
 // Mock Implementations

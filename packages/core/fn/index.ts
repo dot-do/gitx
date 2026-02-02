@@ -89,6 +89,61 @@ export interface GitContext {
  */
 export type GitXFn = AsyncFn<GitResult, string, GitOptions>
 
+/**
+ * GitXPromise - A Promise that is also callable with options
+ *
+ * This type represents the "callable Promise" pattern used by GitX when
+ * using tagged template literals. It allows both:
+ * - Awaiting directly: `await gitx\`git status\``
+ * - Calling with options: `await gitx\`git status\`({ cwd: '/path' })`
+ *
+ * @typeParam T - The resolved value type of the promise (defaults to GitResult)
+ * @typeParam Opts - The options type accepted by the callable (defaults to GitOptions)
+ *
+ * @example
+ * ```typescript
+ * // Type can be awaited directly
+ * const result: GitResult = await gitx`git status`
+ *
+ * // Or called with options before awaiting
+ * const result: GitResult = await gitx`git status`({ cwd: '/repo' })
+ *
+ * // Both patterns have the same return type
+ * ```
+ */
+export interface GitXPromise<T = GitResult, Opts extends Record<string, unknown> = GitOptions>
+  extends PromiseLike<T> {
+  /**
+   * Call with options to execute the command with custom configuration
+   */
+  (opts?: Opts): Promise<T>
+
+  /**
+   * Attaches callbacks for the resolution and/or rejection of the Promise
+   */
+  then<TResult1 = T, TResult2 = never>(
+    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null
+  ): Promise<TResult1 | TResult2>
+
+  /**
+   * Attaches a callback for only the rejection of the Promise
+   */
+  catch<TResult = never>(
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null
+  ): Promise<T | TResult>
+
+  /**
+   * Attaches a callback that is invoked when the Promise is settled (fulfilled or rejected)
+   */
+  finally(onfinally?: (() => void) | undefined | null): Promise<T>
+
+  /**
+   * Identifies this object as a GitXPromise
+   */
+  readonly [Symbol.toStringTag]: 'GitXPromise'
+}
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -211,7 +266,7 @@ export function createGitX(context: GitContext = {}): GitXFn {
   if (context.gitPath !== undefined) defaultOptions.gitPath = context.gitPath
 
   // The main function implementation
-  function gitx(input: string | TemplateStringsArray, ...values: unknown[]): Promise<GitResult> | ((opts?: GitOptions) => Promise<GitResult>) {
+  function gitx(input: string | TemplateStringsArray, ...values: unknown[]): Promise<GitResult> | GitXPromise {
     // Check if called as tagged template or direct call
     if (typeof input === 'string') {
       // Style 1: Direct call - gitx('git status')
@@ -235,26 +290,21 @@ export function createGitX(context: GitContext = {}): GitXFn {
     // Make it both a Promise and callable with options
     const promise = execute()
 
-    // Add a method to call with options
-    ;(promise as any).call = execute
-    ;(promise as any)[Symbol.toStringTag] = 'GitXPromise'
-
-    // For style 3 support, we need to return something that can be:
-    // 1. Awaited directly (Promise<GitResult>)
-    // 2. Called with options ((opts) => Promise<GitResult>)
-
-    // Create a callable that's also a promise
-    const callable = Object.assign(
+    // Create a callable that's also a promise (GitXPromise pattern)
+    // This allows both:
+    // - await gitx`git status` (direct await)
+    // - await gitx`git status`({ cwd: '/path' }) (call with options then await)
+    const callable: GitXPromise = Object.assign(
       (opts?: GitOptions) => execute(opts),
       {
         then: promise.then.bind(promise),
         catch: promise.catch.bind(promise),
         finally: promise.finally.bind(promise),
-        [Symbol.toStringTag]: 'GitXPromise',
+        [Symbol.toStringTag]: 'GitXPromise' as const,
       }
     )
 
-    return callable as any
+    return callable
   }
 
   return gitx as GitXFn

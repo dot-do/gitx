@@ -42,7 +42,7 @@ import { GIT_OBJECTS_SCHEMA } from './parquet-schemas'
 import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
-import { ReadWriteLock } from '../utils/async-mutex'
+import { AsyncMutex, ReadWriteLock } from '../utils/async-mutex'
 import { type StorageMetrics, noopMetrics } from './metrics'
 
 // ============================================================================
@@ -240,6 +240,17 @@ export class ParquetStore implements CASBackend {
    * or delete Parquet files while other operations are reading from them.
    */
   private rwLock: ReadWriteLock = new ReadWriteLock()
+  /**
+   * Mutex for serializing flush operations.
+   *
+   * While the rwLock allows multiple read operations (including flush) to run
+   * concurrently, we need to ensure only one flush operation runs at a time.
+   * Without this, concurrent flushes could:
+   * - Both read the same buffer contents
+   * - Both write overlapping Parquet files
+   * - Race on clearing WAL entries
+   */
+  private flushMutex: AsyncMutex = new AsyncMutex()
   /** Metrics interface for observability */
   private metrics: StorageMetrics
 
@@ -674,6 +685,10 @@ export class ParquetStore implements CASBackend {
    *
    * WAL entries are cleared ONLY after the Parquet file is successfully
    * written to R2. If the flush fails, WAL entries remain for recovery.
+   *
+   * Uses a mutex to prevent concurrent flush operations which could cause
+   * race conditions (multiple flushes reading the same buffer, writing
+   * overlapping files, or racing on WAL entry cleanup).
    */
   async flush(): Promise<string | null> {
     if (this.buffer.length === 0) return null
@@ -681,88 +696,92 @@ export class ParquetStore implements CASBackend {
     const startTime = performance.now()
     await this.initialize()
 
-    // Use read lock - flush can run concurrently with other operations, but not during compaction
-    return this.rwLock.withReadLock(async () => {
-      // Re-check after acquiring lock (buffer may have been drained by another flush)
-      if (this.buffer.length === 0) return null
+    // Use flush mutex to serialize flush operations
+    // This prevents concurrent flushes from reading the same buffer contents
+    return this.flushMutex.withLock(async () => {
+      // Use read lock - flush can run concurrently with other operations, but not during compaction
+      return this.rwLock.withReadLock(async () => {
+        // Re-check after acquiring locks (buffer may have been drained by another flush)
+        if (this.buffer.length === 0) return null
 
-      const objects = this.buffer
-      const walIds = [...this.walEntryIds]
-      this.buffer = []
-      this.bufferBytes = 0
-      this.walEntryIds = []
+        const objects = this.buffer
+        const walIds = [...this.walEntryIds]
+        this.buffer = []
+        this.bufferBytes = 0
+        this.walEntryIds = []
 
-      const batch = encodeObjectBatch(objects, { r2Prefix: `${this.prefix}/raw` })
+        const batch = encodeObjectBatch(objects, { r2Prefix: `${this.prefix}/raw` })
 
-      const buffer = parquetWriteBuffer({
-        codec: this.codec,
-        schema: GIT_OBJECTS_SCHEMA,
-        columnData: [
-          { name: 'sha', data: batch.shas },
-          { name: 'type', data: batch.types },
-          { name: 'size', data: batch.sizes },
-          { name: 'storage', data: batch.storages },
-          { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
-          { name: 'variant_value', data: batch.variantData.map(v => v.value) },
-          { name: 'raw_data', data: objects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
-          { name: 'path', data: batch.paths },
-          // Shredded commit fields
-          { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
-          { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
-          { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
-        ],
-      })
+        const buffer = parquetWriteBuffer({
+          codec: this.codec,
+          schema: GIT_OBJECTS_SCHEMA,
+          columnData: [
+            { name: 'sha', data: batch.shas },
+            { name: 'type', data: batch.types },
+            { name: 'size', data: batch.sizes },
+            { name: 'storage', data: batch.storages },
+            { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
+            { name: 'variant_value', data: batch.variantData.map(v => v.value) },
+            { name: 'raw_data', data: objects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
+            { name: 'path', data: batch.paths },
+            // Shredded commit fields
+            { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
+            { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
+            { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
+          ],
+        })
 
-      // Generate a deterministic key from the sorted SHAs so re-flushing the
-      // same buffer produces the same R2 key (idempotent).
-      const sortedShas = objects.map(o => o.sha).sort()
-      const shaDigest = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(sortedShas.join(''))
-      )
-      const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-      const key = `${this.prefix}/objects/${fileId}.parquet`
-      await this.r2.put(key, buffer)
-      if (!this.objectFileKeys.includes(key)) {
-        this.objectFileKeys.push(key)
-      }
-
-      // Clear WAL entries AFTER successful R2 write
-      // This ensures durability - if R2 write fails, WAL entries remain for retry
-      if (walIds.length > 0) {
-        // Use batch delete for efficiency
-        const placeholders = walIds.map(() => '?').join(',')
-        this.sql.sql.exec(
-          `DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE id IN (${placeholders})`,
-          ...walIds
+        // Generate a deterministic key from the sorted SHAs so re-flushing the
+        // same buffer produces the same R2 key (idempotent).
+        const sortedShas = objects.map(o => o.sha).sort()
+        const shaDigest = await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(sortedShas.join(''))
         )
-      }
-
-      // Persist bloom filter
-      await this.bloomCache.persist()
-
-      // Record flush metric
-      const latencyMs = performance.now() - startTime
-      this.metrics.recordFlush(objects.length, buffer.byteLength, latencyMs)
-
-      // Invoke post-flush handler (e.g., Iceberg metadata generation)
-      if (this.onFlush) {
-        try {
-          await this.onFlush({
-            parquetKey: key,
-            fileSizeBytes: buffer.byteLength,
-            recordCount: objects.length,
-            r2: this.r2,
-            prefix: this.prefix,
-          })
-        } catch (err) {
-          console.error('[ParquetStore] onFlush handler failed:', err)
+        const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('')
+        const key = `${this.prefix}/objects/${fileId}.parquet`
+        await this.r2.put(key, buffer)
+        if (!this.objectFileKeys.includes(key)) {
+          this.objectFileKeys.push(key)
         }
-      }
 
-      return key
+        // Clear WAL entries AFTER successful R2 write
+        // This ensures durability - if R2 write fails, WAL entries remain for retry
+        if (walIds.length > 0) {
+          // Use batch delete for efficiency
+          const placeholders = walIds.map(() => '?').join(',')
+          this.sql.sql.exec(
+            `DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE id IN (${placeholders})`,
+            ...walIds
+          )
+        }
+
+        // Persist bloom filter
+        await this.bloomCache.persist()
+
+        // Record flush metric
+        const latencyMs = performance.now() - startTime
+        this.metrics.recordFlush(objects.length, buffer.byteLength, latencyMs)
+
+        // Invoke post-flush handler (e.g., Iceberg metadata generation)
+        if (this.onFlush) {
+          try {
+            await this.onFlush({
+              parquetKey: key,
+              fileSizeBytes: buffer.byteLength,
+              recordCount: objects.length,
+              r2: this.r2,
+              prefix: this.prefix,
+            })
+          } catch (err) {
+            console.error('[ParquetStore] onFlush handler failed:', err)
+          }
+        }
+
+        return key
+      })
     })
   }
 

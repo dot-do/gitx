@@ -19,7 +19,7 @@ export { GitTag } from './tag';
 // =============================================================================
 // Types and Constants
 // =============================================================================
-export { OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType } from './types';
+export { OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType, isValidIdentity, isValidTreeEntry, isBlobData, isTreeData, isCommitData, isTagData, } from './types';
 // =============================================================================
 // Hash Utilities
 // =============================================================================
@@ -100,15 +100,41 @@ export function parseGitObject(data) {
             return GitTag.parse(data);
     }
 }
+import { isBlobData, isTreeData, isCommitData, isTagData } from './types';
+/**
+ * Error thrown when createGitObject receives invalid data
+ */
+export class InvalidGitObjectDataError extends Error {
+    objectType;
+    data;
+    constructor(objectType, data, message) {
+        super(message);
+        this.objectType = objectType;
+        this.data = data;
+        this.name = 'InvalidGitObjectDataError';
+    }
+}
 export function createGitObject(type, data) {
     switch (type) {
         case 'blob':
+            if (!isBlobData(data)) {
+                throw new InvalidGitObjectDataError(type, data, 'Invalid blob data: expected object with content property as Uint8Array');
+            }
             return new GitBlob(data.content);
         case 'tree':
+            if (!isTreeData(data)) {
+                throw new InvalidGitObjectDataError(type, data, 'Invalid tree data: expected object with entries array containing valid TreeEntry objects');
+            }
             return new GitTree(data.entries);
         case 'commit':
+            if (!isCommitData(data)) {
+                throw new InvalidGitObjectDataError(type, data, 'Invalid commit data: expected object with tree (sha), author, committer (GitIdentity), and message');
+            }
             return new GitCommit(data);
         case 'tag':
+            if (!isTagData(data)) {
+                throw new InvalidGitObjectDataError(type, data, 'Invalid tag data: expected object with object (sha), objectType, name, and message');
+            }
             return new GitTag(data);
     }
 }

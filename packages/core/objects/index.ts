@@ -16,7 +16,6 @@
 
 export { GitBlob } from './blob'
 export { GitTree, sortTreeEntries, parseTreeEntries, serializeTreeEntries } from './tree'
-export type { TreeEntry } from './tree'
 export {
   GitCommit,
   parseIdentity,
@@ -26,7 +25,6 @@ export {
   validateCommitData,
 } from './commit'
 export type {
-  GitIdentity,
   CommitValidationResult,
   CommitExtraHeaders,
   ExtendedCommitData,
@@ -37,8 +35,29 @@ export { GitTag } from './tag'
 // Types and Constants
 // =============================================================================
 
-export { OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType } from './types'
-export type { ObjectType, GitObjectData, BlobData, TreeData, CommitData, TagData } from './types'
+export {
+  OBJECT_TYPES,
+  VALID_MODES,
+  isValidSha,
+  isValidMode,
+  isValidObjectType,
+  isValidIdentity,
+  isValidTreeEntry,
+  isBlobData,
+  isTreeData,
+  isCommitData,
+  isTagData,
+} from './types'
+export type {
+  ObjectType,
+  GitObjectData,
+  BlobData,
+  TreeData,
+  CommitData,
+  TagData,
+  GitIdentity,
+  TreeEntry,
+} from './types'
 
 // =============================================================================
 // Hash Utilities
@@ -150,9 +169,25 @@ export function parseGitObject(data: Uint8Array): GitBlob | GitTree | GitCommit 
 // =============================================================================
 
 import type { BlobData, TreeData, CommitData, TagData } from './types'
+import { isBlobData, isTreeData, isCommitData, isTagData } from './types'
+
+/**
+ * Error thrown when createGitObject receives invalid data
+ */
+export class InvalidGitObjectDataError extends Error {
+  constructor(
+    public readonly objectType: ObjectType,
+    public readonly data: unknown,
+    message: string
+  ) {
+    super(message)
+    this.name = 'InvalidGitObjectDataError'
+  }
+}
 
 /**
  * Creates a Git object from type and data
+ * @throws InvalidGitObjectDataError if the data doesn't match the expected type
  */
 export function createGitObject(type: 'blob', data: BlobData): GitBlob
 export function createGitObject(type: 'tree', data: TreeData): GitTree
@@ -164,12 +199,40 @@ export function createGitObject(
 ): GitBlob | GitTree | GitCommit | GitTag {
   switch (type) {
     case 'blob':
-      return new GitBlob((data as BlobData).content)
+      if (!isBlobData(data)) {
+        throw new InvalidGitObjectDataError(
+          type,
+          data,
+          'Invalid blob data: expected object with content property as Uint8Array'
+        )
+      }
+      return new GitBlob(data.content)
     case 'tree':
-      return new GitTree((data as TreeData).entries)
+      if (!isTreeData(data)) {
+        throw new InvalidGitObjectDataError(
+          type,
+          data,
+          'Invalid tree data: expected object with entries array containing valid TreeEntry objects'
+        )
+      }
+      return new GitTree(data.entries)
     case 'commit':
-      return new GitCommit(data as CommitData)
+      if (!isCommitData(data)) {
+        throw new InvalidGitObjectDataError(
+          type,
+          data,
+          'Invalid commit data: expected object with tree (sha), author, committer (GitIdentity), and message'
+        )
+      }
+      return new GitCommit(data)
     case 'tag':
-      return new GitTag(data as TagData)
+      if (!isTagData(data)) {
+        throw new InvalidGitObjectDataError(
+          type,
+          data,
+          'Invalid tag data: expected object with object (sha), objectType, name, and message'
+        )
+      }
+      return new GitTag(data)
   }
 }

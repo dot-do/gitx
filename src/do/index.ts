@@ -48,7 +48,7 @@ import {
   type R2BucketLike,
   type R2ObjectLike,
   type R2ObjectsLike,
-} from './GitModule'
+} from './git-module'
 
 export {
   GitModule,
@@ -76,7 +76,7 @@ import {
   type WithGitOptions,
   type WithGitContext,
   type Constructor,
-} from './withGit'
+} from './with-git'
 
 export {
   withGit,
@@ -97,7 +97,7 @@ import {
   type WithFsCapability,
   type WithFsOptions,
   type WithFsContext,
-} from './withFs'
+} from './with-fs'
 
 export {
   withFs,
@@ -142,7 +142,7 @@ import {
   type CopyOptions,
   type Dirent,
   type Stats,
-} from './FsModule'
+} from './fs-module'
 
 export {
   FsModule,
@@ -269,7 +269,7 @@ export {
 // GitRepoDO Imports and Exports
 // ============================================================================
 
-import { GitRepoDO, isGitRepoDO } from './GitRepoDO'
+import { GitRepoDO, isGitRepoDO } from './git-repo-do'
 
 export { GitRepoDO, isGitRepoDO }
 

@@ -36,12 +36,13 @@ export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
 
 /**
  * RPC Error with code and optional data
+ * @template T - The type of additional error data
  */
-export class RPCError extends Error {
+export class RPCError<T = unknown> extends Error {
   code: string
-  data?: unknown
+  data?: T
 
-  constructor(message: string, code: string, data?: unknown) {
+  constructor(message: string, code: string, data?: T) {
     super(message)
     this.name = 'RPCError'
     this.code = code
@@ -79,11 +80,18 @@ export interface BatchingOptions {
 
 /**
  * Custom serializer interface
+ * @template TEncode - The type of messages to encode
+ * @template TDecode - The type of decoded messages
  */
-export interface Serializer {
-  encode(msg: unknown): ArrayBuffer
-  decode(data: ArrayBuffer): unknown
+export interface Serializer<TEncode = RPCMessage, TDecode = RPCMessage> {
+  encode(msg: TEncode): ArrayBuffer
+  decode(data: ArrayBuffer): TDecode
 }
+
+/**
+ * Union of all RPC message types.
+ */
+export type RPCMessage = RPCRequest | RPCResponse | RPCStreamMessage | RPCBatchMessage | RPCPingMessage | RPCPongMessage
 
 /**
  * Client options for DO connection
@@ -101,40 +109,55 @@ export interface DOClientOptions {
 }
 
 /**
- * RPC Request message structure
+ * RPC argument types that can be serialized.
  */
-export interface RPCRequest {
+export type RPCArg = string | number | boolean | null | undefined | Uint8Array | RPCArg[] | { [key: string]: RPCArg }
+
+/**
+ * RPC Request message structure
+ * @template TArgs - The type of arguments array
+ */
+export interface RPCRequest<TArgs extends RPCArg[] = RPCArg[]> {
   type: 'request'
   id: string
   path: string[]
-  args: unknown[]
+  args: TArgs
   timestamp: number
 }
 
 /**
- * RPC Response message structure
+ * RPC error details in a response.
+ * @template T - The type of additional error data
  */
-export interface RPCResponse {
+export interface RPCResponseError<T = unknown> {
+  code: string
+  message: string
+  data?: T
+  stack?: string
+}
+
+/**
+ * RPC Response message structure
+ * @template TResult - The type of the result value
+ * @template TErrorData - The type of error data
+ */
+export interface RPCResponse<TResult = unknown, TErrorData = unknown> {
   type: 'response'
   id: string
   success: boolean
-  result?: unknown
-  error?: {
-    code: string
-    message: string
-    data?: unknown
-    stack?: string
-  }
+  result?: TResult
+  error?: RPCResponseError<TErrorData>
   timestamp: number
 }
 
 /**
  * RPC Stream message structure
+ * @template TChunk - The type of streamed chunks
  */
-export interface RPCStreamMessage {
+export interface RPCStreamMessage<TChunk = unknown> {
   type: 'stream'
   id: string
-  chunk: unknown
+  chunk: TChunk
   done: boolean
   index: number
   timestamp: number
@@ -165,21 +188,24 @@ export interface RPCPongMessage {
 
 /**
  * Magic proxy type for RPC calls
+ * @template T - The interface being proxied
  */
-export type MagicProxy<T = unknown> = {
+export type MagicProxy<T = Record<string, unknown>> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
     ? (...args: A) => Promise<Awaited<R>>
     : MagicProxy<T[K]>
 } & {
-  [key: string]: MagicProxy & ((...args: unknown[]) => Promise<unknown>)
+  [key: string]: MagicProxy<Record<string, unknown>> & ((...args: RPCArg[]) => Promise<unknown>)
 }
 
 /**
  * Stream controller for server-side streaming
+ * @template TChunk - The type of chunks being streamed
+ * @template TResult - The type of the final result (defaults to TChunk)
  */
-export interface StreamController<T> {
-  send(chunk: T): void
-  done(result?: unknown): void
+export interface StreamController<TChunk, TResult = TChunk> {
+  send(chunk: TChunk): void
+  done(result?: TResult): void
   error(err: Error): void
   isClosed: boolean
 }
@@ -236,11 +262,30 @@ export interface RPCHandler {
 }
 
 /**
- * Create RPC handler from a DO instance
+ * Durable Object instance type for RPC handler.
  */
-export function createRPCHandler(
-  instance: unknown,
-  state: unknown,
+export interface RPCDOInstance {
+  [key: string]: unknown
+}
+
+/**
+ * Durable Object state type for RPC handler.
+ */
+export interface RPCDOState {
+  storage: {
+    get<T>(key: string): Promise<T | undefined>
+    put<T>(key: string, value: T): Promise<void>
+    delete(key: string): Promise<boolean>
+  }
+}
+
+/**
+ * Create RPC handler from a DO instance
+ * @template TInstance - The type of the DO instance
+ */
+export function createRPCHandler<TInstance extends RPCDOInstance>(
+  instance: TInstance,
+  state: RPCDOState,
   options?: RPCHandlerOptions
 ): RPCHandler {
   // Placeholder - actual implementation in rpc.ts

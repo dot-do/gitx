@@ -534,7 +534,7 @@ describe('ParquetStore', () => {
       // Find the manifest file in R2 puts
       const putCalls = (mockR2.put as ReturnType<typeof vi.fn>).mock.calls
       const manifestCall = putCalls.find(([key]: [string]) =>
-        key.startsWith('test-repo/iceberg/manifests/') && key.endsWith('.json')
+        key.startsWith('test-repo/iceberg/manifests/') && key.endsWith('.avro')
       )
       expect(manifestCall).toBeDefined()
 

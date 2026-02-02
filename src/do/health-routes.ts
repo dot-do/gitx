@@ -42,7 +42,7 @@ export function handleHealthCheck(
     const storage = instance.getStorage()
     const result = storage.sql.exec('SELECT 1 AS ok')
     const rows = result.toArray() as { ok: number }[]
-    if (rows.length === 1 && rows[0].ok === 1) {
+    if (rows.length === 1 && rows[0]?.ok === 1) {
       components.sqlite = { status: 'ok' }
     } else {
       components.sqlite = { status: 'unhealthy', message: 'Unexpected SELECT 1 result' }
@@ -108,7 +108,7 @@ export function handleHealthCheck(
 
   const response: HealthCheckResponse = {
     status: overall,
-    ns: instance.ns,
+    ...(instance.ns !== undefined && { ns: instance.ns }),
     $type: instance.$type,
     uptime: Date.now() - instance._startTime,
     capabilities: Array.from(instance.getCapabilities()),

@@ -168,10 +168,10 @@ export async function handleExport(
               { name: 'parent_shas', data: parentShasData },
               { name: 'author_name', data: commits.map(c => c.author.name) },
               { name: 'author_email', data: commits.map(c => c.author.email) },
-              { name: 'author_date', data: commits.map(c => BigInt(c.author.date || Date.now())) },
+              { name: 'author_date', data: commits.map(c => BigInt(toTimestamp(c.author.date))) },
               { name: 'committer_name', data: commits.map(c => c.committer.name) },
               { name: 'committer_email', data: commits.map(c => c.committer.email) },
-              { name: 'committer_date', data: commits.map(c => BigInt(c.committer.date || Date.now())) },
+              { name: 'committer_date', data: commits.map(c => BigInt(toTimestamp(c.committer.date))) },
               { name: 'message', data: commits.map(c => c.message) },
               { name: 'repository', data: commits.map(() => repoName) },
             ],
@@ -302,10 +302,10 @@ export async function handleExport(
             { name: 'parent_shas', data: parentShasData },
             { name: 'author_name', data: commits.map(c => c.author.name) },
             { name: 'author_email', data: commits.map(c => c.author.email) },
-            { name: 'author_date', data: commits.map(c => BigInt(c.author.date || Date.now())) },
+            { name: 'author_date', data: commits.map(c => BigInt(toTimestamp(c.author.date))) },
             { name: 'committer_name', data: commits.map(c => c.committer.name) },
             { name: 'committer_email', data: commits.map(c => c.committer.email) },
-            { name: 'committer_date', data: commits.map(c => BigInt(c.committer.date || Date.now())) },
+            { name: 'committer_date', data: commits.map(c => BigInt(toTimestamp(c.committer.date))) },
             { name: 'message', data: commits.map(c => c.message) },
             { name: 'repository', data: commits.map(() => repoName) },
           ],
@@ -389,6 +389,15 @@ export async function handleExportStatus(
 // ============================================================================
 
 /**
+ * Convert a date value (number or Date) to a timestamp number.
+ */
+function toTimestamp(date: number | Date | undefined): number {
+  if (date === undefined) return Date.now()
+  if (date instanceof Date) return date.getTime()
+  return date || Date.now()
+}
+
+/**
  * Read commits from ObjectStore and convert to GitCommitData format.
  */
 async function readCommitsFromStorage(store: SqliteObjectStore): Promise<GitCommitData[]> {
@@ -425,7 +434,7 @@ function parseCommitObject(sha: string, data: Uint8Array): GitCommitData | null 
     let messageStartIndex = 0
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
+      const line = lines[i]!
       if (line === '') {
         messageStartIndex = i + 1
         break

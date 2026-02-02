@@ -11,12 +11,11 @@
  */
 export { GitBlob } from './blob';
 export { GitTree, sortTreeEntries, parseTreeEntries, serializeTreeEntries } from './tree';
-export type { TreeEntry } from './tree';
 export { GitCommit, parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature, validateCommitData, } from './commit';
-export type { GitIdentity, CommitValidationResult, CommitExtraHeaders, ExtendedCommitData, } from './commit';
+export type { CommitValidationResult, CommitExtraHeaders, ExtendedCommitData, } from './commit';
 export { GitTag } from './tag';
-export { OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType } from './types';
-export type { ObjectType, GitObjectData, BlobData, TreeData, CommitData, TagData } from './types';
+export { OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType, isValidIdentity, isValidTreeEntry, isBlobData, isTreeData, isCommitData, isTagData, } from './types';
+export type { ObjectType, GitObjectData, BlobData, TreeData, CommitData, TagData, GitIdentity, TreeEntry, } from './types';
 export { calculateSha1, calculateObjectHash, createObjectHeader, parseObjectHeader, bytesToHex, hexToBytes, } from './hash';
 import { GitBlob } from './blob';
 import { GitTree } from './tree';
@@ -54,7 +53,16 @@ export declare function detectObjectType(data: Uint8Array): ObjectType;
 export declare function parseGitObject(data: Uint8Array): GitBlob | GitTree | GitCommit | GitTag;
 import type { BlobData, TreeData, CommitData, TagData } from './types';
 /**
+ * Error thrown when createGitObject receives invalid data
+ */
+export declare class InvalidGitObjectDataError extends Error {
+    readonly objectType: ObjectType;
+    readonly data: unknown;
+    constructor(objectType: ObjectType, data: unknown, message: string);
+}
+/**
  * Creates a Git object from type and data
+ * @throws InvalidGitObjectDataError if the data doesn't match the expected type
  */
 export declare function createGitObject(type: 'blob', data: BlobData): GitBlob;
 export declare function createGitObject(type: 'tree', data: TreeData): GitTree;

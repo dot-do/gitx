@@ -24,16 +24,22 @@ export interface DOState {
 
 /**
  * Durable Object storage interface.
+ * @template T - The type of values stored (defaults to unknown for flexibility)
  */
-export interface DOStorage {
-  get(key: string): Promise<unknown>
-  put(key: string, value: unknown): Promise<void>
+export interface DOStorage<T = unknown> {
+  get<V = T>(key: string): Promise<V | undefined>
+  put<V = T>(key: string, value: V): Promise<void>
   delete(key: string): Promise<boolean>
-  list(options?: { prefix?: string }): Promise<Map<string, unknown>>
+  list<V = T>(options?: { prefix?: string }): Promise<Map<string, V>>
   sql: {
-    exec(query: string, ...params: unknown[]): { toArray(): unknown[] }
+    exec<R = Record<string, unknown>>(query: string, ...params: SqlParam[]): { toArray(): R[] }
   }
 }
+
+/**
+ * SQL parameter types that can be passed to exec().
+ */
+export type SqlParam = string | number | boolean | null | Uint8Array
 
 // ============================================================================
 // Service Binding Types
@@ -47,13 +53,22 @@ export interface ServiceBinding {
 }
 
 /**
+ * Durable Object ID type.
+ * Represents the opaque ID returned by namespace methods.
+ */
+export interface DurableObjectId {
+  toString(): string
+  equals(other: DurableObjectId): boolean
+}
+
+/**
  * Durable Object namespace binding.
  */
 export interface DONamespaceBinding {
-  idFromName(name: string): unknown
-  idFromString(id: string): unknown
-  newUniqueId(options?: { locationHint?: string }): unknown
-  get(id: unknown): DOStub
+  idFromName(name: string): DurableObjectId
+  idFromString(id: string): DurableObjectId
+  newUniqueId(options?: { locationHint?: string }): DurableObjectId
+  get(id: DurableObjectId): DOStub
 }
 
 /**
@@ -64,10 +79,22 @@ export interface DOStub {
 }
 
 /**
+ * R2 put result metadata.
+ */
+export interface R2PutResult {
+  key: string
+  version: string
+  size: number
+  etag: string
+  httpEtag: string
+  uploaded: Date
+}
+
+/**
  * R2 bucket binding interface.
  */
 export interface R2Binding {
-  put(key: string, data: string | ArrayBuffer): Promise<unknown>
+  put(key: string, data: string | ArrayBuffer): Promise<R2PutResult>
   get(key: string): Promise<R2Object | null>
   list(options?: { prefix?: string }): Promise<{ objects: Array<{ key: string }> }>
 }
@@ -89,10 +116,20 @@ export interface KVBinding {
 }
 
 /**
- * Pipeline binding interface.
+ * Pipeline event type.
  */
-export interface PipelineBinding {
-  send(events: unknown[]): Promise<void>
+export interface PipelineEvent {
+  type: string
+  timestamp?: number
+  data?: Record<string, unknown>
+}
+
+/**
+ * Pipeline binding interface.
+ * @template E - The event type (defaults to PipelineEvent)
+ */
+export interface PipelineBinding<E extends PipelineEvent = PipelineEvent> {
+  send(events: E[]): Promise<void>
 }
 
 // ============================================================================
@@ -184,15 +221,27 @@ export interface CompactResult {
 
 /**
  * Result returned by $.try() and $.do() workflow actions.
+ * @template T - The type of the data payload (defaults to unknown)
  */
-export interface ActionResult {
+export interface ActionResult<T = unknown> {
   /** The name of the action that was executed */
   action: string
   /** The data payload that was passed to the action */
-  data?: unknown
+  data?: T
   /** Whether the action completed successfully */
   success: boolean
 }
+
+/**
+ * Event handler function type.
+ * @template T - The type of the event data
+ */
+export type EventHandler<T = unknown> = (data: T) => void | Promise<void>
+
+/**
+ * Scheduled handler function type.
+ */
+export type ScheduledHandler = () => void | Promise<void>
 
 /**
  * Workflow context interface (the $ API).
@@ -200,24 +249,45 @@ export interface ActionResult {
  */
 export interface WorkflowContext {
   /** Fire-and-forget event emission */
-  send(event: string, data?: unknown): void
+  send<T = unknown>(event: string, data?: T): void
   /** Single attempt execution (blocking, non-durable) */
-  try(action: string, data?: unknown): Promise<ActionResult>
+  try<T = unknown>(action: string, data?: T): Promise<ActionResult<T>>
   /** Durable execution with retries */
-  do(action: string, data?: unknown): Promise<ActionResult>
+  do<T = unknown>(action: string, data?: T): Promise<ActionResult<T>>
   /** Event handler registration proxy */
-  on: Record<string, Record<string, (handler: unknown) => void>>
+  on: WorkflowEventProxy
   /** Scheduling proxy */
-  every: Record<string, { at: (time: string) => (handler: unknown) => void }>
+  every: WorkflowScheduleProxy
   /** Create a new git branch */
   branch(name: string): Promise<void>
   /** Checkout a git ref */
   checkout(ref: string): Promise<void>
   /** Merge a branch into current */
   merge(branch: string): Promise<void>
-  /** Allow extension */
-  [key: string]: unknown
+  /** Allow extension with typed access */
+  [key: string]: WorkflowContextValue
 }
+
+/**
+ * Valid types for workflow context extension values.
+ */
+export type WorkflowContextValue =
+  | ((...args: unknown[]) => unknown)
+  | string
+  | number
+  | boolean
+  | object
+  | undefined
+
+/**
+ * Proxy type for event handler registration ($.on.noun.verb pattern).
+ */
+export type WorkflowEventProxy = Record<string, Record<string, <T = unknown>(handler: EventHandler<T>) => void>>
+
+/**
+ * Proxy type for scheduled handler registration ($.every.interval.at pattern).
+ */
+export type WorkflowScheduleProxy = Record<string, { at: (time: string) => (handler: ScheduledHandler) => void }>
 
 // ============================================================================
 // Store Types
@@ -226,12 +296,13 @@ export interface WorkflowContext {
 /**
  * Store accessor interface.
  * Provides CRUD operations for a storage prefix.
+ * @template T - The type of values stored (defaults to unknown for flexibility)
  */
-export interface StoreAccessor {
-  get(id: string): Promise<unknown>
-  set(id: string, value: unknown): Promise<void>
+export interface StoreAccessor<T = unknown> {
+  get<V = T>(id: string): Promise<V | undefined>
+  set<V = T>(id: string, value: V): Promise<void>
   delete(id: string): Promise<boolean>
-  list(options?: { prefix?: string }): Promise<Map<string, unknown>>
+  list<V = T>(options?: { prefix?: string }): Promise<Map<string, V>>
 }
 
 /**
@@ -346,12 +417,21 @@ export interface Logger {
 // ============================================================================
 
 /**
+ * Additional component health metadata.
+ */
+export interface ComponentHealthMetadata {
+  latencyMs?: number
+  lastCheck?: number
+  errorCount?: number
+  [key: string]: string | number | boolean | undefined
+}
+
+/**
  * Per-component health status returned in the health check response.
  */
-export interface ComponentHealth {
+export interface ComponentHealth extends ComponentHealthMetadata {
   status: 'ok' | 'degraded' | 'unhealthy'
   message?: string
-  [key: string]: unknown
 }
 
 /**

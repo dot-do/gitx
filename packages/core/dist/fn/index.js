@@ -162,12 +162,10 @@ export function createGitX(context = {}) {
         };
         // Make it both a Promise and callable with options
         const promise = execute();
-        promise.call = execute;
-        promise[Symbol.toStringTag] = 'GitXPromise';
-        // For style 3 support, we need to return something that can be:
-        // 1. Awaited directly (Promise<GitResult>)
-        // 2. Called with options ((opts) => Promise<GitResult>)
-        // Create a callable that's also a promise
+        // Create a callable that's also a promise (GitXPromise pattern)
+        // This allows both:
+        // - await gitx`git status` (direct await)
+        // - await gitx`git status`({ cwd: '/path' }) (call with options then await)
         const callable = Object.assign((opts) => execute(opts), {
             then: promise.then.bind(promise),
             catch: promise.catch.bind(promise),

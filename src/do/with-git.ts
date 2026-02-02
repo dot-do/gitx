@@ -43,7 +43,7 @@ import {
   type PushResult,
   type FsCapability,
   type R2BucketLike,
-} from './GitModule'
+} from './git-module'
 
 // ============================================================================
 // Type Definitions

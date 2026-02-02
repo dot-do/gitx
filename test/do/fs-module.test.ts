@@ -29,7 +29,7 @@ import {
   EISDIR,
   ENOTDIR,
   ENOTEMPTY,
-} from '../../src/do/FsModule'
+} from '../../src/do/fs-module'
 
 // ============================================================================
 // Mock Implementations
