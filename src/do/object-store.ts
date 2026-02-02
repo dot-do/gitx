@@ -319,7 +319,7 @@ export class SqliteObjectStore implements BasicObjectStore {
   private cache: LRUCache<string, StoredObject>
   private hashCache: HashCache
   private options: ObjectStoreOptions
-  private logger?: ObjectStoreLogger
+  private logger: ObjectStoreLogger | undefined
   private backend: CASBackend | null
 
   // Metrics tracking
@@ -367,15 +367,16 @@ export class SqliteObjectStore implements BasicObjectStore {
     options?: ObjectStoreOptions
   ) {
     this.options = options ?? {}
-    this.logger = options?.logger
+    this.logger = options?.logger ?? undefined
     this.backend = options?.backend ?? null
 
     // Initialize LRU cache for hot tier objects with improved eviction strategy
     // Uses size-aware eviction with priority for smaller objects to maximize cache utilization
+    const cacheTTL = options?.cacheTTL
     this.cache = new LRUCache<string, StoredObject>({
       maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
       maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
-      defaultTTL: options?.cacheTTL,
+      ...(cacheTTL !== undefined ? { defaultTTL: cacheTTL } : {}),
       sizeCalculator: (obj) => {
         const stored = obj as StoredObject
         // 100 bytes overhead for metadata, plus actual data size
@@ -477,6 +478,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       // Store each chunk
       for (let i = 0; i < chunkCount; i++) {
         const chunkData = chunks[i]
+        if (!chunkData) continue
         const chunkKey = getChunkKey(sha, i)
 
         this.storage.sql.exec(
@@ -852,8 +854,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     )
     const rows = typedQuery<{ sha: string }>(result, validateRow(['sha']))
 
-    if (rows.length === 1) {
-      return rows[0].sha
+    const firstRow = rows[0]
+    if (rows.length === 1 && firstRow) {
+      return firstRow.sha
     }
     if (rows.length > 1) {
       throw new Error(`Ambiguous SHA prefix: ${prefix}`)
@@ -867,8 +870,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     )
     const objRows = typedQuery<{ sha: string }>(objResult, validateRow(['sha']))
 
-    if (objRows.length === 1) {
-      return objRows[0].sha
+    const firstObjRow = objRows[0]
+    if (objRows.length === 1 && firstObjRow) {
+      return firstObjRow.sha
     }
     if (objRows.length > 1) {
       throw new Error(`Ambiguous SHA prefix: ${prefix}`)
@@ -968,9 +972,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     )
     const indexRows = typedQuery<{ sha: string; tier: string; size: number; type: string; chunked: number; chunk_count: number }>(indexResult, validateRow(['sha', 'tier', 'size', 'type', 'chunked', 'chunk_count']))
 
-    if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+    const indexEntry = indexRows[0]
+    if (indexRows.length > 0 && indexEntry && indexEntry.chunked === 1) {
       // This is a chunked blob - reassemble from chunks using shared chunk-utils
-      const indexEntry = indexRows[0]
       const chunkCount = indexEntry.chunk_count
 
       this.log('debug', `Reassembling chunked blob: ${sha} (${chunkCount} chunks)`)
@@ -986,7 +990,8 @@ export class SqliteObjectStore implements BasicObjectStore {
         )
         const chunkRows = typedQuery<{ data: Uint8Array }>(chunkResult, validateRow(['data']))
 
-        if (chunkRows.length === 0) {
+        const chunkRow = chunkRows[0]
+        if (chunkRows.length === 0 || !chunkRow) {
           this.log('error', `Missing chunk ${i} for chunked blob: ${sha}`)
           if (this.options.enableMetrics) {
             this._reads++
@@ -995,7 +1000,7 @@ export class SqliteObjectStore implements BasicObjectStore {
           return null
         }
 
-        chunks.push(new Uint8Array(chunkRows[0].data))
+        chunks.push(new Uint8Array(chunkRow.data))
       }
 
       // Reassemble chunks using shared utility
@@ -1038,6 +1043,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     }
 
     const row = rows[0]
+    if (!row) {
+      return null
+    }
     const obj: StoredObject = {
       sha: row.sha,
       type: row.type,
@@ -1119,12 +1127,13 @@ export class SqliteObjectStore implements BasicObjectStore {
     this.log('debug', `Deleting object: ${sha}`)
 
     // Log to WAL with actual object type
-    const objectType = indexRows.length > 0 ? indexRows[0].type : 'blob'
+    const indexRow = indexRows[0]
+    const objectType = (indexRow ? indexRow.type : 'blob') as ObjectType
     await this.logToWAL('DELETE', sha, objectType, new Uint8Array(0))
 
     // If this is a chunked blob, delete all chunks using shared chunk-utils
-    if (indexRows.length > 0 && indexRows[0].chunked === 1) {
-      const chunkCount = indexRows[0].chunk_count
+    if (indexRow && indexRow.chunked === 1) {
+      const chunkCount = indexRow.chunk_count
       this.log('debug', `Deleting ${chunkCount} chunks for chunked blob: ${sha}`)
 
       for (let i = 0; i < chunkCount; i++) {
@@ -1234,6 +1243,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     }
 
     const obj = rows[0]
+    if (!obj) {
+      return false
+    }
     const computedSha = await hashObject(obj.type, new Uint8Array(obj.data))
     return computedSha === sha
   }
@@ -1307,8 +1319,9 @@ export class SqliteObjectStore implements BasicObjectStore {
     }
 
     // For single objects, delegate to putObject
-    if (objects.length === 1) {
-      const sha = await this.putObject(objects[0].type, objects[0].data)
+    const firstObj = objects[0]
+    if (objects.length === 1 && firstObj) {
+      const sha = await this.putObject(firstObj.type, firstObj.data)
       return [sha]
     }
 
@@ -1377,7 +1390,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       // after successful commit below, so no in-memory state needs rollback.
       this.storage.sql.exec('ROLLBACK')
 
-      this.log('error', `Batch write failed, transaction rolled back`, error)
+      this.log('error', `Batch write failed, transaction rolled back`, error as LogArg)
       throw error
     }
 
@@ -1495,7 +1508,9 @@ export class SqliteObjectStore implements BasicObjectStore {
       for (let i = 0; i < uncachedIndices.length; i++) {
         const originalIndex = uncachedIndices[i]
         const sha = uncachedShas[i]
-        results[originalIndex] = rowMap.get(sha) ?? null
+        if (originalIndex !== undefined && sha !== undefined) {
+          results[originalIndex] = rowMap.get(sha) ?? null
+        }
       }
     }
 
@@ -1613,7 +1628,7 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
-      if (line === '') {
+      if (line === undefined || line === '') {
         messageStartIndex = i + 1
         break
       }
@@ -1683,7 +1698,7 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
-      if (line === '') {
+      if (line === undefined || line === '') {
         messageStartIndex = i + 1
         break
       }
@@ -1721,7 +1736,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       object,
       objectType,
       name,
-      tagger,
+      ...(tagger !== undefined ? { tagger } : {}),
       message
     }
   }
@@ -1879,7 +1894,7 @@ export class SqliteObjectStore implements BasicObjectStore {
       )
       return result.toArray() as { sha: string; data: Uint8Array }[]
     } catch (error) {
-      this.log('error', `Error listing objects by type ${type}:`, error)
+      this.log('error', `Error listing objects by type ${type}:`, error as LogArg)
       return []
     }
   }
@@ -1960,7 +1975,8 @@ export class SqliteObjectStore implements BasicObjectStore {
     // Get the number of rows affected - SQLite returns this via changes
     const changesResult = this.storage.sql.exec('SELECT changes() as count')
     const rows = typedQuery<{ count: number }>(changesResult, validateRow(['count']))
-    const deletedCount = rows.length > 0 ? rows[0].count : 0
+    const firstRow = rows[0]
+    const deletedCount = rows.length > 0 && firstRow ? firstRow.count : 0
 
     this.log('info', `WAL truncation: deleted ${deletedCount} flushed entries`)
 
@@ -1989,11 +2005,18 @@ function parseAuthorLine(line: string): Author {
   if (!match) {
     throw new Error(`Invalid author line: ${line}`)
   }
+  const name = match[1]
+  const email = match[2]
+  const timestampStr = match[3]
+  const timezone = match[4]
+  if (!name || !email || !timestampStr || !timezone) {
+    throw new Error(`Invalid author line: ${line}`)
+  }
   return {
-    name: match[1],
-    email: match[2],
-    timestamp: parseInt(match[3], 10),
-    timezone: match[4]
+    name,
+    email,
+    timestamp: parseInt(timestampStr, 10),
+    timezone
   }
 }
 

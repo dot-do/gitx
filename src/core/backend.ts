@@ -65,6 +65,18 @@ export interface PackedRefs {
   peeled?: Map<string, string>
 }
 
+/**
+ * Represents a recorded method call for MockBackend.
+ */
+export interface MethodCall {
+  /** Name of the method that was called */
+  method: string
+  /** Arguments passed to the method */
+  args: unknown[]
+  /** Timestamp of the call (milliseconds since epoch) */
+  timestamp: number
+}
+
 // ============================================================================
 // GitBackend Interface
 // ============================================================================
@@ -259,6 +271,41 @@ export interface GitBackend {
    * ```
    */
   writePackfile(pack: Uint8Array): Promise<void>
+
+  // ===========================================================================
+  // Pack Streaming Operations (RED phase - stub methods)
+  // ===========================================================================
+
+  /**
+   * Read a pack file as a stream.
+   *
+   * @param id - Pack file ID
+   * @returns ReadableStream of pack data, or null if not found
+   */
+  readPack(id: string): Promise<ReadableStream<Uint8Array> | null>
+
+  /**
+   * Write a pack file from a stream.
+   *
+   * @param stream - ReadableStream of pack data
+   * @returns Pack ID (content-addressable)
+   */
+  writePack(stream: ReadableStream<Uint8Array>): Promise<string>
+
+  /**
+   * List all pack file IDs.
+   *
+   * @returns Array of pack IDs
+   */
+  listPacks(): Promise<string[]>
+
+  /**
+   * Delete a pack file.
+   *
+   * @param id - Pack file ID to delete
+   * @description Idempotent - no error if pack doesn't exist
+   */
+  deletePack(id: string): Promise<void>
 }
 
 // ============================================================================
@@ -279,21 +326,6 @@ export interface MemoryBackend extends GitBackend {
    * Resets the backend to a clean state. Useful for test isolation.
    */
   clear(): void
-
-  /**
-   * Read a pack file by name.
-   *
-   * @param name - Name of the pack file
-   * @returns Pack data or null if not found
-   */
-  readPack(name: string): Promise<Uint8Array | null>
-
-  /**
-   * List all pack files.
-   *
-   * @returns Array of pack file names
-   */
-  listPacks(): Promise<string[]>
 
   /**
    * Write a symbolic reference.
@@ -327,6 +359,39 @@ export interface MemoryBackend extends GitBackend {
    * @param sha - SHA of object to delete
    */
   deleteObject(sha: string): Promise<void>
+}
+
+// ============================================================================
+// MockBackend Interface (extends MemoryBackend)
+// ============================================================================
+
+/**
+ * Mock GitBackend implementation with call recording for testing.
+ *
+ * @description
+ * Extends MemoryBackend with methods to record and inspect method calls.
+ * Useful for verifying that certain methods are called with expected arguments.
+ */
+export interface MockBackend extends MemoryBackend {
+  /**
+   * Get all recorded method calls.
+   *
+   * @returns Array of MethodCall objects in call order
+   */
+  getCalls(): MethodCall[]
+
+  /**
+   * Get recorded calls for a specific method.
+   *
+   * @param method - Method name to filter by
+   * @returns Array of MethodCall objects for that method
+   */
+  getCallsFor(method: string): MethodCall[]
+
+  /**
+   * Clear all recorded calls.
+   */
+  clearCalls(): void
 }
 
 // ============================================================================
@@ -649,16 +714,59 @@ export function createMemoryBackend(): MemoryBackend {
     },
 
     // =========================================================================
-    // Extended Pack Operations
+    // Pack Streaming Operations (implements GitBackend interface)
     // =========================================================================
 
-    async readPack(name: string): Promise<Uint8Array | null> {
-      const pack = packs.get(name)
-      return pack ? new Uint8Array(pack) : null
+    async readPack(id: string): Promise<ReadableStream<Uint8Array> | null> {
+      const pack = packs.get(id)
+      if (!pack) {
+        return null
+      }
+      // Return a ReadableStream that emits the pack data
+      const data = new Uint8Array(pack)
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(data)
+          controller.close()
+        }
+      })
+    },
+
+    async writePack(stream: ReadableStream<Uint8Array>): Promise<string> {
+      // Consume the stream and collect all chunks
+      const reader = stream.getReader()
+      const chunks: Uint8Array[] = []
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+      }
+
+      // Combine chunks into single Uint8Array
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+      const data = new Uint8Array(totalLength)
+      let offset = 0
+      for (const chunk of chunks) {
+        data.set(chunk, offset)
+        offset += chunk.length
+      }
+
+      // Compute SHA-1 hash for content-addressable ID
+      const hashBuffer = await crypto.subtle.digest('SHA-1', data)
+      const packId = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+
+      packs.set(packId, data)
+      return packId
     },
 
     async listPacks(): Promise<string[]> {
       return Array.from(packs.keys())
+    },
+
+    async deletePack(id: string): Promise<void> {
+      packs.delete(id)
     },
 
     // =========================================================================
@@ -722,6 +830,104 @@ export function createMemoryBackend(): MemoryBackend {
       }
       packs.clear()
       symbolicRefs.clear()
+    },
+  }
+}
+
+// ============================================================================
+// MockBackend Implementation
+// ============================================================================
+
+/**
+ * Create a mock GitBackend with call recording for testing.
+ *
+ * @description
+ * Creates a MockBackend that wraps a MemoryBackend with call recording.
+ * All method calls are recorded with their arguments and timestamps.
+ *
+ * @returns MockBackend instance
+ *
+ * @example
+ * ```typescript
+ * const backend = createMockBackend()
+ *
+ * // Use the backend
+ * await backend.readObject(sha)
+ * await backend.writeRef('refs/heads/main', sha)
+ *
+ * // Inspect calls
+ * const calls = backend.getCalls()
+ * const refCalls = backend.getCallsFor('writeRef')
+ *
+ * // Clear for next test
+ * backend.clearCalls()
+ * ```
+ */
+export function createMockBackend(): MockBackend {
+  // Create underlying memory backend
+  const memoryBackend = createMemoryBackend()
+
+  // Call recording storage
+  const calls: MethodCall[] = []
+
+  /**
+   * Record a method call with its arguments.
+   */
+  function recordCall(method: string, args: unknown[]): void {
+    calls.push({
+      method,
+      args,
+      timestamp: Date.now(),
+    })
+  }
+
+  /**
+   * Wrap a method to record calls before executing.
+   */
+  function wrapMethod<T extends (...args: unknown[]) => unknown>(
+    method: string,
+    fn: T
+  ): T {
+    return (async (...args: unknown[]) => {
+      recordCall(method, args)
+      return fn(...args)
+    }) as T
+  }
+
+  return {
+    // Wrap all GitBackend methods
+    readObject: wrapMethod('readObject', memoryBackend.readObject.bind(memoryBackend)),
+    writeObject: wrapMethod('writeObject', memoryBackend.writeObject.bind(memoryBackend)),
+    hasObject: wrapMethod('hasObject', memoryBackend.hasObject.bind(memoryBackend)),
+    readRef: wrapMethod('readRef', memoryBackend.readRef.bind(memoryBackend)),
+    writeRef: wrapMethod('writeRef', memoryBackend.writeRef.bind(memoryBackend)),
+    deleteRef: wrapMethod('deleteRef', memoryBackend.deleteRef.bind(memoryBackend)),
+    listRefs: wrapMethod('listRefs', memoryBackend.listRefs.bind(memoryBackend)),
+    readPackedRefs: wrapMethod('readPackedRefs', memoryBackend.readPackedRefs.bind(memoryBackend)),
+    writePackfile: wrapMethod('writePackfile', memoryBackend.writePackfile.bind(memoryBackend)),
+    readPack: wrapMethod('readPack', memoryBackend.readPack.bind(memoryBackend)),
+    writePack: wrapMethod('writePack', memoryBackend.writePack.bind(memoryBackend)),
+    listPacks: wrapMethod('listPacks', memoryBackend.listPacks.bind(memoryBackend)),
+    deletePack: wrapMethod('deletePack', memoryBackend.deletePack.bind(memoryBackend)),
+
+    // MemoryBackend-specific methods (not recorded)
+    clear: memoryBackend.clear.bind(memoryBackend),
+    writeSymbolicRef: memoryBackend.writeSymbolicRef.bind(memoryBackend),
+    readSymbolicRef: memoryBackend.readSymbolicRef.bind(memoryBackend),
+    compareAndSwapRef: memoryBackend.compareAndSwapRef.bind(memoryBackend),
+    deleteObject: memoryBackend.deleteObject.bind(memoryBackend),
+
+    // MockBackend-specific methods
+    getCalls(): MethodCall[] {
+      return [...calls]
+    },
+
+    getCallsFor(method: string): MethodCall[] {
+      return calls.filter(call => call.method === method)
+    },
+
+    clearCalls(): void {
+      calls.length = 0
     },
   }
 }

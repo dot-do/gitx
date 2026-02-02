@@ -674,13 +674,13 @@ function validatePackfile(data: Uint8Array): { version: number; objectCount: num
   }
 
   // Read version (big endian 4 bytes)
-  const version = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+  const version = ((data[4] ?? 0) << 24) | ((data[5] ?? 0) << 16) | ((data[6] ?? 0) << 8) | (data[7] ?? 0)
   if (version !== 2 && version !== 3) {
     throw new R2PackError(`Unsupported pack version: ${version}`, 'INVALID_DATA')
   }
 
   // Read object count (big endian 4 bytes)
-  const objectCount = (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11]
+  const objectCount = ((data[8] ?? 0) << 24) | ((data[9] ?? 0) << 16) | ((data[10] ?? 0) << 8) | (data[11] ?? 0)
 
   return { version, objectCount }
 }
@@ -1143,7 +1143,7 @@ export class R2PackStorage {
     if (options?.verify && !options?.byteRange) {
       // Get stored checksum from metadata
       const headObj = await this._bucket.head(packKey)
-      const storedChecksum = headObj?.customMetadata?.checksum
+      const storedChecksum = headObj?.customMetadata?.['checksum']
 
       if (storedChecksum) {
         const computedChecksum = await computeChecksum(packData)
@@ -1189,7 +1189,7 @@ export class R2PackStorage {
 
     const result: DownloadPackfileResult = {
       packData,
-      verified: options?.verify ? true : undefined
+      ...(options?.verify ? { verified: true } : {})
     }
 
     // Include index if requested
@@ -1234,11 +1234,11 @@ export class R2PackStorage {
     const meta = headObj.customMetadata || {}
     return {
       packId,
-      packSize: parseInt(meta.packSize || String(headObj.size), 10),
-      indexSize: parseInt(meta.indexSize || '0', 10),
-      objectCount: parseInt(meta.objectCount || '0', 10),
-      createdAt: new Date(meta.createdAt || Date.now()),
-      checksum: meta.checksum || ''
+      packSize: parseInt(meta['packSize'] || String(headObj.size), 10),
+      indexSize: parseInt(meta['indexSize'] || '0', 10),
+      objectCount: parseInt(meta['objectCount'] || '0', 10),
+      createdAt: new Date(meta['createdAt'] || Date.now()),
+      checksum: meta['checksum'] || ''
     }
   }
 
@@ -1265,7 +1265,11 @@ export class R2PackStorage {
    */
   async listPackfiles(options?: { limit?: number; cursor?: string }): Promise<ListPackfilesResult & PackfileMetadata[]> {
     const prefix = this._buildKey('packs/')
-    const listResult = await this._bucket.list({ prefix, cursor: options?.cursor })
+    const listOpts: R2ListOptions = { prefix }
+    if (options?.cursor) {
+      listOpts.cursor = options.cursor
+    }
+    const listResult = await this._bucket.list(listOpts)
 
     // Filter for .pack files only
     let packFiles = listResult.objects.filter(obj => obj.key.endsWith('.pack'))
@@ -1287,7 +1291,7 @@ export class R2PackStorage {
     for (const obj of limitedPackFiles) {
       // Extract packId from key
       const match = obj.key.match(/([^/]+)\.pack$/)
-      if (match) {
+      if (match && match[1]) {
         const packId = match[1]
         const metadata = await this.getPackfileMetadata(packId)
         if (metadata) {
@@ -1498,7 +1502,7 @@ export class R2PackStorage {
     for (const obj of listResult.objects) {
       // Extract pack ID from key like "staging/pack-xxx.pack" or "staging/pack-xxx.idx"
       const match = obj.key.match(/staging\/([^/]+)\.(pack|idx)$/)
-      if (match) {
+      if (match && match[1]) {
         orphanedPackIds.add(match[1])
       }
     }
@@ -1570,6 +1574,7 @@ export class R2PackStorage {
 
     for (let packIndex = 0; packIndex < packIds.length; packIndex++) {
       const packId = packIds[packIndex]
+      if (!packId) continue
       // For now, create a synthetic entry per pack
       // In a real implementation, we would parse the index file
       const metadata = await this.getPackfileMetadata(packId)
@@ -1717,8 +1722,8 @@ export class R2PackStorage {
       resource,
       expiresAt,
       acquiredAt: now,
-      holder,
-      stolenCount: 0
+      stolenCount: 0,
+      ...(holder !== undefined ? { holder } : {})
     }
 
     const lockData = encoder.encode(JSON.stringify(lockContent))
@@ -1761,9 +1766,9 @@ export class R2PackStorage {
             resource,
             expiresAt,
             acquiredAt: now,
-            holder,
             stolenCount: (existingContent.stolenCount ?? 0) + 1,
-            previousLockId: existingContent.lockId
+            previousLockId: existingContent.lockId,
+            ...(holder !== undefined ? { holder } : {})
           }
 
           const stolenLockData = encoder.encode(JSON.stringify(stolenLockContent))
@@ -1886,9 +1891,9 @@ export class R2PackStorage {
         exists: true,
         isExpired,
         isStealable,
-        holder: content.holder,
         expiresAt: content.expiresAt,
-        stolenCount: content.stolenCount
+        ...(content.holder !== undefined ? { holder: content.holder } : {}),
+        ...(content.stolenCount !== undefined ? { stolenCount: content.stolenCount } : {})
       }
     } catch (error) {
       console.warn(`[R2PackStorage] getLockStatus: failed to parse lock for ${resource}:`, error instanceof Error ? error.message : String(error))
@@ -1950,9 +1955,9 @@ export class R2PackStorage {
         resource,
         expiresAt,
         acquiredAt: now,
-        holder,
         stolenCount: (existingContent.stolenCount ?? 0) + 1,
-        previousLockId: existingContent.lockId
+        previousLockId: existingContent.lockId,
+        ...(holder !== undefined ? { holder } : {})
       }
 
       const lockData = encoder.encode(JSON.stringify(stolenLockContent))
@@ -2371,7 +2376,9 @@ export async function uploadPackfile(
   indexData: Uint8Array,
   options?: { prefix?: string }
 ): Promise<PackfileUploadResult> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.uploadPackfile(packData, indexData)
 }
 
@@ -2403,7 +2410,9 @@ export async function downloadPackfile(
   packId: string,
   options?: DownloadPackfileOptions & { prefix?: string }
 ): Promise<DownloadPackfileResult | null> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.downloadPackfile(packId, options)
 }
 
@@ -2433,7 +2442,9 @@ export async function getPackfileMetadata(
   packId: string,
   options?: { prefix?: string }
 ): Promise<PackfileMetadata | null> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.getPackfileMetadata(packId)
 }
 
@@ -2460,8 +2471,13 @@ export async function listPackfiles(
   bucket: R2Bucket,
   options?: { prefix?: string; limit?: number; cursor?: string }
 ): Promise<PackfileMetadata[]> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
-  const result = await storage.listPackfiles({ limit: options?.limit, cursor: options?.cursor })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
+  const listOpts: { limit?: number; cursor?: string } = {}
+  if (options?.limit !== undefined) listOpts.limit = options.limit
+  if (options?.cursor !== undefined) listOpts.cursor = options.cursor
+  const result = await storage.listPackfiles(listOpts)
   return result.items
 }
 
@@ -2489,7 +2505,9 @@ export async function deletePackfile(
   packId: string,
   options?: { prefix?: string }
 ): Promise<boolean> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.deletePackfile(packId)
 }
 
@@ -2514,7 +2532,9 @@ export async function createMultiPackIndex(
   bucket: R2Bucket,
   options?: { prefix?: string }
 ): Promise<MultiPackIndex> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   await storage.rebuildMultiPackIndex()
   return storage.getMultiPackIndex()
 }
@@ -2650,6 +2670,9 @@ export function lookupObjectInMultiPack(
   while (left <= right) {
     const mid = Math.floor((left + right) / 2)
     const entry = entries[mid]
+    if (!entry) {
+      return null
+    }
     const cmp = objectId.localeCompare(entry.objectId)
 
     if (cmp === 0) {
@@ -2698,7 +2721,9 @@ export async function acquirePackLock(
   packId: string,
   options?: AcquireLockOptions & { prefix?: string }
 ): Promise<PackLock> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.acquireLock(packId, options)
 }
 
@@ -2772,7 +2797,9 @@ export async function getPackLockStatus(
   expiresAt?: number
   stolenCount?: number
 } | null> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
   return storage.getLockStatus(packId, options?.gracePeriodMs)
 }
 
@@ -2813,7 +2840,9 @@ export async function forceStealPackLock(
   packId: string,
   options?: { prefix?: string; ttl?: number; holder?: string }
 ): Promise<PackLock> {
-  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  const storageOpts: R2PackStorageOptions = { bucket }
+  if (options?.prefix) storageOpts.prefix = options.prefix
+  const storage = new R2PackStorage(storageOpts)
 
   // First check if lock exists and is expired
   const status = await storage.getLockStatus(packId)

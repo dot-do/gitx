@@ -106,14 +106,14 @@ function computeHeaderChecksum(data: Uint8Array): Uint8Array {
   // Simple checksum for header - XOR hash spread across 16 bytes
   const checksum = new Uint8Array(16)
   for (let i = 0; i < data.length; i++) {
-    checksum[i % 16] ^= data[i]
+    checksum[i % 16]! ^= data[i]!
   }
   // Also mix in the data length
   const len = data.length
-  checksum[0] ^= (len >> 24) & 0xff
-  checksum[1] ^= (len >> 16) & 0xff
-  checksum[2] ^= (len >> 8) & 0xff
-  checksum[3] ^= len & 0xff
+  checksum[0]! ^= (len >> 24) & 0xff
+  checksum[1]! ^= (len >> 16) & 0xff
+  checksum[2]! ^= (len >> 8) & 0xff
+  checksum[3]! ^= len & 0xff
   return checksum
 }
 
@@ -123,20 +123,20 @@ function computeBundleChecksum(data: Uint8Array): Uint8Array {
 
   // First process bytes 0-47 (before checksum)
   for (let i = 0; i < 48; i++) {
-    checksum[i % 16] ^= data[i]
+    checksum[i % 16]! ^= data[i]!
   }
 
   // Then process bytes 64+ (after header)
   for (let i = 64; i < data.length; i++) {
-    checksum[i % 16] ^= data[i]
+    checksum[i % 16]! ^= data[i]!
   }
 
   // Mix in the data length
   const len = data.length
-  checksum[0] ^= (len >> 24) & 0xff
-  checksum[1] ^= (len >> 16) & 0xff
-  checksum[2] ^= (len >> 8) & 0xff
-  checksum[3] ^= len & 0xff
+  checksum[0]! ^= (len >> 24) & 0xff
+  checksum[1]! ^= (len >> 16) & 0xff
+  checksum[2]! ^= (len >> 8) & 0xff
+  checksum[3]! ^= len & 0xff
 
   return checksum
 }
@@ -173,19 +173,19 @@ export function parseBundleHeader(
   }
 
   // Parse magic (bytes 0-3)
-  const magic = String.fromCharCode(data[0], data[1], data[2], data[3])
+  const magic = String.fromCharCode(data[0]!, data[1]!, data[2]!, data[3]!)
   if (magic !== BUNDLE_MAGIC) {
     throw new BundleFormatError(`Invalid magic bytes: expected 'BNDL', got '${magic}'`)
   }
 
   // Parse version (bytes 4-7, uint32 BE)
-  const version = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+  const version = (data[4]! << 24) | (data[5]! << 16) | (data[6]! << 8) | data[7]!
   if (version !== BUNDLE_VERSION) {
     throw new BundleFormatError(`Unsupported version: expected ${BUNDLE_VERSION}, got ${version}`)
   }
 
   // Parse entry count (bytes 8-11, uint32 BE) - use >>> 0 to get unsigned
-  const entryCount = ((data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11]) >>> 0
+  const entryCount = ((data[8]! << 24) | (data[9]! << 16) | (data[10]! << 8) | data[11]!) >>> 0
 
   // Parse index offset (bytes 12-19, uint64 BE)
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
@@ -293,18 +293,18 @@ export function parseBundleIndex(data: Uint8Array, entryCount: number): BundleIn
 
     // Parse size (4 bytes, uint32 BE) - starts at byte 28
     const size =
-      (data[base + 28] << 24) |
-      (data[base + 29] << 16) |
-      (data[base + 30] << 8) |
-      data[base + 31]
+      (data[base + 28]! << 24) |
+      (data[base + 29]! << 16) |
+      (data[base + 30]! << 8) |
+      data[base + 31]!
 
     // Parse type (1 byte) - at byte 32
-    const type = data[base + 32]
+    const type = data[base + 32]!
     if (type < 1 || type > 4) {
       throw new BundleIndexError(`Invalid object type: ${type}`)
     }
 
-    entries.push({ oid, offset, size, type })
+    entries.push({ oid, offset, size, type: type as BundleObjectType })
   }
 
   // Sort entries by OID for binary search
@@ -325,7 +325,7 @@ export function createBundleIndex(entries: BundleIndexEntry[]): Uint8Array {
   const indexData = new Uint8Array(sortedEntries.length * BUNDLE_INDEX_ENTRY_SIZE)
 
   for (let i = 0; i < sortedEntries.length; i++) {
-    const entry = sortedEntries[i]
+    const entry = sortedEntries[i]!
     const base = i * BUNDLE_INDEX_ENTRY_SIZE
 
     // OID (20 bytes binary SHA-1)
@@ -362,10 +362,11 @@ export function lookupEntryByOid(
 
   while (left <= right) {
     const mid = Math.floor((left + right) / 2)
-    const cmp = oid.localeCompare(entries[mid].oid)
+    const midEntry = entries[mid]!
+    const cmp = oid.localeCompare(midEntry.oid)
 
     if (cmp === 0) {
-      return entries[mid]
+      return midEntry
     } else if (cmp < 0) {
       right = mid - 1
     } else {
@@ -598,7 +599,7 @@ export class BundleReader implements Iterable<BundleObject> {
           return { done: true, value: undefined }
         }
 
-        const entry = entries[index++]
+        const entry = entries[index++]!
         const objectData = data.slice(entry.offset, entry.offset + entry.size)
 
         return {

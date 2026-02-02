@@ -793,16 +793,19 @@ export async function merge(
     }
     await storage.writeMergeState(mergeState)
 
-    return {
+    const result: MergeResult = {
       status: 'conflicted',
       oursSha,
       theirsSha,
-      baseSha: baseSha ?? undefined,
       treeSha,
       conflicts,
       stats,
       fastForward: false
     }
+    if (baseSha !== null) {
+      result.baseSha = baseSha
+    }
+    return result
   }
 
   // Handle options
@@ -810,32 +813,38 @@ export async function merge(
 
   // If noCommit is set, don't create a commit SHA
   if (options.noCommit) {
-    return {
+    const result: MergeResult = {
       status: 'merged',
       oursSha,
       theirsSha,
-      baseSha: baseSha ?? undefined,
       treeSha,
       stats,
       message: finalMessage,
       fastForward: false
     }
+    if (baseSha !== null) {
+      result.baseSha = baseSha
+    }
+    return result
   }
 
   // Create a merge commit SHA
   const commitSha = generateHexSha(`merge${Date.now()}`)
 
-  return {
+  const result: MergeResult = {
     status: 'merged',
     oursSha,
     theirsSha,
-    baseSha: baseSha ?? undefined,
     treeSha,
     commitSha,
     stats,
     message: finalMessage,
     fastForward: false
   }
+  if (baseSha !== null) {
+    result.baseSha = baseSha
+  }
+  return result
 }
 
 /**
@@ -1086,18 +1095,19 @@ async function mergeEntry(
     const theirsIsDir = theirsEntry.mode === '040000' || theirsEntry.mode === '40000'
 
     if (oursIsDir !== theirsIsDir) {
-      return {
-        conflict: {
-          type: 'directory-file',
-          path,
-          baseSha: baseEntry?.sha,
-          oursSha: oursEntry.sha,
-          theirsSha: theirsEntry.sha,
-          baseMode: baseEntry?.mode,
-          oursMode: oursEntry.mode,
-          theirsMode: theirsEntry.mode
-        }
+      const conflict: MergeConflict = {
+        type: 'directory-file',
+        path,
+        oursSha: oursEntry.sha,
+        theirsSha: theirsEntry.sha,
+        oursMode: oursEntry.mode,
+        theirsMode: theirsEntry.mode
       }
+      if (baseEntry) {
+        conflict.baseSha = baseEntry.sha
+        conflict.baseMode = baseEntry.mode
+      }
+      return { conflict }
     }
 
     // If only one side changed from base, take that side
@@ -1246,12 +1256,13 @@ async function buildAndWriteTree(
 
   for (const [path, entry] of entries) {
     const parts = path.split('/')
+    const firstPart = parts[0]
     if (parts.length === 1) {
       // Top-level file
       topLevel.set(path, entry)
-    } else {
+    } else if (firstPart !== undefined) {
       // Nested file - group by directory
-      const dir = parts[0]
+      const dir = firstPart
       const subPath = parts.slice(1).join('/')
 
       let subEntries = topLevel.get(dir) as Map<string, TreeEntryInfo> | undefined
@@ -1416,19 +1427,27 @@ export async function resolveConflict(
     }
   }
 
-  const conflict = mergeState.unresolvedConflicts[conflictIndex]
-
   // Determine the content to use based on resolution strategy
   let resolvedSha: string
   let resolvedMode: string
 
+  const foundConflict = mergeState.unresolvedConflicts[conflictIndex]
+  if (!foundConflict) {
+    return {
+      success: false,
+      path,
+      error: `No conflict found for path: ${path}`,
+      remainingConflicts: mergeState.unresolvedConflicts.length
+    }
+  }
+
   switch (options.resolution) {
     case 'ours':
-      if (!conflict.oursSha) {
+      if (!foundConflict.oursSha) {
         // If ours is deleted, we want to keep the deletion
         // Remove the conflict and don't stage anything
         mergeState.unresolvedConflicts.splice(conflictIndex, 1)
-        mergeState.resolvedConflicts.push(conflict)
+        mergeState.resolvedConflicts.push(foundConflict)
         await storage.writeMergeState(mergeState)
         return {
           success: true,
@@ -1436,15 +1455,15 @@ export async function resolveConflict(
           remainingConflicts: mergeState.unresolvedConflicts.length
         }
       }
-      resolvedSha = conflict.oursSha
-      resolvedMode = conflict.oursMode || '100644'
+      resolvedSha = foundConflict.oursSha
+      resolvedMode = foundConflict.oursMode || '100644'
       break
 
     case 'theirs':
-      if (!conflict.theirsSha) {
+      if (!foundConflict.theirsSha) {
         // If theirs is deleted, we want to accept the deletion
         mergeState.unresolvedConflicts.splice(conflictIndex, 1)
-        mergeState.resolvedConflicts.push(conflict)
+        mergeState.resolvedConflicts.push(foundConflict)
         await storage.writeMergeState(mergeState)
         return {
           success: true,
@@ -1452,12 +1471,12 @@ export async function resolveConflict(
           remainingConflicts: mergeState.unresolvedConflicts.length
         }
       }
-      resolvedSha = conflict.theirsSha
-      resolvedMode = conflict.theirsMode || '100644'
+      resolvedSha = foundConflict.theirsSha
+      resolvedMode = foundConflict.theirsMode || '100644'
       break
 
     case 'base':
-      if (!conflict.baseSha) {
+      if (!foundConflict.baseSha) {
         return {
           success: false,
           path,
@@ -1465,8 +1484,8 @@ export async function resolveConflict(
           remainingConflicts: mergeState.unresolvedConflicts.length
         }
       }
-      resolvedSha = conflict.baseSha
-      resolvedMode = conflict.baseMode || '100644'
+      resolvedSha = foundConflict.baseSha
+      resolvedMode = foundConflict.baseMode || '100644'
       break
 
     case 'custom':
@@ -1479,7 +1498,7 @@ export async function resolveConflict(
         }
       }
       resolvedSha = await storage.writeObject('blob', options.customContent)
-      resolvedMode = options.customMode || conflict.oursMode || '100644'
+      resolvedMode = options.customMode || foundConflict.oursMode || '100644'
       break
 
     default:
@@ -1496,7 +1515,7 @@ export async function resolveConflict(
 
   // Move conflict from unresolved to resolved
   mergeState.unresolvedConflicts.splice(conflictIndex, 1)
-  mergeState.resolvedConflicts.push(conflict)
+  mergeState.resolvedConflicts.push(foundConflict)
 
   // Update merge state
   await storage.writeMergeState(mergeState)
@@ -1835,14 +1854,20 @@ function lcs<T>(a: T[], b: T[], equals: (x: T, y: T) => boolean): T[] {
   const n = b.length
 
   // Create DP table
-  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0))
+  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0) as number[])
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      if (equals(a[i - 1], b[j - 1])) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+      const aItem = a[i - 1]
+      const bItem = b[j - 1]
+      const dpRow = dp[i]
+      const dpPrevRow = dp[i - 1]
+      if (aItem !== undefined && bItem !== undefined && dpRow && dpPrevRow) {
+        if (equals(aItem, bItem)) {
+          dpRow[j] = (dpPrevRow[j - 1] ?? 0) + 1
+        } else {
+          dpRow[j] = Math.max(dpPrevRow[j] ?? 0, dpRow[j - 1] ?? 0)
+        }
       }
     }
   }
@@ -1852,14 +1877,22 @@ function lcs<T>(a: T[], b: T[], equals: (x: T, y: T) => boolean): T[] {
   let i = m
   let j = n
   while (i > 0 && j > 0) {
-    if (equals(a[i - 1], b[j - 1])) {
-      result.unshift(a[i - 1])
-      i--
-      j--
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      i--
+    const aItem = a[i - 1]
+    const bItem = b[j - 1]
+    const dpRow = dp[i]
+    const dpPrevRow = dp[i - 1]
+    if (aItem !== undefined && bItem !== undefined && dpRow && dpPrevRow) {
+      if (equals(aItem, bItem)) {
+        result.unshift(aItem)
+        i--
+        j--
+      } else if ((dpPrevRow[j] ?? 0) > (dpRow[j - 1] ?? 0)) {
+        i--
+      } else {
+        j--
+      }
     } else {
-      j--
+      break
     }
   }
 
@@ -1912,7 +1945,10 @@ function computeHunks(base: string[], target: string[]): DiffHunk[] {
     // Collect lines in target until we hit the next common line
     const newLines: string[] = []
     while (targetIdx < target.length && target[targetIdx] !== nextCommon) {
-      newLines.push(target[targetIdx])
+      const line = target[targetIdx]
+      if (line !== undefined) {
+        newLines.push(line)
+      }
       targetIdx++
     }
 
@@ -2071,8 +2107,8 @@ export function mergeContent(
   let theirsIdx = 0
 
   while (basePos < baseLines.length || oursIdx < oursHunks.length || theirsIdx < theirsHunks.length) {
-    const oursHunk = oursIdx < oursHunks.length ? oursHunks[oursIdx] : null
-    const theirsHunk = theirsIdx < theirsHunks.length ? theirsHunks[theirsIdx] : null
+    const oursHunk: DiffHunk | undefined = oursHunks[oursIdx]
+    const theirsHunk: DiffHunk | undefined = theirsHunks[theirsIdx]
 
     // Find the next position to process
     const oursStart = oursHunk?.baseStart ?? Infinity
@@ -2081,17 +2117,20 @@ export function mergeContent(
 
     // Copy unchanged lines from base up to the next hunk
     while (basePos < baseLines.length && basePos < nextHunkStart) {
-      mergedLines.push(baseLines[basePos])
+      const baseLine = baseLines[basePos]
+      if (baseLine !== undefined) {
+        mergedLines.push(baseLine)
+      }
       outputLine++
       basePos++
     }
 
-    if (oursHunk === null && theirsHunk === null) {
+    if (oursHunk === undefined && theirsHunk === undefined) {
       break
     }
 
     // Check if hunks overlap
-    if (oursHunk !== null && theirsHunk !== null &&
+    if (oursHunk !== undefined && theirsHunk !== undefined &&
         (oursHunk.baseStart === theirsHunk.baseStart ||
          hunksOverlap(oursHunk, theirsHunk))) {
       // Potential conflict - check if changes are identical
@@ -2148,7 +2187,7 @@ export function mergeContent(
         oursIdx++
         theirsIdx++
       }
-    } else if (oursHunk !== null && (theirsHunk === null || oursHunk.baseStart < theirsHunk.baseStart)) {
+    } else if (oursHunk !== undefined && (theirsHunk === undefined || oursHunk.baseStart < theirsHunk.baseStart)) {
       // Apply ours hunk
       for (const line of oursHunk.newLines) {
         mergedLines.push(line)
@@ -2156,7 +2195,7 @@ export function mergeContent(
       }
       basePos = oursHunk.baseStart + oursHunk.baseCount
       oursIdx++
-    } else if (theirsHunk !== null) {
+    } else if (theirsHunk !== undefined) {
       // Apply theirs hunk
       for (const line of theirsHunk.newLines) {
         mergedLines.push(line)
@@ -2169,7 +2208,10 @@ export function mergeContent(
 
   // Copy any remaining base lines
   while (basePos < baseLines.length) {
-    mergedLines.push(baseLines[basePos])
+    const baseLine = baseLines[basePos]
+    if (baseLine !== undefined) {
+      mergedLines.push(baseLine)
+    }
     outputLine++
     basePos++
   }
