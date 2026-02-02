@@ -151,3 +151,45 @@ export {
   type MoveWorktreeOptions,
   type MoveWorktreeResult,
 } from './worktree'
+
+// Pull Request Operations
+export {
+  createPullRequest,
+  getPullRequest,
+  listPullRequests,
+  updatePullRequestStatus,
+  mergePullRequest,
+  addReview,
+  listReviews,
+  getReviewState,
+  dismissReview,
+  initPullRequestSchema,
+  PULL_REQUEST_SCHEMA_SQL,
+  type PullRequestStatus,
+  type ReviewState,
+  type PullRequestMergeMethod,
+  type PullRequestAuthor,
+  type CreatePullRequestOptions,
+  type PullRequestReview,
+  type PullRequest,
+  type ListPullRequestOptions,
+  type MergePullRequestOptions,
+  type MergePullRequestResult,
+  type PullRequestStorage,
+} from './pull-request'
+
+// Mirror Operations
+export {
+  MirrorSync,
+  pullMirror,
+  pushMirror,
+  matchRefPattern,
+  filterRefs,
+  type MirrorDirection,
+  type ConflictStrategy,
+  type MirrorRemote,
+  type MirrorConfig,
+  type RefSyncResult,
+  type MirrorSyncResult,
+  type MirrorState,
+} from './mirror'

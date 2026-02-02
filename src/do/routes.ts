@@ -26,6 +26,8 @@ import { handleFork, handleSync } from './sync-routes'
 import { handleExport, handleExportStatus } from './export-routes'
 import { setupLfsRoutes, handleLfsBatch, handleLfsUpload, handleLfsDownload, handleLfsVerify } from './lfs-routes'
 import { setupWireRoutes } from './wire-routes'
+import { setupAnalyticsRoutes } from '../web/analytics'
+import { setupWebRoutes } from '../web/index'
 
 // Re-export handlers for backward compatibility
 export { handleHealthCheck, handleInfo } from './health-routes'
@@ -159,6 +161,19 @@ export function setupRoutes(
   // - GET /lfs/objects/:oid - Download LFS object
   // - POST /lfs/verify - Verify uploaded object
   setupLfsRoutes(router, instance)
+
+  // Analytics dashboard (web/analytics.ts)
+  setupAnalyticsRoutes(router, () => ({
+    getObjectStore: () => instance.getObjectStore() as any,
+  }))
+
+  // Web UI for repository browsing (web/index.ts)
+  // - GET /web          - Repository overview (branches, tags)
+  // - GET /web/log      - Commit log
+  // - GET /web/commit/:sha - Commit detail with diff
+  // - GET /web/tree/:ref/* - File tree and file viewer
+  // - GET /web/blob/:sha   - Raw blob viewer
+  setupWebRoutes(router, instance)
 
   // Git Smart HTTP wire protocol routes (wire-routes.ts)
   // These serve git clone/fetch/push over HTTP:
