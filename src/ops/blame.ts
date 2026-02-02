@@ -36,6 +36,7 @@
  */
 
 import { CommitObject, TreeObject } from '../types/objects'
+import { BINARY_CHECK_BYTES } from '../constants'
 
 // ============================================================================
 // Types
@@ -390,8 +391,8 @@ const decoder = new TextDecoder()
  * @internal
  */
 function isBinaryContent(data: Uint8Array): boolean {
-  // Check first 8000 bytes or entire file if smaller
-  const checkLength = Math.min(data.length, 8000)
+  // Check first BINARY_CHECK_BYTES bytes or entire file if smaller
+  const checkLength = Math.min(data.length, BINARY_CHECK_BYTES)
   for (let i = 0; i < checkLength; i++) {
     // Null byte is a strong indicator of binary
     if (data[i] === 0) return true

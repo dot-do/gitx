@@ -15,6 +15,8 @@
  * - `git_branches`: Branch tracking information per repository
  * - `git_content`: Staged file content for commits
  * - `exec`: Execution safety settings and policies for BashModule
+ * - `bundle_index`: Maps SHAs to bundle files + offsets for BundleStorage
+ * - `bundle_metadata`: Tracks sealed bundles and their compaction state
  *
  * @module do/schema
  *
@@ -58,7 +60,7 @@ import type { DurableObjectStorage } from '../storage/types'
  * }
  * ```
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /**
  * Complete SQL schema definition.
@@ -195,6 +197,32 @@ CREATE INDEX IF NOT EXISTS idx_exec_name ON exec(name);
 CREATE INDEX IF NOT EXISTS idx_exec_enabled ON exec(enabled);
 CREATE INDEX IF NOT EXISTS idx_branch_protection_pattern ON branch_protection(pattern);
 CREATE INDEX IF NOT EXISTS idx_branch_protection_enabled ON branch_protection(enabled);
+
+-- Bundle index: maps SHAs to bundle files + offsets for BundleStorage
+CREATE TABLE IF NOT EXISTS bundle_index (
+  sha TEXT PRIMARY KEY,
+  bundle_id TEXT NOT NULL,
+  bundle_key TEXT NOT NULL,
+  offset INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bundle_index_bundle_id ON bundle_index(bundle_id);
+CREATE INDEX IF NOT EXISTS idx_bundle_index_type ON bundle_index(type);
+
+-- Bundle metadata: tracks sealed bundles and their state
+CREATE TABLE IF NOT EXISTS bundle_metadata (
+  bundle_id TEXT PRIMARY KEY,
+  bundle_key TEXT NOT NULL,
+  object_count INTEGER NOT NULL,
+  total_size INTEGER NOT NULL,
+  sealed_at INTEGER NOT NULL,
+  compacted INTEGER NOT NULL DEFAULT 0,
+  superseded_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bundle_metadata_sealed_at ON bundle_metadata(sealed_at);
+CREATE INDEX IF NOT EXISTS idx_bundle_metadata_compacted ON bundle_metadata(compacted);
 `
 
 /**
@@ -204,7 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_branch_protection_enabled ON branch_protection(en
  * Used by validateSchema() to verify all required tables exist.
  * @internal
  */
-const REQUIRED_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'refs', 'git', 'git_branches', 'git_content', 'exec']
+const REQUIRED_TABLES = ['objects', 'object_index', 'hot_objects', 'wal', 'refs', 'git', 'git_branches', 'git_content', 'exec', 'bundle_index', 'bundle_metadata']
 
 // ============================================================================
 // Thin Coordinator Schema (v2)
@@ -287,12 +315,38 @@ CREATE TABLE IF NOT EXISTS branch_protection (
 );
 CREATE INDEX IF NOT EXISTS idx_branch_protection_pattern ON branch_protection(pattern);
 CREATE INDEX IF NOT EXISTS idx_branch_protection_enabled ON branch_protection(enabled);
+
+-- Bundle index: maps SHAs to bundle files + offsets for BundleStorage
+CREATE TABLE IF NOT EXISTS bundle_index (
+  sha TEXT PRIMARY KEY,
+  bundle_id TEXT NOT NULL,
+  bundle_key TEXT NOT NULL,
+  offset INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bundle_index_bundle_id ON bundle_index(bundle_id);
+CREATE INDEX IF NOT EXISTS idx_bundle_index_type ON bundle_index(type);
+
+-- Bundle metadata: tracks sealed bundles and their state
+CREATE TABLE IF NOT EXISTS bundle_metadata (
+  bundle_id TEXT PRIMARY KEY,
+  bundle_key TEXT NOT NULL,
+  object_count INTEGER NOT NULL,
+  total_size INTEGER NOT NULL,
+  sealed_at INTEGER NOT NULL,
+  compacted INTEGER NOT NULL DEFAULT 0,
+  superseded_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bundle_metadata_sealed_at ON bundle_metadata(sealed_at);
+CREATE INDEX IF NOT EXISTS idx_bundle_metadata_compacted ON bundle_metadata(compacted);
 `
 
 /**
  * Required tables for the thin coordinator schema.
  */
-const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache', 'compaction_journal', 'compaction_retries', 'write_buffer_wal']
+const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache', 'compaction_journal', 'compaction_retries', 'write_buffer_wal', 'bundle_index', 'bundle_metadata']
 
 /**
  * Optional legacy tables that may exist during migration.

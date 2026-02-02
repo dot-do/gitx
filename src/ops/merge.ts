@@ -46,6 +46,7 @@
  */
 
 import type { TreeEntry as _TreeEntry } from '../types/objects'
+import { BINARY_CHECK_BYTES } from '../constants'
 
 /**
  * Types of merge conflicts that can occur during a three-way merge.
@@ -2232,8 +2233,8 @@ export function isBinaryFile(content: Uint8Array): boolean {
     return true
   }
 
-  // Check first 8000 bytes for null bytes (similar to Git's heuristic)
-  const checkLength = Math.min(content.length, 8000)
+  // Check first BINARY_CHECK_BYTES bytes for null bytes (similar to Git's heuristic)
+  const checkLength = Math.min(content.length, BINARY_CHECK_BYTES)
   for (let i = 0; i < checkLength; i++) {
     if (content[i] === 0x00) {
       return true

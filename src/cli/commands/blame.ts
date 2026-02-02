@@ -24,6 +24,7 @@
  */
 
 import type { CommandContext } from '../index'
+import { BINARY_CHECK_BYTES } from '../../constants'
 import type { FSAdapter, FSObject } from '../fs-adapter'
 import { parseCommit, parseTree, type CommitObject, type TreeObject } from '../../types/objects'
 
@@ -164,7 +165,7 @@ const decoder = new TextDecoder()
  * Check if content is likely binary (contains null bytes)
  */
 function isBinaryContent(data: Uint8Array): boolean {
-  const checkLength = Math.min(data.length, 8000)
+  const checkLength = Math.min(data.length, BINARY_CHECK_BYTES)
   for (let i = 0; i < checkLength; i++) {
     if (data[i] === 0) return true
   }

@@ -13,6 +13,7 @@ import {
   type ParquetWriter,
   type ParquetSchema,
 } from '../tiered/parquet-writer'
+import { DEFAULT_ROW_GROUP_SIZE } from '../constants'
 import {
   COMMITS_SCHEMA,
   REFS_SCHEMA,
@@ -177,7 +178,7 @@ export class GitParquetExporter {
     this.repository = repository
     this.options = {
       compression: options.compression ?? ParquetCompression.LZ4,
-      rowGroupSize: options.rowGroupSize ?? 10000,
+      rowGroupSize: options.rowGroupSize ?? DEFAULT_ROW_GROUP_SIZE,
       enableStatistics: options.enableStatistics ?? true,
     }
   }

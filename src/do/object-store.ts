@@ -59,6 +59,7 @@ import {
 } from '../types/objects'
 
 import { hashObject, HashCache } from '../utils/hash'
+import { DEFAULT_HASH_CACHE_SIZE } from '../constants'
 import {
   assertValidTreeEntries,
   sortTreeEntries,
@@ -398,7 +399,7 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     // Initialize hash cache for optimizing repeated hash computations
     // This is especially useful for pack file operations and deduplication checks
-    this.hashCache = new HashCache(10000)
+    this.hashCache = new HashCache(DEFAULT_HASH_CACHE_SIZE)
   }
 
   /**
@@ -832,13 +833,69 @@ export class SqliteObjectStore implements BasicObjectStore {
   }
 
   /**
+   * Resolve a short SHA prefix to a full 40-char SHA.
+   *
+   * @description
+   * Looks up a short SHA prefix (4-39 hex chars) in the objects table
+   * using a range query. Returns the full SHA if exactly one match is
+   * found, throws on ambiguous prefix, returns null if not found.
+   *
+   * @param prefix - Short SHA prefix (4-39 hex chars)
+   * @returns Full 40-char SHA or null if not found
+   * @throws Error if prefix is ambiguous (matches multiple objects)
+   * @internal
+   */
+  private async resolveShaPrefix(prefix: string): Promise<string | null> {
+    // Delegate to backend if available
+    if (this.backend) {
+      // Backend doesn't support prefix lookup; fall through to SQLite
+    }
+
+    // Compute upper bound for range query: increment last char
+    const upperBound = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+
+    // Check object_index first (covers both chunked and non-chunked objects)
+    const result = this.storage.sql.exec(
+      'SELECT sha FROM object_index WHERE sha >= ? AND sha < ? LIMIT 2',
+      prefix,
+      upperBound
+    )
+    const rows = typedQuery<{ sha: string }>(result, validateRow(['sha']))
+
+    if (rows.length === 1) {
+      return rows[0].sha
+    }
+    if (rows.length > 1) {
+      throw new Error(`Ambiguous SHA prefix: ${prefix}`)
+    }
+
+    // Fall back to objects table (in case object_index is out of sync)
+    const objResult = this.storage.sql.exec(
+      'SELECT sha FROM objects WHERE sha >= ? AND sha < ? LIMIT 2',
+      prefix,
+      upperBound
+    )
+    const objRows = typedQuery<{ sha: string }>(objResult, validateRow(['sha']))
+
+    if (objRows.length === 1) {
+      return objRows[0].sha
+    }
+    if (objRows.length > 1) {
+      throw new Error(`Ambiguous SHA prefix: ${prefix}`)
+    }
+
+    return null
+  }
+
+  /**
    * Retrieve an object by SHA.
    *
    * @description
    * Fetches an object from the LRU cache first, falling back to the database
    * if not cached. Returns null if the object doesn't exist or if the SHA is invalid.
+   * Supports short SHA prefixes (4-39 hex chars) which are resolved to full SHAs.
    *
-   * @param sha - 40-character SHA-1 hash
+   * @param sha - 40-character SHA-1 hash or short SHA prefix
    * @returns The stored object or null if not found
    *
    * @example
@@ -855,6 +912,19 @@ export class SqliteObjectStore implements BasicObjectStore {
     // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
     if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
       return null
+    }
+
+    // Resolve short SHA prefix to full SHA
+    if (!isValidSha(sha)) {
+      const resolved = await this.resolveShaPrefix(sha)
+      if (!resolved) {
+        if (this.options.enableMetrics) {
+          this._reads++
+          this._totalReadLatency += Date.now() - startTime
+        }
+        return null
+      }
+      sha = resolved
     }
 
     // Check cache first (fast path)
@@ -1102,6 +1172,12 @@ export class SqliteObjectStore implements BasicObjectStore {
     // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
     if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
       return false
+    }
+
+    // Resolve short SHA prefix to full SHA
+    if (!isValidSha(sha)) {
+      const resolved = await this.resolveShaPrefix(sha)
+      return resolved !== null
     }
 
     // Check cache first (fast path)

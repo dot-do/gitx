@@ -523,6 +523,31 @@ export class BloomCache {
   }
 
   /**
+   * Resolve a short SHA prefix to a full SHA from the exact cache.
+   * Returns the full SHA if exactly one match is found, null otherwise.
+   * Throws if multiple matches are found (ambiguous prefix).
+   */
+  async resolvePrefix(prefix: string): Promise<string | null> {
+    await this.initialize()
+
+    if (!this.options.enableExactCache) return null
+
+    const result = this.storage.sql.exec(
+      `SELECT sha FROM ${SHA_CACHE_TABLE} WHERE sha >= ? AND sha < ? LIMIT 2`,
+      prefix,
+      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+    )
+    const rows = typedQuery<{ sha: string }>(result, validateRow(['sha']))
+    if (rows.length === 1) {
+      return rows[0].sha
+    }
+    if (rows.length > 1) {
+      throw new Error(`Ambiguous SHA prefix: ${prefix}`)
+    }
+    return null
+  }
+
+  /**
    * Get object metadata from exact cache.
    */
   async getMetadata(sha: string): Promise<{ type: string; size: number } | null> {

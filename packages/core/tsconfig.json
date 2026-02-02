@@ -28,7 +28,8 @@
     "pack/**/*.ts",
     "refs/**/*.ts",
     "protocol/**/*.ts",
-    "fn/**/*.ts"
+    "fn/**/*.ts",
+    "wire/**/*.ts"
   ],
   "exclude": [
     "node_modules",

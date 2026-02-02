@@ -51,6 +51,7 @@
  */
 
 import type { TreeEntry } from '../types/objects'
+import { BINARY_CHECK_BYTES } from '../constants'
 import { assertValidSha } from '../types/objects'
 import type { TreeDiffObjectStore as ObjectStore } from '../types/storage'
 
@@ -191,8 +192,8 @@ export interface IndexEntry {
  * @returns true if the file appears to be binary
  */
 export function isBinaryContent(content: Uint8Array): boolean {
-  // Check first 8000 bytes for null bytes
-  const checkLength = Math.min(content.length, 8000)
+  // Check first BINARY_CHECK_BYTES bytes for null bytes
+  const checkLength = Math.min(content.length, BINARY_CHECK_BYTES)
   for (let i = 0; i < checkLength; i++) {
     if (content[i] === 0x00) {
       return true

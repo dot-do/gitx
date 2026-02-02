@@ -48,6 +48,7 @@ import {
   CommitProvider,
   TraversalOptions
 } from '../ops/commit-traversal'
+import { BINARY_CHECK_BYTES } from '../constants'
 import {
   DiffStatus,
   ObjectStore as DiffObjectStore,
@@ -2443,7 +2444,7 @@ export const gitTools: MCPTool[] = [
             }
 
             // Check for binary content
-            const isBinary = blob.some((b, i) => i < 8000 && b === 0)
+            const isBinary = blob.some((b, i) => i < BINARY_CHECK_BYTES && b === 0)
             if (isBinary) {
               // Return base64 encoded binary content
               const base64 = btoa(String.fromCharCode(...blob))
@@ -2751,7 +2752,7 @@ export const gitTools: MCPTool[] = [
           }
 
           // Check for binary content (null bytes or binary file signatures)
-          const hasNullBytes = blob.some((b, i) => i < 8000 && b === 0)
+          const hasNullBytes = blob.some((b, i) => i < BINARY_CHECK_BYTES && b === 0)
           // Check for common binary file signatures
           const isPNG = blob[0] === 0x89 && blob[1] === 0x50 && blob[2] === 0x4e && blob[3] === 0x47
           const isJPEG = blob[0] === 0xff && blob[1] === 0xd8 && blob[2] === 0xff

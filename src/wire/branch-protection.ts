@@ -12,6 +12,7 @@
 
 import type { RefUpdateCommand, HookResult } from './receive-pack'
 import { ZERO_SHA } from './receive-pack'
+import { EXACT_MATCH_SPECIFICITY } from '../constants'
 
 // ============================================================================
 // Types
@@ -277,7 +278,7 @@ export function findMatchingRule(
 
       // Exact match gets highest specificity
       if (rule.pattern === refName) {
-        specificity = 1000000
+        specificity = EXACT_MATCH_SPECIFICITY
       } else {
         // Count wildcards (** counts as 2, * counts as 1)
         const doubleStars = (rule.pattern.match(/\*\*/g) || []).length
