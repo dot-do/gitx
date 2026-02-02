@@ -955,13 +955,16 @@ export function parseCommandLine(line: string): RefUpdateCommand {
     type = 'update'
   }
 
-  return {
+  const result: RefUpdateCommand = {
     oldSha: oldSha.toLowerCase(),
     newSha: newSha.toLowerCase(),
     refName,
     type,
-    capabilities: capabilities.length > 0 ? capabilities : undefined,
   }
+  if (capabilities.length > 0) {
+    result.capabilities = capabilities
+  }
+  return result
 }
 
 /**
@@ -1362,7 +1365,7 @@ export function createQuarantine(
 
     async storeObject(sha: string, type: string, data: Uint8Array) {
       // Store in quarantine, not main store
-      quarantinedObjects.set(sha, { type, data })
+      quarantinedObjects.set(sha, { type: type as ObjectType, data })
     },
 
     async isAncestor(ancestor: string, descendant: string) {
@@ -2183,7 +2186,7 @@ function buildPushOptionsEnv(pushOptions?: string[]): Record<string, string> {
   const env: Record<string, string> = {}
 
   if (pushOptions && pushOptions.length > 0) {
-    env.GIT_PUSH_OPTION_COUNT = String(pushOptions.length)
+    env['GIT_PUSH_OPTION_COUNT'] = String(pushOptions.length)
     pushOptions.forEach((option, index) => {
       env[`GIT_PUSH_OPTION_${index}`] = option
     })

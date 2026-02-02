@@ -1871,6 +1871,539 @@ describe('git-upload-pack', () => {
   })
 
   // ==========================================================================
+  // 16b. Shallow Clone Edge Cases
+  // ==========================================================================
+  describe('Shallow Clone Edge Cases', () => {
+    // ========================================================================
+    // depth=1 clone tests
+    // ========================================================================
+    describe('depth=1 clones', () => {
+      it('should only include the tip commit with depth=1', async () => {
+        const session = createSession('test-repo', [])
+        session.wants = [SHA1_COMMIT_1]
+
+        const result = await processShallow(
+          session,
+          [],
+          1, // depth = 1 (minimal shallow clone)
+          undefined,
+          undefined,
+          mockStore
+        )
+
+        // With depth=1, the immediate parent becomes the shallow boundary
+        expect(result.shallowCommits).toContain(SHA1_COMMIT_2)
+        // The parent's parent should NOT be a shallow commit (it's excluded entirely)
+        expect(result.shallowCommits).not.toContain(SHA1_COMMIT_3)
+      })
+
+      it('should handle depth=1 on root commit (no parents)', async () => {
+        const rootCommit = 'root'.padEnd(40, '0')
+        const tree = 'tree'.padEnd(40, '0')
+
+        const rootCommitData = encoder.encode(
+          `tree ${tree}\n` +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\n' +
+          'Root commit'
+        )
+
+        const rootStore: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            if (sha === rootCommit) return { type: 'commit', data: rootCommitData }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            return null
+          },
+          async hasObject(sha: string) {
+            return [rootCommit, tree].includes(sha)
+          },
+          async getCommitParents() { return [] }, // No parents
+          async getRefs() { return [{ name: 'refs/heads/main', sha: rootCommit }] },
+          async getReachableObjects(sha: string) {
+            if (sha === rootCommit) return [rootCommit, tree]
+            return [sha]
+          }
+        }
+
+        const session = createSession('test-repo', [])
+        session.wants = [rootCommit]
+
+        const result = await processShallow(
+          session,
+          [],
+          1,
+          undefined,
+          undefined,
+          rootStore
+        )
+
+        // Root commit has no parents, so no shallow boundary commits
+        expect(result.shallowCommits).toEqual([])
+      })
+
+      it('should generate correct packfile for depth=1 clone', async () => {
+        // For depth=1, packfile should include only the tip commit and its tree/blobs
+        // but NOT parent commits
+        const tipCommit = 'tip0'.padEnd(40, '0')
+        const parentCommit = 'pare'.padEnd(40, '0')
+        const tree = 'tree'.padEnd(40, '0')
+        const blob = 'blob'.padEnd(40, '0')
+
+        const tipCommitData = encoder.encode(
+          `tree ${tree}\n` +
+          `parent ${parentCommit}\n` +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\n' +
+          'Tip commit'
+        )
+        const parentCommitData = encoder.encode(
+          `tree ${tree}\n` +
+          'author Test <test@test.com> 1704067100 +0000\n' +
+          'committer Test <test@test.com> 1704067100 +0000\n\n' +
+          'Parent commit'
+        )
+
+        const depth1Store: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            if (sha === tipCommit) return { type: 'commit', data: tipCommitData }
+            if (sha === parentCommit) return { type: 'commit', data: parentCommitData }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            if (sha === blob) return { type: 'blob', data: encoder.encode('content') }
+            return null
+          },
+          async hasObject(sha: string) {
+            return [tipCommit, parentCommit, tree, blob].includes(sha)
+          },
+          async getCommitParents(sha: string) {
+            if (sha === tipCommit) return [parentCommit]
+            return []
+          },
+          async getRefs() { return [{ name: 'refs/heads/main', sha: tipCommit }] },
+          async getReachableObjects(sha: string) {
+            if (sha === tipCommit) return [tipCommit, tree, blob]
+            if (sha === parentCommit) return [parentCommit, tree, blob]
+            return [sha]
+          }
+        }
+
+        // Use shallow commits to indicate the boundary
+        const shallowCommits = [parentCommit]
+
+        const packResult = await generatePackfile(
+          depth1Store,
+          [tipCommit],
+          [],
+          { shallowCommits }
+        )
+
+        // Should include tip commit, tree, blob but NOT parent commit
+        expect(packResult.includedObjects).toContain(tipCommit)
+        expect(packResult.includedObjects).toContain(tree)
+        expect(packResult.includedObjects).not.toContain(parentCommit)
+      })
+
+      it('should handle depth=1 clone via full fetch flow', async () => {
+        const session = createSession('test-repo', [
+          { name: 'refs/heads/main', sha: SHA1_COMMIT_1 }
+        ], true)
+
+        const request = [
+          `want ${SHA1_COMMIT_1} shallow\n`,
+          'deepen 1\n',
+          'done\n'
+        ].join('')
+
+        const result = await handleFetch(session, request, mockStore)
+
+        // Should succeed and return a response
+        expect(result).toBeInstanceOf(Uint8Array)
+        expect(result.length).toBeGreaterThan(0)
+
+        // Session should have shallow commits recorded
+        expect(session.shallowCommits.length).toBeGreaterThan(0)
+      })
+    })
+
+    // ========================================================================
+    // deepen operations tests
+    // ========================================================================
+    describe('deepen operations', () => {
+      it('should deepen from depth=1 to depth=2', async () => {
+        const session = createSession('test-repo', [])
+        session.wants = [SHA1_COMMIT_1]
+        // session.shallowCommits is the PREVIOUS state that triggers unshallow detection
+        session.shallowCommits = [SHA1_COMMIT_2] // Currently shallow at commit 2
+
+        // When deepening to depth 2, the shallow boundary moves from commit 2 to commit 3
+        // Don't pass shallow lines - they would be re-added to result.shallowCommits
+        const result = await processShallow(
+          session,
+          [], // Empty - the session.shallowCommits is the source of truth for previous state
+          2, // Deepen to depth 2
+          undefined,
+          undefined,
+          mockStore
+        )
+
+        // After deepening, the shallow boundary should move to commit 3
+        expect(result.shallowCommits).toContain(SHA1_COMMIT_3)
+        // Commit 2 was previously shallow but now it's not (it's within depth 2)
+        // Since it's no longer a shallow boundary, it should be in unshallowCommits
+        expect(result.unshallowCommits).toContain(SHA1_COMMIT_2)
+      })
+
+      it('should handle deepen when already at full depth', async () => {
+        // Create a repo with only 2 commits
+        const headCommit = 'head'.padEnd(40, '0')
+        const rootCommit = 'root'.padEnd(40, '0')
+        const tree = 'tree'.padEnd(40, '0')
+
+        const headData = encoder.encode(
+          `tree ${tree}\nparent ${rootCommit}\n` +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\nHead'
+        )
+        const rootData = encoder.encode(
+          `tree ${tree}\n` +
+          'author Test <test@test.com> 1704067100 +0000\n' +
+          'committer Test <test@test.com> 1704067100 +0000\n\nRoot'
+        )
+
+        const shallowStore: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            if (sha === headCommit) return { type: 'commit', data: headData }
+            if (sha === rootCommit) return { type: 'commit', data: rootData }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            return null
+          },
+          async hasObject(sha: string) {
+            return [headCommit, rootCommit, tree].includes(sha)
+          },
+          async getCommitParents(sha: string) {
+            if (sha === headCommit) return [rootCommit]
+            return []
+          },
+          async getRefs() { return [{ name: 'refs/heads/main', sha: headCommit }] },
+          async getReachableObjects(sha: string) {
+            if (sha === headCommit) return [headCommit, rootCommit, tree]
+            return [sha]
+          }
+        }
+
+        const session = createSession('test-repo', [])
+        session.wants = [headCommit]
+        session.shallowCommits = [rootCommit] // Currently shallow at root
+
+        // Try to deepen to depth 10 (more than available)
+        // Don't pass shallow lines - they would be re-added to result.shallowCommits
+        const result = await processShallow(
+          session,
+          [], // Empty - the session.shallowCommits is the source of truth for previous state
+          10, // Deepen beyond available history
+          undefined,
+          undefined,
+          shallowStore
+        )
+
+        // Should unshallow root commit since we've reached full depth
+        expect(result.unshallowCommits).toContain(rootCommit)
+        // No new shallow commits since we hit the end of history
+        expect(result.shallowCommits).not.toContain(headCommit)
+      })
+
+      it('should handle incremental deepen operations', async () => {
+        // Simulate multiple incremental deepens: depth 1 -> 2 -> 3
+        const commits = ['c1', 'c2', 'c3', 'c4'].map(c => c.padEnd(40, '0'))
+        const tree = 'tree'.padEnd(40, '0')
+
+        const makeCommitData = (parent?: string) => encoder.encode(
+          `tree ${tree}\n` +
+          (parent ? `parent ${parent}\n` : '') +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\nCommit'
+        )
+
+        const incrementalStore: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            const idx = commits.indexOf(sha)
+            if (idx >= 0) {
+              const parent = idx < commits.length - 1 ? commits[idx + 1] : undefined
+              return { type: 'commit', data: makeCommitData(parent) }
+            }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            return null
+          },
+          async hasObject(sha: string) {
+            return commits.includes(sha) || sha === tree
+          },
+          async getCommitParents(sha: string) {
+            const idx = commits.indexOf(sha)
+            if (idx >= 0 && idx < commits.length - 1) {
+              return [commits[idx + 1]]
+            }
+            return []
+          },
+          async getRefs() { return [{ name: 'refs/heads/main', sha: commits[0] }] },
+          async getReachableObjects(sha: string) {
+            const idx = commits.indexOf(sha)
+            if (idx >= 0) return [...commits.slice(idx), tree]
+            return [sha]
+          }
+        }
+
+        // Start with depth 1
+        const session1 = createSession('test-repo', [])
+        session1.wants = [commits[0]]
+        const result1 = await processShallow(session1, [], 1, undefined, undefined, incrementalStore)
+        expect(result1.shallowCommits).toContain(commits[1])
+
+        // Deepen to 2 - session already has commits[1] as shallow from depth 1
+        const session2 = createSession('test-repo', [])
+        session2.wants = [commits[0]]
+        session2.shallowCommits = [commits[1]] // Previous shallow state
+        // Don't pass shallow lines - they would be re-added to result.shallowCommits
+        const result2 = await processShallow(session2, [], 2, undefined, undefined, incrementalStore)
+        expect(result2.shallowCommits).toContain(commits[2])
+        expect(result2.unshallowCommits).toContain(commits[1])
+
+        // Deepen to 3 - session already has commits[2] as shallow from depth 2
+        const session3 = createSession('test-repo', [])
+        session3.wants = [commits[0]]
+        session3.shallowCommits = [commits[2]] // Previous shallow state
+        const result3 = await processShallow(session3, [], 3, undefined, undefined, incrementalStore)
+        expect(result3.shallowCommits).toContain(commits[3])
+        expect(result3.unshallowCommits).toContain(commits[2])
+      })
+
+      it('should handle deepen with no prior shallow state', async () => {
+        const session = createSession('test-repo', [])
+        session.wants = [SHA1_COMMIT_1]
+        // No prior shallow commits
+
+        const result = await processShallow(
+          session,
+          [], // No existing shallow lines
+          2,
+          undefined,
+          undefined,
+          mockStore
+        )
+
+        // Should set shallow boundary at depth 2
+        expect(result.shallowCommits).toContain(SHA1_COMMIT_3)
+      })
+    })
+
+    // ========================================================================
+    // shallow boundary conditions tests
+    // ========================================================================
+    describe('shallow boundary conditions', () => {
+      it('should not traverse past shallow boundary when calculating missing objects', async () => {
+        const shallowBoundary = [SHA1_COMMIT_2]
+
+        const missing = await calculateMissingObjects(
+          mockStore,
+          [SHA1_COMMIT_1],
+          [],
+          shallowBoundary
+        )
+
+        // Should include commit 1 but stop at the shallow boundary (commit 2)
+        expect(missing.has(SHA1_COMMIT_1)).toBe(true)
+        // Commit 2 is the boundary - it should be included
+        expect(missing.has(SHA1_COMMIT_2)).toBe(true)
+        // But we should NOT traverse past it to commit 3
+        expect(missing.has(SHA1_COMMIT_3)).toBe(false)
+      })
+
+      it('should handle shallow clone of merge commit', async () => {
+        // Create merge commit with two parents
+        const mergeCommit = 'merg'.padEnd(40, '0')
+        const parent1 = 'par1'.padEnd(40, '0')
+        const parent2 = 'par2'.padEnd(40, '0')
+        const grandparent = 'gran'.padEnd(40, '0')
+        const tree = 'tree'.padEnd(40, '0')
+
+        const makeCommitData = (parents: string[]) => encoder.encode(
+          `tree ${tree}\n` +
+          parents.map(p => `parent ${p}`).join('\n') + (parents.length ? '\n' : '') +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\nCommit'
+        )
+
+        const mergeStore: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            if (sha === mergeCommit) return { type: 'commit', data: makeCommitData([parent1, parent2]) }
+            if (sha === parent1) return { type: 'commit', data: makeCommitData([grandparent]) }
+            if (sha === parent2) return { type: 'commit', data: makeCommitData([grandparent]) }
+            if (sha === grandparent) return { type: 'commit', data: makeCommitData([]) }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            return null
+          },
+          async hasObject(sha: string) {
+            return [mergeCommit, parent1, parent2, grandparent, tree].includes(sha)
+          },
+          async getCommitParents(sha: string) {
+            if (sha === mergeCommit) return [parent1, parent2]
+            if (sha === parent1 || sha === parent2) return [grandparent]
+            return []
+          },
+          async getRefs() { return [{ name: 'refs/heads/main', sha: mergeCommit }] },
+          async getReachableObjects(sha: string) {
+            if (sha === mergeCommit) return [mergeCommit, parent1, parent2, grandparent, tree]
+            return [sha]
+          }
+        }
+
+        const session = createSession('test-repo', [])
+        session.wants = [mergeCommit]
+
+        // Depth 1 on merge commit - both parents become shallow boundaries
+        const result = await processShallow(
+          session,
+          [],
+          1,
+          undefined,
+          undefined,
+          mergeStore
+        )
+
+        // Both parents should be marked as shallow boundaries
+        expect(result.shallowCommits).toContain(parent1)
+        expect(result.shallowCommits).toContain(parent2)
+        // Grandparent should not be a shallow commit
+        expect(result.shallowCommits).not.toContain(grandparent)
+      })
+
+      it('should correctly format shallow response at boundary', async () => {
+        const shallowInfo: ShallowInfo = {
+          shallowCommits: [SHA1_COMMIT_2, SHA1_COMMIT_3],
+          unshallowCommits: []
+        }
+
+        const response = formatShallowResponse(shallowInfo)
+
+        // Should contain both shallow lines
+        expect(response).toContain(`shallow ${SHA1_COMMIT_2}`)
+        expect(response).toContain(`shallow ${SHA1_COMMIT_3}`)
+      })
+
+      it('should handle empty shallow boundary (full clone)', async () => {
+        const session = createSession('test-repo', [])
+        session.wants = [SHA1_COMMIT_1]
+
+        // No depth limit = full clone
+        const result = await processShallow(
+          session,
+          [],
+          undefined, // No depth
+          undefined,
+          undefined,
+          mockStore
+        )
+
+        // No shallow commits for full clone
+        expect(result.shallowCommits).toEqual([])
+      })
+
+      it('should handle shallow clone when client already has some objects', async () => {
+        const session = createSession('test-repo', [])
+        session.wants = [SHA1_COMMIT_1]
+
+        const result = await processShallow(
+          session,
+          [`shallow ${SHA1_COMMIT_3}`], // Client already shallow at commit 3
+          2, // Requesting depth 2
+          undefined,
+          undefined,
+          mockStore
+        )
+
+        // The new depth should be calculated from HEAD
+        // At depth 2, shallow boundary should be at commit 3
+        expect(result.shallowCommits).toContain(SHA1_COMMIT_3)
+      })
+
+      it('should handle boundary at repository root', async () => {
+        // When depth reaches the root commit (no parents)
+        const rootCommit = 'root'.padEnd(40, '0')
+        const tree = 'tree'.padEnd(40, '0')
+
+        const rootData = encoder.encode(
+          `tree ${tree}\n` +
+          'author Test <test@test.com> 1704067200 +0000\n' +
+          'committer Test <test@test.com> 1704067200 +0000\n\nRoot'
+        )
+
+        const singleCommitStore: UploadPackObjectStore = {
+          async getObject(sha: string) {
+            if (sha === rootCommit) return { type: 'commit', data: rootData }
+            if (sha === tree) return { type: 'tree', data: new Uint8Array([]) }
+            return null
+          },
+          async hasObject(sha: string) {
+            return [rootCommit, tree].includes(sha)
+          },
+          async getCommitParents() { return [] },
+          async getRefs() { return [{ name: 'refs/heads/main', sha: rootCommit }] },
+          async getReachableObjects(sha: string) {
+            if (sha === rootCommit) return [rootCommit, tree]
+            return [sha]
+          }
+        }
+
+        const session = createSession('test-repo', [])
+        session.wants = [rootCommit]
+
+        // Request depth that exceeds available history
+        const result = await processShallow(
+          session,
+          [],
+          5, // More than available commits
+          undefined,
+          undefined,
+          singleCommitStore
+        )
+
+        // No shallow boundary because we've reached the root
+        expect(result.shallowCommits).toEqual([])
+      })
+
+      it('should preserve shallow boundary across multiple fetches', async () => {
+        // First fetch with depth=1
+        const session1 = createSession('test-repo', [
+          { name: 'refs/heads/main', sha: SHA1_COMMIT_1 }
+        ], true)
+
+        const request1 = [
+          `want ${SHA1_COMMIT_1} shallow\n`,
+          'deepen 1\n',
+          'done\n'
+        ].join('')
+
+        await handleFetch(session1, request1, mockStore)
+        const shallowAfterFirst = [...session1.shallowCommits]
+
+        // Second fetch should maintain consistency
+        const session2 = createSession('test-repo', [
+          { name: 'refs/heads/main', sha: SHA1_COMMIT_1 }
+        ], true)
+
+        const request2 = [
+          `want ${SHA1_COMMIT_1} shallow\n`,
+          ...shallowAfterFirst.map(s => `shallow ${s}\n`),
+          'done\n'
+        ].join('')
+
+        await handleFetch(session2, request2, mockStore)
+
+        // Shallow state should be preserved
+        expect(session2.shallowCommits).toEqual(shallowAfterFirst)
+      })
+    })
+  })
+
+  // ==========================================================================
   // 17. Stateless HTTP Protocol (RED Phase)
   // ==========================================================================
   describe('Stateless HTTP Protocol', () => {
