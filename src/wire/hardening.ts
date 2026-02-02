@@ -37,6 +37,8 @@
  * ```
  */
 
+import { WireError } from '../errors'
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -230,31 +232,24 @@ export interface RateLimiter {
 /**
  * Malformed packet error.
  */
-export class MalformedPacketError extends Error {
-  readonly code: string
-  readonly packet?: Uint8Array
-
+export class MalformedPacketError extends WireError {
   constructor(message: string, code: string = 'MALFORMED_PACKET', packet?: Uint8Array) {
-    super(message)
+    super(message, code as any, { packet })
     this.name = 'MalformedPacketError'
-    this.code = code
-    this.packet = packet
   }
 }
 
 /**
  * Negotiation limit exceeded error.
  */
-export class NegotiationLimitError extends Error {
-  readonly code: string
+export class NegotiationLimitError extends WireError {
   readonly limit: string
   readonly value: number
   readonly max: number
 
   constructor(message: string, code: string, limit: string, value: number, max: number) {
-    super(message)
+    super(message, code as any)
     this.name = 'NegotiationLimitError'
-    this.code = code
     this.limit = limit
     this.value = value
     this.max = max
@@ -264,13 +259,12 @@ export class NegotiationLimitError extends Error {
 /**
  * Timeout error.
  */
-export class NegotiationTimeoutError extends Error {
-  readonly code: string = 'NEGOTIATION_TIMEOUT'
+export class NegotiationTimeoutError extends WireError {
   readonly elapsed: number
   readonly timeout: number
 
   constructor(elapsed: number, timeout: number) {
-    super(`Negotiation timeout: ${elapsed}ms exceeded ${timeout}ms limit`)
+    super(`Negotiation timeout: ${elapsed}ms exceeded ${timeout}ms limit`, 'NEGOTIATION_TIMEOUT' as any)
     this.name = 'NegotiationTimeoutError'
     this.elapsed = elapsed
     this.timeout = timeout

@@ -1197,10 +1197,17 @@ export class SqliteObjectStore implements BasicObjectStore {
       return this.backend.hasObject(sha)
     }
 
-    // Existing SQLite implementation as fallback
-    // Use getObject and check for null - this works better with the mock
-    const obj = await this.getObject(sha)
-    return obj !== null
+    // Lightweight existence check - avoid reading the full data column
+    try {
+      const result = this.storage.sql.exec(
+        'SELECT 1 FROM objects WHERE sha = ? LIMIT 1',
+        sha
+      )
+      const rows = result.toArray()
+      return rows.length > 0
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -1465,28 +1472,32 @@ export class SqliteObjectStore implements BasicObjectStore {
     if (uncachedShas.length > 0) {
       this.log('debug', `Batch fetching ${uncachedShas.length} uncached objects`)
 
-      // Build optimized IN query
-      const placeholders = uncachedShas.map(() => '?').join(', ')
-      const result = this.storage.sql.exec(
-        `SELECT sha, type, size, data, created_at FROM objects WHERE sha IN (${placeholders})`,
-        ...uncachedShas
-      )
-      const rows = typedQuery<{ sha: string; type: ObjectType; size: number; data: Uint8Array; created_at: number }>(result, validateRow(['sha', 'type', 'size', 'data']))
-
-      // Build lookup map for O(1) access
+      const SQL_BATCH_SIZE = 999
       const rowMap = new Map<string, StoredObject>()
-      for (const row of rows) {
-        const obj: StoredObject = {
-          sha: row.sha,
-          type: row.type,
-          size: row.size,
-          data: row.data,
-          createdAt: row.created_at,
+
+      for (let batchStart = 0; batchStart < uncachedShas.length; batchStart += SQL_BATCH_SIZE) {
+        const batch = uncachedShas.slice(batchStart, batchStart + SQL_BATCH_SIZE)
+        const placeholders = batch.map(() => '?').join(', ')
+        const result = this.storage.sql.exec(
+          `SELECT sha, type, size, data, created_at FROM objects WHERE sha IN (${placeholders})`,
+          ...batch
+        )
+        const rows = typedQuery<{ sha: string; type: ObjectType; size: number; data: Uint8Array; created_at: number }>(result, validateRow(['sha', 'type', 'size', 'data']))
+
+        // Build lookup map for O(1) access
+        for (const row of rows) {
+          const obj: StoredObject = {
+            sha: row.sha,
+            type: row.type,
+            size: row.size,
+            data: row.data,
+            createdAt: row.created_at,
+          }
+          rowMap.set(obj.sha, obj)
+          // Add to cache for future reads
+          this.cache.set(obj.sha, obj)
+          totalBytesRead += obj.size
         }
-        rowMap.set(obj.sha, obj)
-        // Add to cache for future reads
-        this.cache.set(obj.sha, obj)
-        totalBytesRead += obj.size
       }
 
       // Fill in results at original indices

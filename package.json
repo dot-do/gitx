@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "NODE_OPTIONS='--max-old-space-size=2048' vitest run",
+    "test": "NODE_OPTIONS='--max-old-space-size=4096' vitest run",
     "test:node": "vitest run --config vitest.node.config.ts",
     "test:all": "vitest run && vitest run --config vitest.node.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "bench": "vitest bench --config vitest.bench.config.ts",

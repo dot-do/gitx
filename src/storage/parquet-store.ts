@@ -216,6 +216,7 @@ export class ParquetStore implements CASBackend {
   private prefix: string
   private bloomCache: BloomCache
   private buffer: BufferedObject[] = []
+  private bufferIndex: Map<string, BufferedObject> = new Map()
   private bufferBytes = 0
   private flushThreshold: number
   private flushBytesThreshold: number
@@ -424,12 +425,14 @@ export class ParquetStore implements CASBackend {
         : new Uint8Array(row.data as ArrayBufferLike)
 
       // Add to buffer
-      this.buffer.push({
+      const buffObj = {
         sha: row.sha,
         type: row.type,
         data,
         path: row.path ?? undefined,
-      })
+      }
+      this.buffer.push(buffObj)
+      this.bufferIndex.set(row.sha, buffObj)
       this.bufferBytes += data.length
       this.walEntryIds.push(row.id)
       existingShas.add(row.sha)
@@ -486,7 +489,9 @@ export class ParquetStore implements CASBackend {
       }
 
       // Buffer the object for Parquet write
-      this.buffer.push({ sha, type, data, path })
+      const buffObj2 = { sha, type, data, path }
+      this.buffer.push(buffObj2)
+      this.bufferIndex.set(sha, buffObj2)
       this.bufferBytes += data.length
 
       // Register in bloom cache
@@ -531,7 +536,7 @@ export class ParquetStore implements CASBackend {
 
       // Check in-memory buffer FIRST (before bloom filter)
       // This is critical for WAL recovery - recovered objects may not be in bloom cache yet
-      const buffered = this.buffer.find(o => o.sha === sha)
+      const buffered = this.bufferIndex.get(sha)
       if (buffered) {
         this.metrics.recordCacheHit(sha, 'buffer')
         const latencyMs = performance.now() - startTime
@@ -718,6 +723,7 @@ export class ParquetStore implements CASBackend {
         const objects = this.buffer
         const walIds = [...this.walEntryIds]
         this.buffer = []
+        this.bufferIndex.clear()
         this.bufferBytes = 0
         this.walEntryIds = []
 

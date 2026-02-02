@@ -502,7 +502,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    */
   getRepositoryProvider(): DORepositoryProvider {
     if (!this._cachedRepositoryProvider) {
-      this._cachedRepositoryProvider = new DORepositoryProvider(this.state.storage)
+      this._cachedRepositoryProvider = new DORepositoryProvider(this.state.storage, this._parquetStore)
       this._logger.debug('DORepositoryProvider created and cached')
     }
     return this._cachedRepositoryProvider

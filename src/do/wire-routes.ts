@@ -24,6 +24,7 @@ import {
   handleReceivePack,
 } from '../wire/smart-http'
 import { SqliteObjectStore } from './object-store'
+import type { CASBackend } from '../storage/backend'
 import { SchemaManager, type DurableObjectStorage } from './schema'
 import type { ObjectType } from '../types/objects'
 import { PushTransaction } from '../storage/push-transaction'
@@ -67,10 +68,10 @@ export class DORepositoryProvider implements RepositoryProvider {
   private schemaManager: SchemaManager
   private schemaInitialized = false
 
-  constructor(storage: DurableObjectStorage) {
+  constructor(storage: DurableObjectStorage, backend?: CASBackend) {
     this.storage = storage
     this.schemaManager = new SchemaManager(storage)
-    this.objectStore = new SqliteObjectStore(storage)
+    this.objectStore = new SqliteObjectStore(storage, backend ? { backend } : undefined)
   }
 
   private async ensureSchema(): Promise<void> {
