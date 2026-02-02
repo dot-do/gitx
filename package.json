@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "NODE_OPTIONS='--max-old-space-size=4096' vitest run && NODE_OPTIONS='--max-old-space-size=4096' vitest run --config vitest.config.2.ts",
+    "test": "NODE_OPTIONS='--max-old-space-size=4096' vitest run && NODE_OPTIONS='--max-old-space-size=4096' vitest run --config vitest.config.2.ts && NODE_OPTIONS='--max-old-space-size=4096' vitest run --config vitest.config.3.ts && NODE_OPTIONS='--max-old-space-size=4096' vitest run --config vitest.config.4.ts",
     "test:node": "vitest run --config vitest.node.config.ts",
     "test:all": "vitest run && vitest run --config vitest.node.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
