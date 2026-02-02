@@ -10,6 +10,7 @@
  * - Checkpoint creation for efficient recovery
  * - WAL truncation after successful checkpoints
  * - Unflushed entry recovery for crash recovery
+ * - Thread-safe compaction with ReadWriteLock to prevent races
  *
  * @module do/wal
  *
@@ -34,6 +35,7 @@
  */
 
 import { DurableObjectStorage } from './schema'
+import { ReadWriteLock } from '../utils/async-mutex'
 
 // ============================================================================
 // Types and Interfaces
@@ -222,6 +224,17 @@ export class WALManager {
   private transactions: Map<string, Transaction> = new Map()
   /** Current WAL position for entry ID assignment */
   private currentWalPosition: number = 0
+  /**
+   * Read-write lock for coordinating WAL operations.
+   *
+   * - Append, flush, recover: Use read lock (multiple can run concurrently)
+   * - Truncate (compaction): Uses write lock (exclusive access)
+   *
+   * This prevents the race condition where truncateBeforeCheckpoint()
+   * could delete entries while append() is adding new ones, potentially
+   * causing data loss or inconsistent state.
+   */
+  private rwLock: ReadWriteLock = new ReadWriteLock()
 
   /**
    * Create a new WALManager.
@@ -260,26 +273,29 @@ export class WALManager {
    * ```
    */
   async append(operation: WALOperationType, payload: Uint8Array, transactionId?: string): Promise<number> {
-    const result = this.storage.sql.exec(
-      'INSERT INTO wal (operation, payload, transaction_id) VALUES (?, ?, ?)',
-      operation,
-      payload,
-      transactionId ?? null
-    )
+    // Use read lock - multiple appends can happen concurrently, but not during truncation
+    return this.rwLock.withReadLock(async () => {
+      const result = this.storage.sql.exec(
+        'INSERT INTO wal (operation, payload, transaction_id) VALUES (?, ?, ?)',
+        operation,
+        payload,
+        transactionId ?? null
+      )
 
-    const rows = result.toArray() as { id: number }[]
-    const entryId = rows[0]?.id ?? this.currentWalPosition + 1
-    this.currentWalPosition = entryId
+      const rows = result.toArray() as { id: number }[]
+      const entryId = rows[0]?.id ?? this.currentWalPosition + 1
+      this.currentWalPosition = entryId
 
-    // Track operation in transaction if applicable
-    if (transactionId) {
-      const tx = this.transactions.get(transactionId)
-      if (tx) {
-        tx.operations.push(entryId)
+      // Track operation in transaction if applicable
+      if (transactionId) {
+        const tx = this.transactions.get(transactionId)
+        if (tx) {
+          tx.operations.push(entryId)
+        }
       }
-    }
 
-    return entryId
+      return entryId
+    })
   }
 
   /**
@@ -298,21 +314,24 @@ export class WALManager {
    * ```
    */
   async flush(): Promise<number> {
-    // Get count of unflushed entries
-    const countResult = this.storage.sql.exec(
-      'SELECT COUNT(*) as count FROM wal WHERE flushed = 0'
-    )
-    const countRows = countResult.toArray() as { count: number }[]
-    const count = countRows[0]?.count ?? 0
+    // Use read lock - flush can run concurrently with appends, but not during truncation
+    return this.rwLock.withReadLock(async () => {
+      // Get count of unflushed entries
+      const countResult = this.storage.sql.exec(
+        'SELECT COUNT(*) as count FROM wal WHERE flushed = 0'
+      )
+      const countRows = countResult.toArray() as { count: number }[]
+      const count = countRows[0]?.count ?? 0
 
-    if (count === 0) {
-      return 0
-    }
+      if (count === 0) {
+        return 0
+      }
 
-    // Mark all unflushed entries as flushed
-    this.storage.sql.exec('UPDATE wal SET flushed = 1 WHERE flushed = 0')
+      // Mark all unflushed entries as flushed
+      this.storage.sql.exec('UPDATE wal SET flushed = 1 WHERE flushed = 0')
 
-    return count
+      return count
+    })
   }
 
   /**
@@ -334,12 +353,15 @@ export class WALManager {
    * ```
    */
   async recover(): Promise<WALEntry[]> {
-    const result = this.storage.sql.exec(
-      'SELECT id, operation, payload, transaction_id, created_at, flushed FROM wal WHERE flushed = 0 ORDER BY id ASC'
-    )
+    // Use read lock - recover can run concurrently with appends, but not during truncation
+    return this.rwLock.withReadLock(async () => {
+      const result = this.storage.sql.exec(
+        'SELECT id, operation, payload, transaction_id, created_at, flushed FROM wal WHERE flushed = 0 ORDER BY id ASC'
+      )
 
-    const rows = result.toArray() as WALEntry[]
-    return rows.sort((a, b) => a.id - b.id)
+      const rows = result.toArray() as WALEntry[]
+      return rows.sort((a, b) => a.id - b.id)
+    })
   }
 
   /**
@@ -549,34 +571,48 @@ export class WALManager {
    * ```
    */
   async createCheckpoint(metadata?: string): Promise<Checkpoint> {
-    // Flush all pending entries before creating checkpoint
-    await this.flush()
+    // Use read lock for the entire checkpoint operation
+    // Flush is called internally and will acquire its own read lock (reentrant via withReadLock)
+    return this.rwLock.withReadLock(async () => {
+      // Flush all pending entries before creating checkpoint
+      // Note: flush() will try to acquire read lock again, but since we already hold it,
+      // we need to call the internal flush logic directly to avoid deadlock
+      const countResultFlush = this.storage.sql.exec(
+        'SELECT COUNT(*) as count FROM wal WHERE flushed = 0'
+      )
+      const countRowsFlush = countResultFlush.toArray() as { count: number }[]
+      const countFlush = countRowsFlush[0]?.count ?? 0
 
-    // Get current WAL position
-    const countResult = this.storage.sql.exec(
-      'SELECT MAX(id) as max_id FROM wal'
-    )
-    const countRows = countResult.toArray() as { max_id: number | null }[]
-    const walPosition = countRows[0]?.max_id ?? 0
+      if (countFlush > 0) {
+        this.storage.sql.exec('UPDATE wal SET flushed = 1 WHERE flushed = 0')
+      }
 
-    // Create checkpoint entry
-    const result = this.storage.sql.exec(
-      'INSERT INTO checkpoints (wal_position, metadata) VALUES (?, ?)',
-      walPosition,
-      metadata ?? null
-    )
+      // Get current WAL position
+      const countResult = this.storage.sql.exec(
+        'SELECT MAX(id) as max_id FROM wal'
+      )
+      const countRows = countResult.toArray() as { max_id: number | null }[]
+      const walPosition = countRows[0]?.max_id ?? 0
 
-    const rows = result.toArray() as { id: number }[]
-    const checkpointId = rows[0]?.id ?? 1
+      // Create checkpoint entry
+      const result = this.storage.sql.exec(
+        'INSERT INTO checkpoints (wal_position, metadata) VALUES (?, ?)',
+        walPosition,
+        metadata ?? null
+      )
 
-    const checkpoint: Checkpoint = {
-      id: checkpointId,
-      walPosition,
-      createdAt: Date.now(),
-      metadata: metadata ?? null
-    }
+      const rows = result.toArray() as { id: number }[]
+      const checkpointId = rows[0]?.id ?? 1
 
-    return checkpoint
+      const checkpoint: Checkpoint = {
+        id: checkpointId,
+        walPosition,
+        createdAt: Date.now(),
+        metadata: metadata ?? null
+      }
+
+      return checkpoint
+    })
   }
 
   /**
@@ -624,10 +660,14 @@ export class WALManager {
    * ```
    */
   async truncateBeforeCheckpoint(checkpoint: Checkpoint): Promise<void> {
-    this.storage.sql.exec(
-      'DELETE FROM wal WHERE id <= ? AND flushed = 1',
-      checkpoint.walPosition
-    )
+    // Use write lock - truncation needs exclusive access to prevent race with concurrent appends
+    // This ensures no appends happen while we're deleting entries
+    await this.rwLock.withWriteLock(async () => {
+      this.storage.sql.exec(
+        'DELETE FROM wal WHERE id <= ? AND flushed = 1',
+        checkpoint.walPosition
+      )
+    })
   }
 
   /**

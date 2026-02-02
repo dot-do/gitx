@@ -722,15 +722,56 @@ export async function handleLfsBatch(
 // ============================================================================
 
 /**
+ * Route setup options.
+ */
+export interface RouteSetupOptions {
+  /**
+   * Enable rate limiting middleware.
+   * When true, applies default rate limits.
+   * Can also provide custom RateLimitOptions.
+   */
+  rateLimit?: boolean | RateLimitOptions
+
+  /**
+   * Custom rate limit store (required if rateLimit is enabled without full options).
+   */
+  rateLimitStore?: RateLimitStore
+}
+
+// Rate limiting imports (lazy to avoid circular deps)
+import {
+  createRateLimitMiddleware,
+  MemoryRateLimitStore,
+  DEFAULT_LIMITS,
+  type RateLimitOptions,
+  type RateLimitStore,
+} from '../middleware/rate-limit'
+
+/**
  * Setup all routes on a Hono router.
  *
  * @param router - Hono router instance
  * @param instance - GitRepoDO instance
+ * @param options - Optional configuration for routes
  */
 export function setupRoutes(
   router: Hono<{ Bindings: Record<string, unknown> }>,
-  instance: GitRepoDOInstance
+  instance: GitRepoDOInstance,
+  options: RouteSetupOptions = {}
 ): void {
+  // Apply rate limiting middleware if enabled
+  if (options.rateLimit) {
+    const rateLimitOptions: RateLimitOptions =
+      typeof options.rateLimit === 'object'
+        ? options.rateLimit
+        : {
+            store: options.rateLimitStore ?? new MemoryRateLimitStore(),
+            limits: DEFAULT_LIMITS,
+          }
+
+    router.use('*', createRateLimitMiddleware(rateLimitOptions))
+  }
+
   // Health check endpoint
   router.get('/health', (c) => handleHealthCheck(c, instance))
 

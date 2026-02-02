@@ -129,6 +129,16 @@ export interface GitRepoDOEnv extends BaseEnv {
    * Bound via wrangler.toml [[r2_buckets]] configuration.
    */
   ANALYTICS_BUCKET?: R2Bucket
+  /**
+   * Durable Object binding for distributed rate limiting.
+   * Optional - if not provided, rate limiting will use in-memory storage.
+   */
+  RATE_LIMIT_DO?: DONamespaceBinding
+  /**
+   * Enable rate limiting on DO routes.
+   * When true, applies default rate limits using in-memory or DO-backed storage.
+   */
+  ENABLE_RATE_LIMIT?: boolean
 }
 
 // ============================================================================

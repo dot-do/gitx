@@ -42,10 +42,11 @@ import type {
 } from './types'
 import { GitRepoDOError, GitRepoDOErrorCode } from './types'
 import { createLogger } from './logger'
-import { setupRoutes, type GitRepoDOInstance } from './routes'
+import { setupRoutes, type GitRepoDOInstance, type RouteSetupOptions } from './routes'
 import { ThinSchemaManager } from './schema'
 import { ParquetStore } from '../storage/parquet-store'
 import { RefLog } from '../delta/ref-log'
+import { MemoryRateLimitStore, DORateLimitStore, DEFAULT_LIMITS } from '../middleware/rate-limit'
 
 // ============================================================================
 // Compaction Retry Constants
@@ -314,7 +315,22 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
 
     // Initialize router with extracted route handlers
     this._router = new Hono()
-    setupRoutes(this._router, this)
+
+    // Configure rate limiting based on environment
+    const routeOptions: RouteSetupOptions = {}
+    if (env.ENABLE_RATE_LIMIT) {
+      routeOptions.rateLimit = {
+        store: env.RATE_LIMIT_DO
+          ? new DORateLimitStore(env.RATE_LIMIT_DO as unknown as Parameters<typeof DORateLimitStore>[0])
+          : new MemoryRateLimitStore(),
+        limits: DEFAULT_LIMITS,
+      }
+      this._logger.debug('Rate limiting enabled', {
+        backend: env.RATE_LIMIT_DO ? 'durable-object' : 'memory',
+      })
+    }
+
+    setupRoutes(this._router, this, routeOptions)
 
     // Initialize workflow context
     this._$ = this._createWorkflowContext()

@@ -246,12 +246,25 @@ CREATE TABLE IF NOT EXISTS compaction_retries (
   last_error TEXT,
   updated_at INTEGER NOT NULL
 );
+
+-- Write-ahead log for ParquetStore write buffer durability
+-- Buffered objects are persisted here before being acknowledged
+-- On crash recovery, un-flushed WAL entries are replayed into the buffer
+CREATE TABLE IF NOT EXISTS write_buffer_wal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sha TEXT NOT NULL,
+  type TEXT NOT NULL,
+  data BLOB NOT NULL,
+  path TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_write_buffer_wal_sha ON write_buffer_wal(sha);
 `
 
 /**
  * Required tables for the thin coordinator schema.
  */
-const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache', 'compaction_journal', 'compaction_retries']
+const THIN_REQUIRED_TABLES = ['refs', 'bloom_filter', 'sha_cache', 'compaction_journal', 'compaction_retries', 'write_buffer_wal']
 
 /**
  * Optional legacy tables that may exist during migration.

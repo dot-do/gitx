@@ -158,7 +158,87 @@ export const LANGUAGES: Record<string, string> = {
 }
 
 /**
+ * Map of dotfile names (lowercase, without leading dot) to language name.
+ * Used for files that start with a dot but have no extension.
+ */
+export const DOTFILES: Record<string, string> = {
+  // Shell config files
+  bashrc: 'Shell',
+  bash_profile: 'Shell',
+  bash_login: 'Shell',
+  bash_logout: 'Shell',
+  bash_aliases: 'Shell',
+  profile: 'Shell',
+  zshrc: 'Shell',
+  zshenv: 'Shell',
+  zprofile: 'Shell',
+  zlogin: 'Shell',
+  zlogout: 'Shell',
+  zsh_aliases: 'Shell',
+  kshrc: 'Shell',
+  cshrc: 'Shell',
+  tcshrc: 'Shell',
+  shrc: 'Shell',
+
+  // Git
+  gitignore: 'gitignore',
+  gitattributes: 'gitattributes',
+  gitmodules: 'gitconfig',
+  gitconfig: 'gitconfig',
+
+  // Editor configs
+  editorconfig: 'EditorConfig',
+  vimrc: 'Vim Script',
+  gvimrc: 'Vim Script',
+  exrc: 'Vim Script',
+  nvimrc: 'Vim Script',
+  nanorc: 'nanorc',
+  inputrc: 'Readline',
+
+  // Linters and formatters
+  eslintrc: 'JSON',
+  prettierrc: 'JSON',
+  stylelintrc: 'JSON',
+  babelrc: 'JSON',
+  browserslistrc: 'Browserslist',
+  markdownlintrc: 'JSON',
+
+  // Environment and config
+  env: 'dotenv',
+  envrc: 'Shell',
+  npmrc: 'INI',
+  yarnrc: 'YAML',
+  nvmrc: 'Text',
+  node_version: 'Text',
+  ruby_version: 'Text',
+  python_version: 'Text',
+  tool_versions: 'Text',
+
+  // Docker
+  dockerignore: 'dockerignore',
+
+  // CI/CD
+  travis: 'YAML',
+
+  // Other common dotfiles
+  htaccess: 'Apache Config',
+  htpasswd: 'Apache Config',
+  mailmap: 'mailmap',
+  clang_format: 'YAML',
+  clang_tidy: 'YAML',
+  flake8: 'INI',
+  pylintrc: 'INI',
+  perlcriticrc: 'INI',
+  rubocop: 'YAML',
+  rspec: 'Ruby',
+  gemrc: 'YAML',
+  irbrc: 'Ruby',
+  pryrc: 'Ruby',
+}
+
+/**
  * Detect the programming language of a file based on its path/extension.
+ * Handles regular files, dotfiles (e.g., .bashrc), and dotfiles with extensions (e.g., .eslintrc.json).
  * @param path File path or filename
  * @returns Language name or null if unknown
  */
@@ -166,7 +246,31 @@ export function detectLanguage(path: string): string | null {
   if (!path) return null
   const lastSegment = path.split('/').pop() || path
   const dotIndex = lastSegment.lastIndexOf('.')
-  if (dotIndex <= 0) return null // no extension or dot-file like ".hidden"
+
+  // Handle dotfiles (files starting with a dot)
+  if (lastSegment.startsWith('.')) {
+    const withoutLeadingDot = lastSegment.slice(1)
+
+    // Check for dotfile with extension (e.g., .eslintrc.json, .tsconfig.json)
+    const extDotIndex = withoutLeadingDot.lastIndexOf('.')
+    if (extDotIndex > 0) {
+      const ext = withoutLeadingDot.slice(extDotIndex + 1).toLowerCase()
+      if (ext && LANGUAGES[ext]) {
+        return LANGUAGES[ext]
+      }
+    }
+
+    // Check for pure dotfile (e.g., .bashrc, .gitignore)
+    const dotfileName = withoutLeadingDot.toLowerCase()
+    if (DOTFILES[dotfileName]) {
+      return DOTFILES[dotfileName]
+    }
+
+    return null
+  }
+
+  // Regular file - check extension
+  if (dotIndex <= 0) return null // no extension
   const ext = lastSegment.slice(dotIndex + 1).toLowerCase()
   if (!ext) return null
   return LANGUAGES[ext] ?? null

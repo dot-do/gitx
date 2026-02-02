@@ -33,6 +33,24 @@ import { GIT_OBJECTS_SCHEMA } from './parquet-schemas'
 import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
+import { ReadWriteLock } from '../utils/async-mutex'
+
+// ============================================================================
+// Write-Ahead Log (WAL)
+// ============================================================================
+
+/** SQLite table name for write buffer WAL */
+const WRITE_BUFFER_WAL_TABLE = 'write_buffer_wal'
+
+/** WAL entry structure */
+interface WALEntry {
+  id: number
+  sha: string
+  type: string
+  data: Uint8Array
+  path: string | null
+  created_at: number
+}
 
 // ============================================================================
 // Compaction Journal
@@ -192,6 +210,18 @@ export class ParquetStore implements CASBackend {
   private onFlush: OnFlushHandler | undefined
   private _compactionNeeded = false
   private verifyBloomNegatives: boolean
+  /** Track WAL entry IDs for current buffer to clear after flush */
+  private walEntryIds: number[] = []
+  /**
+   * Read-write lock for coordinating compaction with concurrent writes/reads.
+   *
+   * - putObject, getObject, hasObject, flush: Use read lock (multiple can run concurrently)
+   * - compact: Uses write lock (exclusive access)
+   *
+   * This prevents the race condition where compact() could read stale buffer state
+   * or delete Parquet files while other operations are reading from them.
+   */
+  private rwLock: ReadWriteLock = new ReadWriteLock()
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
@@ -229,12 +259,28 @@ export class ParquetStore implements CASBackend {
       );
     `)
 
+    // Create write buffer WAL table for durability
+    this.sql.sql.exec(`
+      CREATE TABLE IF NOT EXISTS ${WRITE_BUFFER_WAL_TABLE} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sha TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data BLOB NOT NULL,
+        path TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_write_buffer_wal_sha ON ${WRITE_BUFFER_WAL_TABLE}(sha);
+    `)
+
     await this.bloomCache.initialize()
     // Discover existing object files
     await this.discoverObjectFiles()
 
     // Recover from any interrupted compaction
     await this.recoverCompaction()
+
+    // Recover any un-flushed WAL entries into the buffer
+    await this.recoverWAL()
 
     this.initialized = true
   }
@@ -304,6 +350,64 @@ export class ParquetStore implements CASBackend {
   }
 
   /**
+   * Recover un-flushed WAL entries into the in-memory buffer.
+   *
+   * Called during initialization to replay any buffered writes that were
+   * persisted to WAL but not yet flushed to Parquet. This ensures durability
+   * across DO restarts/crashes.
+   *
+   * Deduplicates by SHA to handle partial recovery scenarios where some
+   * objects may have been successfully flushed but WAL wasn't cleared.
+   */
+  private async recoverWAL(): Promise<void> {
+    const result = this.sql.sql.exec(
+      `SELECT id, sha, type, data, path, created_at FROM ${WRITE_BUFFER_WAL_TABLE} ORDER BY id ASC`
+    )
+    const rows = result.toArray() as WALEntry[]
+
+    if (rows.length === 0) return
+
+    // Track SHAs already in buffer to avoid duplicates
+    const existingShas = new Set(this.buffer.map(o => o.sha))
+
+    for (const row of rows) {
+      // Skip if already in buffer (shouldn't happen normally but handle gracefully)
+      if (existingShas.has(row.sha)) {
+        this.walEntryIds.push(row.id)
+        continue
+      }
+
+      // Validate object type
+      if (!isValidObjectType(row.type)) {
+        console.warn(`[ParquetStore] WAL recovery: skipping invalid type ${row.type} for SHA ${row.sha}`)
+        // Delete invalid WAL entry
+        this.sql.sql.exec(`DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE id = ?`, row.id)
+        continue
+      }
+
+      // Convert data to Uint8Array if needed
+      const data = row.data instanceof Uint8Array
+        ? row.data
+        : new Uint8Array(row.data as ArrayBufferLike)
+
+      // Add to buffer
+      this.buffer.push({
+        sha: row.sha,
+        type: row.type,
+        data,
+        path: row.path ?? undefined,
+      })
+      this.bufferBytes += data.length
+      this.walEntryIds.push(row.id)
+      existingShas.add(row.sha)
+    }
+
+    if (rows.length > 0) {
+      console.log(`[ParquetStore] WAL recovery: replayed ${rows.length} entries into buffer`)
+    }
+  }
+
+  /**
    * List existing Parquet object files in R2.
    */
   private async discoverObjectFiles(): Promise<void> {
@@ -315,70 +419,154 @@ export class ParquetStore implements CASBackend {
   // StorageBackend: CAS Operations
   // ===========================================================================
 
-  async putObject(type: ObjectType, data: Uint8Array): Promise<string> {
+  async putObject(type: ObjectType, data: Uint8Array, path?: string): Promise<string> {
     await this.initialize()
 
-    const sha = await hashObject(type, data)
-    const storage = detectStorageMode(type, data)
+    // Use read lock - multiple writes can happen concurrently, but not during compaction
+    return this.rwLock.withReadLock(async () => {
+      const sha = await hashObject(type, data)
+      const storage = detectStorageMode(type, data)
 
-    // If R2 or LFS, upload raw data to R2
-    if (storage === 'r2' || storage === 'lfs') {
-      const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
-      await this.r2.put(r2Key, data)
-    }
+      // If R2 or LFS, upload raw data to R2
+      if (storage === 'r2' || storage === 'lfs') {
+        const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
+        await this.r2.put(r2Key, data)
+      }
 
-    // Buffer the object for Parquet write
-    this.buffer.push({ sha, type, data })
-    this.bufferBytes += data.length
+      // Persist to WAL BEFORE accepting the write for durability
+      // This ensures the write survives crashes before being flushed to Parquet
+      const now = Date.now()
+      this.sql.sql.exec(
+        `INSERT INTO ${WRITE_BUFFER_WAL_TABLE} (sha, type, data, path, created_at) VALUES (?, ?, ?, ?, ?)`,
+        sha, type, data, path ?? null, now
+      )
 
-    // Register in bloom cache
-    await this.bloomCache.add(sha, type, data.length)
+      // Get the WAL entry ID for later cleanup after flush
+      const walIdResult = this.sql.sql.exec(
+        `SELECT id FROM ${WRITE_BUFFER_WAL_TABLE} WHERE sha = ? AND created_at = ? ORDER BY id DESC LIMIT 1`,
+        sha, now
+      )
+      const walIdRows = walIdResult.toArray() as Array<{ id: number }>
+      if (walIdRows[0]) {
+        this.walEntryIds.push(walIdRows[0].id)
+      }
 
-    // Auto-flush if buffer is large enough
-    if (this.buffer.length >= this.flushThreshold || this.bufferBytes >= this.flushBytesThreshold) {
-      await this.flush()
-    }
+      // Buffer the object for Parquet write
+      this.buffer.push({ sha, type, data, path })
+      this.bufferBytes += data.length
 
-    // Back-pressure: auto-flush if buffer exceeds hard limits to prevent OOM
-    await this.checkBufferPressure()
+      // Register in bloom cache
+      await this.bloomCache.add(sha, type, data.length)
 
-    return sha
+      // Check if flush is needed - we'll do it outside the lock to avoid deadlock
+      const needsFlush = this.buffer.length >= this.flushThreshold || this.bufferBytes >= this.flushBytesThreshold
+      const needsBackPressure = this.bufferBytes >= this.maxBufferBytes || this.buffer.length >= this.maxBufferObjects
+
+      return { sha, needsFlush: needsFlush || needsBackPressure }
+    }).then(async (result) => {
+      // Perform flush outside the read lock to avoid deadlock with compaction
+      // The data is already safely persisted in WAL
+      if (result.needsFlush) {
+        await this.flush()
+      }
+      return result.sha
+    })
   }
 
   // ===========================================================================
   // Back-pressure
   // ===========================================================================
 
-  /**
-   * Check buffer size and auto-flush if it exceeds back-pressure limits.
-   * This prevents unbounded memory growth that could cause OOM.
-   *
-   * Called after each putObject to enforce hard limits on buffer size.
-   * Unlike the normal flush threshold (which is a target), these are
-   * safety limits that should never be exceeded.
-   */
-  private async checkBufferPressure(): Promise<void> {
-    if (this.bufferBytes >= this.maxBufferBytes || this.buffer.length >= this.maxBufferObjects) {
-      await this.flush()
-    }
-  }
-
   async getObject(sha: string): Promise<StoredObjectResult | null> {
     await this.initialize()
 
+    // Use read lock - multiple reads can happen concurrently, but not during compaction
+    return this.rwLock.withReadLock(async () => {
+      // Check tombstones first
+      if (this.tombstones.has(sha)) return null
+
+      // Check in-memory buffer FIRST (before bloom filter)
+      // This is critical for WAL recovery - recovered objects may not be in bloom cache yet
+      const buffered = this.buffer.find(o => o.sha === sha)
+      if (buffered) {
+        return { type: buffered.type, content: buffered.data }
+      }
+
+      // Check bloom filter for persisted objects
+      const check = await this.bloomCache.check(sha)
+      if (check === 'absent') {
+        return null
+      }
+
+      // Scan Parquet files in reverse order (newest first)
+      for (let i = this.objectFileKeys.length - 1; i >= 0; i--) {
+        const key = this.objectFileKeys[i]
+        if (!key) continue
+        const result = await this.readObjectFromParquet(key, sha)
+        if (result) {
+          // Promote bloom-probable SHAs to exact cache after confirmed R2 read
+          if (check === 'probable') {
+            await this.bloomCache.add(sha, result.type, result.content.byteLength)
+          }
+          return result
+        }
+      }
+
+      return null
+    })
+  }
+
+  async hasObject(sha: string): Promise<boolean> {
+    await this.initialize()
+
+    // Use read lock - multiple checks can happen concurrently, but not during compaction
+    return this.rwLock.withReadLock(async () => {
+      // Check tombstones first
+      if (this.tombstones.has(sha)) return false
+
+      // Check bloom filter
+      const check = await this.bloomCache.check(sha)
+      if (check === 'definite') return true
+
+      // Check buffer
+      if (this.buffer.some(o => o.sha === sha)) return true
+
+      // Bloom filter says absent - optionally verify with R2 to catch false negatives
+      if (check === 'absent') {
+        if (this.verifyBloomNegatives) {
+          const result = await this.checkR2ExistsInternal(sha)
+          if (result) {
+            // Self-heal: add to bloom filter so future lookups are faster
+            await this.bloomCache.add(sha, result.type, result.content.byteLength)
+            return true
+          }
+        }
+        return false
+      }
+
+      // Bloom says probable - full check requires scanning Parquet files
+      // Note: We call getObjectInternal to avoid nested lock acquisition
+      const obj = await this.getObjectInternal(sha, check)
+      return obj !== null
+    })
+  }
+
+  /**
+   * Internal getObject implementation that doesn't acquire the lock.
+   * Used by hasObject to avoid nested lock acquisition.
+   */
+  private async getObjectInternal(sha: string, bloomCheck: 'definite' | 'probable' | 'absent'): Promise<StoredObjectResult | null> {
     // Check tombstones first
     if (this.tombstones.has(sha)) return null
 
-    // Check bloom filter first
-    const check = await this.bloomCache.check(sha)
-    if (check === 'absent') {
-      return null
-    }
-
-    // Check in-memory buffer
+    // Check in-memory buffer FIRST
     const buffered = this.buffer.find(o => o.sha === sha)
     if (buffered) {
       return { type: buffered.type, content: buffered.data }
+    }
+
+    if (bloomCheck === 'absent') {
+      return null
     }
 
     // Scan Parquet files in reverse order (newest first)
@@ -388,7 +576,7 @@ export class ParquetStore implements CASBackend {
       const result = await this.readObjectFromParquet(key, sha)
       if (result) {
         // Promote bloom-probable SHAs to exact cache after confirmed R2 read
-        if (check === 'probable') {
+        if (bloomCheck === 'probable') {
           await this.bloomCache.add(sha, result.type, result.content.byteLength)
         }
         return result
@@ -398,43 +586,13 @@ export class ParquetStore implements CASBackend {
     return null
   }
 
-  async hasObject(sha: string): Promise<boolean> {
-    await this.initialize()
-
-    // Check tombstones first
-    if (this.tombstones.has(sha)) return false
-
-    // Check bloom filter
-    const check = await this.bloomCache.check(sha)
-    if (check === 'definite') return true
-
-    // Check buffer
-    if (this.buffer.some(o => o.sha === sha)) return true
-
-    // Bloom filter says absent - optionally verify with R2 to catch false negatives
-    if (check === 'absent') {
-      if (this.verifyBloomNegatives) {
-        const result = await this.checkR2Exists(sha)
-        if (result) {
-          // Self-heal: add to bloom filter so future lookups are faster
-          await this.bloomCache.add(sha, result.type, result.content.byteLength)
-          return true
-        }
-      }
-      return false
-    }
-
-    // Bloom says probable - full check requires scanning Parquet files
-    const obj = await this.getObject(sha)
-    return obj !== null
-  }
-
   /**
    * Check if an object exists in R2 by scanning Parquet files.
    * Used as a fallback when bloom filter says absent but we want to verify.
    * Returns the object result if found, null otherwise.
+   * Internal version that doesn't acquire the lock - must be called within a lock.
    */
-  private async checkR2Exists(sha: string): Promise<StoredObjectResult | null> {
+  private async checkR2ExistsInternal(sha: string): Promise<StoredObjectResult | null> {
     // Check in-memory buffer first
     const buffered = this.buffer.find(o => o.sha === sha)
     if (buffered) {
@@ -460,6 +618,11 @@ export class ParquetStore implements CASBackend {
     this.tombstones.add(sha)
     // Remove from buffer if present
     this.buffer = this.buffer.filter(o => o.sha !== sha)
+    // Also remove from WAL to prevent recovery of deleted objects
+    this.sql.sql.exec(
+      `DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE sha = ?`,
+      sha
+    )
   }
 
   // ===========================================================================
@@ -468,72 +631,94 @@ export class ParquetStore implements CASBackend {
 
   /**
    * Flush buffered objects to a new Parquet file on R2.
+   *
+   * WAL entries are cleared ONLY after the Parquet file is successfully
+   * written to R2. If the flush fails, WAL entries remain for recovery.
    */
   async flush(): Promise<string | null> {
     if (this.buffer.length === 0) return null
 
     await this.initialize()
 
-    const objects = this.buffer
-    this.buffer = []
-    this.bufferBytes = 0
+    // Use read lock - flush can run concurrently with other operations, but not during compaction
+    return this.rwLock.withReadLock(async () => {
+      // Re-check after acquiring lock (buffer may have been drained by another flush)
+      if (this.buffer.length === 0) return null
 
-    const batch = encodeObjectBatch(objects, { r2Prefix: `${this.prefix}/raw` })
+      const objects = this.buffer
+      const walIds = [...this.walEntryIds]
+      this.buffer = []
+      this.bufferBytes = 0
+      this.walEntryIds = []
 
-    const buffer = parquetWriteBuffer({
-      codec: this.codec,
-      schema: GIT_OBJECTS_SCHEMA,
-      columnData: [
-        { name: 'sha', data: batch.shas },
-        { name: 'type', data: batch.types },
-        { name: 'size', data: batch.sizes },
-        { name: 'storage', data: batch.storages },
-        { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
-        { name: 'variant_value', data: batch.variantData.map(v => v.value) },
-        { name: 'raw_data', data: objects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
-        { name: 'path', data: batch.paths },
-        // Shredded commit fields
-        { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
-        { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
-        { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
-      ],
-    })
+      const batch = encodeObjectBatch(objects, { r2Prefix: `${this.prefix}/raw` })
 
-    // Generate a deterministic key from the sorted SHAs so re-flushing the
-    // same buffer produces the same R2 key (idempotent).
-    const sortedShas = objects.map(o => o.sha).sort()
-    const shaDigest = await crypto.subtle.digest(
-      'SHA-256',
-      new TextEncoder().encode(sortedShas.join(''))
-    )
-    const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-    const key = `${this.prefix}/objects/${fileId}.parquet`
-    await this.r2.put(key, buffer)
-    if (!this.objectFileKeys.includes(key)) {
-      this.objectFileKeys.push(key)
-    }
+      const buffer = parquetWriteBuffer({
+        codec: this.codec,
+        schema: GIT_OBJECTS_SCHEMA,
+        columnData: [
+          { name: 'sha', data: batch.shas },
+          { name: 'type', data: batch.types },
+          { name: 'size', data: batch.sizes },
+          { name: 'storage', data: batch.storages },
+          { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
+          { name: 'variant_value', data: batch.variantData.map(v => v.value) },
+          { name: 'raw_data', data: objects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
+          { name: 'path', data: batch.paths },
+          // Shredded commit fields
+          { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
+          { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
+          { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
+        ],
+      })
 
-    // Persist bloom filter
-    await this.bloomCache.persist()
-
-    // Invoke post-flush handler (e.g., Iceberg metadata generation)
-    if (this.onFlush) {
-      try {
-        await this.onFlush({
-          parquetKey: key,
-          fileSizeBytes: buffer.byteLength,
-          recordCount: objects.length,
-          r2: this.r2,
-          prefix: this.prefix,
-        })
-      } catch (err) {
-        console.error('[ParquetStore] onFlush handler failed:', err)
+      // Generate a deterministic key from the sorted SHAs so re-flushing the
+      // same buffer produces the same R2 key (idempotent).
+      const sortedShas = objects.map(o => o.sha).sort()
+      const shaDigest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(sortedShas.join(''))
+      )
+      const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+      const key = `${this.prefix}/objects/${fileId}.parquet`
+      await this.r2.put(key, buffer)
+      if (!this.objectFileKeys.includes(key)) {
+        this.objectFileKeys.push(key)
       }
-    }
 
-    return key
+      // Clear WAL entries AFTER successful R2 write
+      // This ensures durability - if R2 write fails, WAL entries remain for retry
+      if (walIds.length > 0) {
+        // Use batch delete for efficiency
+        const placeholders = walIds.map(() => '?').join(',')
+        this.sql.sql.exec(
+          `DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE id IN (${placeholders})`,
+          ...walIds
+        )
+      }
+
+      // Persist bloom filter
+      await this.bloomCache.persist()
+
+      // Invoke post-flush handler (e.g., Iceberg metadata generation)
+      if (this.onFlush) {
+        try {
+          await this.onFlush({
+            parquetKey: key,
+            fileSizeBytes: buffer.byteLength,
+            recordCount: objects.length,
+            r2: this.r2,
+            prefix: this.prefix,
+          })
+        } catch (err) {
+          console.error('[ParquetStore] onFlush handler failed:', err)
+        }
+      }
+
+      return key
+    })
   }
 
   // ===========================================================================
@@ -547,168 +732,177 @@ export class ParquetStore implements CASBackend {
    * deduplicates by SHA, and writes a single merged Parquet file.
    * Old files are deleted from R2 after the new file is written.
    *
+   * Uses write lock for exclusive access - no other operations can run during compaction.
+   * This prevents race conditions where:
+   * - putObject could add objects to buffer while compaction reads it
+   * - getObject could read from Parquet files being deleted
+   * - flush could create new Parquet files during compaction
+   *
    * @returns The key of the new compacted file, or null if no compaction needed
    */
   async compact(): Promise<string | null> {
     await this.initialize()
 
-    if (this.objectFileKeys.length < 2) return null
+    // Use write lock - compaction needs exclusive access to prevent races
+    return this.rwLock.withWriteLock(async () => {
+      if (this.objectFileKeys.length < 2) return null
 
-    // Generate target key upfront so we can journal it
-    const fileId = crypto.randomUUID()
-    const newKey = `${this.prefix}/objects/${fileId}.parquet`
-    const sourceKeys = [...this.objectFileKeys]
+      // Generate target key upfront so we can journal it
+      const fileId = crypto.randomUUID()
+      const newKey = `${this.prefix}/objects/${fileId}.parquet`
+      const sourceKeys = [...this.objectFileKeys]
 
-    // Write journal entry BEFORE starting compaction
-    const now = Date.now()
-    this.sql.sql.exec(
-      `INSERT INTO ${COMPACTION_JOURNAL_TABLE} (source_keys, target_key, status, created_at) VALUES (?, ?, ?, ?)`,
-      JSON.stringify(sourceKeys),
-      newKey,
-      'in_progress' satisfies CompactionJournalStatus,
-      now,
-    )
-    // Get the journal entry ID for later updates
-    const journalResult = this.sql.sql.exec(
-      `SELECT id FROM ${COMPACTION_JOURNAL_TABLE} WHERE target_key = ? AND created_at = ?`,
-      newKey, now,
-    )
-    const journalRows = journalResult.toArray() as Array<{ id: number }>
-    const journalId = journalRows[0]?.id
+      // Write journal entry BEFORE starting compaction
+      const now = Date.now()
+      this.sql.sql.exec(
+        `INSERT INTO ${COMPACTION_JOURNAL_TABLE} (source_keys, target_key, status, created_at) VALUES (?, ?, ?, ?)`,
+        JSON.stringify(sourceKeys),
+        newKey,
+        'in_progress' satisfies CompactionJournalStatus,
+        now,
+      )
+      // Get the journal entry ID for later updates
+      const journalResult = this.sql.sql.exec(
+        `SELECT id FROM ${COMPACTION_JOURNAL_TABLE} WHERE target_key = ? AND created_at = ?`,
+        newKey, now,
+      )
+      const journalRows = journalResult.toArray() as Array<{ id: number }>
+      const journalId = journalRows[0]?.id
 
-    // Read all rows from all Parquet files
-    const allObjects: BufferedObject[] = []
-    const seenShas = new Set<string>()
+      // Read all rows from all Parquet files
+      const allObjects: BufferedObject[] = []
+      const seenShas = new Set<string>()
 
-    for (const key of this.objectFileKeys) {
-      const r2Obj = await this.r2.get(key)
-      if (!r2Obj) continue
+      for (const key of this.objectFileKeys) {
+        const r2Obj = await this.r2.get(key)
+        if (!r2Obj) continue
 
-      const arrayBuffer = await r2Obj.arrayBuffer()
-      const file: AsyncBuffer = {
-        byteLength: arrayBuffer.byteLength,
-        slice(start: number, end?: number) {
-          return arrayBuffer.slice(start, end)
-        },
-      }
+        const arrayBuffer = await r2Obj.arrayBuffer()
+        const file: AsyncBuffer = {
+          byteLength: arrayBuffer.byteLength,
+          slice(start: number, end?: number) {
+            return arrayBuffer.slice(start, end)
+          },
+        }
 
-      try {
-        const rows = await parquetReadObjects({
-          file,
-          columns: ['sha', 'type', 'storage', 'raw_data'],
-          rowFormat: 'object',
-        })
+        try {
+          const rows = await parquetReadObjects({
+            file,
+            columns: ['sha', 'type', 'storage', 'raw_data'],
+            rowFormat: 'object',
+          })
 
-        for (const row of rows) {
-          const sha = row['sha'] as string
-          // Skip tombstoned and duplicate SHAs
-          if (this.tombstones.has(sha) || seenShas.has(sha)) continue
-          seenShas.add(sha)
+          for (const row of rows) {
+            const sha = row['sha'] as string
+            // Skip tombstoned and duplicate SHAs
+            if (this.tombstones.has(sha) || seenShas.has(sha)) continue
+            seenShas.add(sha)
 
-          const rawType = row['type']
-          const rawStorage = row['storage']
-          if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) continue
-          const type = rawType
-          const storage = rawStorage
-          const rawData = row['raw_data']
+            const rawType = row['type']
+            const rawStorage = row['storage']
+            if (!isValidObjectType(rawType) || !isValidStorageMode(rawStorage)) continue
+            const type = rawType
+            const storage = rawStorage
+            const rawData = row['raw_data']
 
-          if (storage === 'inline' && rawData != null) {
-            const data = rawData instanceof Uint8Array
-              ? rawData
-              : typeof rawData === 'string'
-                ? new TextEncoder().encode(rawData)
-                : new Uint8Array(rawData as ArrayBuffer)
-            allObjects.push({ sha, type, data })
-          } else {
-            // For R2/LFS objects, fetch from raw storage
-            const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
-            const rawObj = await this.r2.get(r2Key)
-            if (rawObj) {
-              const data = new Uint8Array(await rawObj.arrayBuffer())
+            if (storage === 'inline' && rawData != null) {
+              const data = rawData instanceof Uint8Array
+                ? rawData
+                : typeof rawData === 'string'
+                  ? new TextEncoder().encode(rawData)
+                  : new Uint8Array(rawData as ArrayBuffer)
               allObjects.push({ sha, type, data })
+            } else {
+              // For R2/LFS objects, fetch from raw storage
+              const r2Key = buildR2Key(sha, `${this.prefix}/raw`)
+              const rawObj = await this.r2.get(r2Key)
+              if (rawObj) {
+                const data = new Uint8Array(await rawObj.arrayBuffer())
+                allObjects.push({ sha, type, data })
+              }
             }
           }
+        } catch (error) {
+          // Skip unreadable files but log for debugging
+          console.warn(`[ParquetStore] compaction: failed to read parquet file ${key}:`, error instanceof Error ? error.message : String(error))
         }
-      } catch (error) {
-        // Skip unreadable files but log for debugging
-        console.warn(`[ParquetStore] compaction: failed to read parquet file ${key}:`, error instanceof Error ? error.message : String(error))
       }
-    }
 
-    if (allObjects.length === 0) {
-      // Nothing to compact - clean up journal
+      if (allObjects.length === 0) {
+        // Nothing to compact - clean up journal
+        if (journalId != null) {
+          this.sql.sql.exec(
+            `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
+            journalId,
+          )
+        }
+        return null
+      }
+
+      // Also include any buffered objects
+      for (const obj of this.buffer) {
+        if (!this.tombstones.has(obj.sha) && !seenShas.has(obj.sha)) {
+          allObjects.push(obj)
+          seenShas.add(obj.sha)
+        }
+      }
+
+      // Write the compacted file
+      const batch = encodeObjectBatch(allObjects, { r2Prefix: `${this.prefix}/raw` })
+
+      const buffer = parquetWriteBuffer({
+        codec: this.codec,
+        schema: GIT_OBJECTS_SCHEMA,
+        columnData: [
+          { name: 'sha', data: batch.shas },
+          { name: 'type', data: batch.types },
+          { name: 'size', data: batch.sizes },
+          { name: 'storage', data: batch.storages },
+          { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
+          { name: 'variant_value', data: batch.variantData.map(v => v.value) },
+          { name: 'raw_data', data: allObjects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
+          { name: 'path', data: batch.paths },
+          { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
+          { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
+          { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
+        ],
+      })
+
+      await this.r2.put(newKey, buffer)
+
+      // Mark journal as 'written' - target file is safe on R2
+      if (journalId != null) {
+        this.sql.sql.exec(
+          `UPDATE ${COMPACTION_JOURNAL_TABLE} SET status = ? WHERE id = ?`,
+          'written' satisfies CompactionJournalStatus,
+          journalId,
+        )
+      }
+
+      // Delete old files from R2
+      for (const key of sourceKeys) {
+        await this.r2.delete(key)
+      }
+
+      // Update state
+      this.objectFileKeys = [newKey]
+      this.buffer = []
+      this.bufferBytes = 0
+      this.tombstones.clear()
+
+      // Persist bloom filter
+      await this.bloomCache.persist()
+
+      // Compaction fully complete - delete journal entry
       if (journalId != null) {
         this.sql.sql.exec(
           `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
           journalId,
         )
       }
-      return null
-    }
 
-    // Also include any buffered objects
-    for (const obj of this.buffer) {
-      if (!this.tombstones.has(obj.sha) && !seenShas.has(obj.sha)) {
-        allObjects.push(obj)
-        seenShas.add(obj.sha)
-      }
-    }
-
-    // Write the compacted file
-    const batch = encodeObjectBatch(allObjects, { r2Prefix: `${this.prefix}/raw` })
-
-    const buffer = parquetWriteBuffer({
-      codec: this.codec,
-      schema: GIT_OBJECTS_SCHEMA,
-      columnData: [
-        { name: 'sha', data: batch.shas },
-        { name: 'type', data: batch.types },
-        { name: 'size', data: batch.sizes },
-        { name: 'storage', data: batch.storages },
-        { name: 'variant_metadata', data: batch.variantData.map(v => v.metadata) },
-        { name: 'variant_value', data: batch.variantData.map(v => v.value) },
-        { name: 'raw_data', data: allObjects.map(o => detectStorageMode(o.type, o.data) === 'inline' ? o.data : null) },
-        { name: 'path', data: batch.paths },
-        { name: 'author_name', data: batch.commitFields.map(f => f?.author_name ?? null) },
-        { name: 'author_date', data: batch.commitFields.map(f => f?.author_date != null ? BigInt(f.author_date) : null) },
-        { name: 'message', data: batch.commitFields.map(f => f?.message ?? null) },
-      ],
+      return newKey
     })
-
-    await this.r2.put(newKey, buffer)
-
-    // Mark journal as 'written' - target file is safe on R2
-    if (journalId != null) {
-      this.sql.sql.exec(
-        `UPDATE ${COMPACTION_JOURNAL_TABLE} SET status = ? WHERE id = ?`,
-        'written' satisfies CompactionJournalStatus,
-        journalId,
-      )
-    }
-
-    // Delete old files from R2
-    for (const key of sourceKeys) {
-      await this.r2.delete(key)
-    }
-
-    // Update state
-    this.objectFileKeys = [newKey]
-    this.buffer = []
-    this.bufferBytes = 0
-    this.tombstones.clear()
-
-    // Persist bloom filter
-    await this.bloomCache.persist()
-
-    // Compaction fully complete - delete journal entry
-    if (journalId != null) {
-      this.sql.sql.exec(
-        `DELETE FROM ${COMPACTION_JOURNAL_TABLE} WHERE id = ?`,
-        journalId,
-      )
-    }
-
-    return newKey
   }
 
   // ===========================================================================

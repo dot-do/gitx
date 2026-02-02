@@ -1229,3 +1229,66 @@ export { default as App } from '../App.js'
  * ```
  */
 export { default as Site } from '../Site.js'
+
+// =============================================================================
+// Middleware - Rate limiting and other request processing
+// =============================================================================
+
+/**
+ * Rate limiting middleware.
+ *
+ * @description
+ * Configurable rate limiting to protect against abuse:
+ * - Different limits for different endpoint types (push, fetch, API)
+ * - In-memory and Durable Object-backed storage options
+ * - Returns 429 Too Many Requests with Retry-After header
+ * - Configurable key extraction (IP, user ID, API key)
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createRateLimitMiddleware,
+ *   MemoryRateLimitStore,
+ *   DEFAULT_LIMITS
+ * } from 'gitx.do'
+ *
+ * const store = new MemoryRateLimitStore()
+ * const rateLimiter = createRateLimitMiddleware({
+ *   store,
+ *   limits: DEFAULT_LIMITS,
+ * })
+ *
+ * // Apply to Hono router
+ * app.use('*', rateLimiter)
+ * ```
+ */
+export {
+  // Types
+  type RateLimitConfig,
+  type RateLimitConfigs,
+  type RateLimitResult,
+  type RateLimitInfo,
+  type RateLimitStore,
+  type RateLimitOptions,
+  type EndpointType,
+  type KeyExtractor,
+  type EndpointClassifier,
+  // Constants
+  DEFAULT_LIMITS,
+  // Stores
+  MemoryRateLimitStore,
+  DORateLimitStore,
+  // DO class
+  RateLimitDO,
+  // Middleware factory
+  createRateLimitMiddleware,
+  // Utility functions
+  createDefaultRateLimiter,
+  createStrictRateLimiter,
+  createPermissiveRateLimiter,
+  // Key extraction
+  defaultKeyExtractor,
+  createUserAwareKeyExtractor,
+  // Endpoint classification
+  defaultEndpointClassifier,
+} from './middleware/rate-limit'

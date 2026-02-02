@@ -89,3 +89,15 @@ export {
   type WarmTierBackend,
   type ColdTierBackend,
 } from '../tiered/read-path'
+
+// Garbage Collection
+export {
+  GarbageCollector,
+  ParquetStoreGCAdapter,
+  createGCForParquetStore,
+  type GCObjectStore,
+  type GCRefStore,
+  type GCOptions,
+  type GCResult,
+  type GCLogger,
+} from './gc'

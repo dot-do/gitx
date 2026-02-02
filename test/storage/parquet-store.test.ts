@@ -821,4 +821,374 @@ describe('ParquetStore', () => {
       await expect(failStore.putObject('blob', encoder.encode('test'))).rejects.toThrow('R2 list failed')
     })
   })
+
+  describe('WAL durability', () => {
+    /**
+     * Create a mock storage that tracks WAL entries.
+     * This allows us to inspect WAL state for testing crash recovery.
+     */
+    function createWALMockStorage(): DurableObjectStorage & {
+      walEntries: Map<number, { sha: string; type: string; data: Uint8Array; path: string | null; created_at: number }>
+      walIdCounter: number
+    } {
+      const walEntries = new Map<number, { sha: string; type: string; data: Uint8Array; path: string | null; created_at: number }>()
+
+      // Use an object to hold the counter so it can be modified from outside
+      const state = { walIdCounter: 0 }
+
+      const result = {
+        walEntries,
+        get walIdCounter() { return state.walIdCounter },
+        set walIdCounter(v: number) { state.walIdCounter = v },
+        sql: {
+          exec: vi.fn((query: string, ...params: unknown[]) => {
+            // Handle CREATE TABLE/INDEX (no-op)
+            if (query.includes('CREATE TABLE') || query.includes('CREATE INDEX')) {
+              return { toArray: () => [] }
+            }
+
+            // Handle WAL INSERT
+            if (query.includes('INSERT INTO write_buffer_wal')) {
+              state.walIdCounter++
+              walEntries.set(state.walIdCounter, {
+                sha: params[0] as string,
+                type: params[1] as string,
+                data: params[2] as Uint8Array,
+                path: params[3] as string | null,
+                created_at: params[4] as number,
+              })
+              return { toArray: () => [] }
+            }
+
+            // Handle WAL SELECT for getting ID after insert
+            if (query.includes('SELECT id FROM write_buffer_wal WHERE sha')) {
+              const sha = params[0] as string
+              const createdAt = params[1] as number
+              for (const [id, entry] of walEntries) {
+                if (entry.sha === sha && entry.created_at === createdAt) {
+                  return { toArray: () => [{ id }] }
+                }
+              }
+              return { toArray: () => [] }
+            }
+
+            // Handle WAL SELECT ALL for recovery
+            if (query.includes('SELECT id, sha, type, data, path, created_at FROM write_buffer_wal')) {
+              const entries = Array.from(walEntries.entries())
+                .map(([id, e]) => ({ id, ...e }))
+                .sort((a, b) => a.id - b.id)
+              return { toArray: () => entries }
+            }
+
+            // Handle WAL DELETE by ID list
+            if (query.includes('DELETE FROM write_buffer_wal WHERE id IN')) {
+              for (const id of params) {
+                walEntries.delete(id as number)
+              }
+              return { toArray: () => [] }
+            }
+
+            // Handle WAL DELETE by SHA (for deleteObject)
+            if (query.includes('DELETE FROM write_buffer_wal WHERE sha')) {
+              const sha = params[0] as string
+              for (const [id, entry] of walEntries) {
+                if (entry.sha === sha) {
+                  walEntries.delete(id)
+                }
+              }
+              return { toArray: () => [] }
+            }
+
+            // Handle WAL DELETE by single ID (for invalid type cleanup)
+            if (query.includes('DELETE FROM write_buffer_wal WHERE id = ?')) {
+              const id = params[0] as number
+              walEntries.delete(id)
+              return { toArray: () => [] }
+            }
+
+            // Default: return empty results
+            return { toArray: () => [] }
+          }),
+        },
+      }
+
+      return result
+    }
+
+    it('should persist writes to WAL before acknowledging', async () => {
+      const walStorage = createWALMockStorage()
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      const data = encoder.encode('wal test data')
+      const sha = await walStore.putObject('blob', data)
+
+      // WAL should have the entry
+      expect(walStorage.walEntries.size).toBe(1)
+      const walEntry = Array.from(walStorage.walEntries.values())[0]
+      expect(walEntry.sha).toBe(sha)
+      expect(walEntry.type).toBe('blob')
+      expect(new TextDecoder().decode(walEntry.data)).toBe('wal test data')
+    })
+
+    it('should clear WAL entries after successful flush', async () => {
+      const walStorage = createWALMockStorage()
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.putObject('blob', encoder.encode('flush test 1'))
+      await walStore.putObject('blob', encoder.encode('flush test 2'))
+
+      expect(walStorage.walEntries.size).toBe(2)
+
+      await walStore.flush()
+
+      // WAL should be cleared after successful flush
+      expect(walStorage.walEntries.size).toBe(0)
+    })
+
+    it('should recover WAL entries on startup', async () => {
+      const walStorage = createWALMockStorage()
+
+      // Simulate pre-existing WAL entries (from a crash before flush)
+      walStorage.walIdCounter = 2
+      walStorage.walEntries.set(1, {
+        sha: 'a'.repeat(40),
+        type: 'blob',
+        data: encoder.encode('recovered object 1'),
+        path: null,
+        created_at: Date.now() - 1000,
+      })
+      walStorage.walEntries.set(2, {
+        sha: 'b'.repeat(40),
+        type: 'tree',
+        data: encoder.encode('recovered object 2'),
+        path: '/some/path',
+        created_at: Date.now() - 500,
+      })
+
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      // Initialize should recover WAL entries into buffer
+      await walStore.initialize()
+
+      const stats = walStore.getStats()
+      expect(stats.bufferedObjects).toBe(2)
+
+      // Objects should be retrievable from buffer
+      const result1 = await walStore.getObject('a'.repeat(40))
+      expect(result1).not.toBeNull()
+      expect(new TextDecoder().decode(result1!.content)).toBe('recovered object 1')
+
+      const result2 = await walStore.getObject('b'.repeat(40))
+      expect(result2).not.toBeNull()
+      expect(new TextDecoder().decode(result2!.content)).toBe('recovered object 2')
+    })
+
+    it('should handle recovery with duplicate SHAs gracefully', async () => {
+      const walStorage = createWALMockStorage()
+
+      // Simulate WAL with duplicate SHA entries (shouldn't happen but be defensive)
+      const sha = 'c'.repeat(40)
+      walStorage.walIdCounter = 2
+      walStorage.walEntries.set(1, {
+        sha,
+        type: 'blob',
+        data: encoder.encode('first occurrence'),
+        path: null,
+        created_at: Date.now() - 1000,
+      })
+      walStorage.walEntries.set(2, {
+        sha,
+        type: 'blob',
+        data: encoder.encode('duplicate occurrence'),
+        path: null,
+        created_at: Date.now() - 500,
+      })
+
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.initialize()
+
+      // Should only have one object in buffer (deduped by SHA)
+      const stats = walStore.getStats()
+      expect(stats.bufferedObjects).toBe(1)
+
+      // Should get the first occurrence (processed in order)
+      const result = await walStore.getObject(sha)
+      expect(result).not.toBeNull()
+      expect(new TextDecoder().decode(result!.content)).toBe('first occurrence')
+    })
+
+    it('should retain WAL entries if flush fails', async () => {
+      const failingR2 = createMockR2()
+      failingR2.put = vi.fn(async () => { throw new Error('R2 write failed') })
+
+      const walStorage = createWALMockStorage()
+      const walStore = new ParquetStore({
+        r2: failingR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.putObject('blob', encoder.encode('will fail flush'))
+      expect(walStorage.walEntries.size).toBe(1)
+
+      // Flush should fail
+      await expect(walStore.flush()).rejects.toThrow('R2 write failed')
+
+      // WAL entries should still be present for recovery
+      expect(walStorage.walEntries.size).toBe(1)
+    })
+
+    it('should remove WAL entries when object is deleted', async () => {
+      const walStorage = createWALMockStorage()
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      const sha = await walStore.putObject('blob', encoder.encode('to be deleted'))
+      expect(walStorage.walEntries.size).toBe(1)
+
+      await walStore.deleteObject(sha)
+
+      // WAL entry should be removed
+      expect(walStorage.walEntries.size).toBe(0)
+    })
+
+    it('should clear recovered WAL entries after flush', async () => {
+      const walStorage = createWALMockStorage()
+
+      // Simulate pre-existing WAL entries
+      walStorage.walIdCounter = 1
+      walStorage.walEntries.set(1, {
+        sha: 'd'.repeat(40),
+        type: 'blob',
+        data: encoder.encode('recovered and flushed'),
+        path: null,
+        created_at: Date.now() - 1000,
+      })
+
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.initialize()
+      expect(walStorage.walEntries.size).toBe(1)
+
+      // Flush should clear the recovered WAL entry
+      await walStore.flush()
+      expect(walStorage.walEntries.size).toBe(0)
+    })
+
+    it('should handle mixed new and recovered writes in single flush', async () => {
+      const walStorage = createWALMockStorage()
+
+      // Simulate a pre-existing WAL entry
+      walStorage.walIdCounter = 1
+      walStorage.walEntries.set(1, {
+        sha: 'e'.repeat(40),
+        type: 'blob',
+        data: encoder.encode('recovered'),
+        path: null,
+        created_at: Date.now() - 1000,
+      })
+
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.initialize()
+      expect(walStorage.walEntries.size).toBe(1)
+
+      // Check buffer stats before adding new object
+      const statsBefore = walStore.getStats()
+      expect(statsBefore.bufferedObjects).toBe(1)
+
+      // Add a new object with completely unique content
+      const newSha = await walStore.putObject('blob', encoder.encode('brand new unique object ' + Date.now()))
+
+      // Check buffer stats after adding new object
+      const statsAfter = walStore.getStats()
+      expect(statsAfter.bufferedObjects).toBe(2)
+
+      // WAL should have 2 entries now
+      expect(walStorage.walEntries.size).toBe(2)
+
+      // Flush should clear both entries
+      await walStore.flush()
+      expect(walStorage.walEntries.size).toBe(0)
+    })
+
+    it('should skip invalid object types in WAL recovery', async () => {
+      const walStorage = createWALMockStorage()
+
+      // Simulate WAL with an invalid type
+      walStorage.walIdCounter = 2
+      walStorage.walEntries.set(1, {
+        sha: 'f'.repeat(40),
+        type: 'invalid_type',
+        data: encoder.encode('bad type'),
+        path: null,
+        created_at: Date.now() - 1000,
+      })
+      walStorage.walEntries.set(2, {
+        sha: 'g'.repeat(40),
+        type: 'blob',
+        data: encoder.encode('valid object'),
+        path: null,
+        created_at: Date.now() - 500,
+      })
+
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      await walStore.initialize()
+
+      // Only the valid object should be in buffer
+      const stats = walStore.getStats()
+      expect(stats.bufferedObjects).toBe(1)
+
+      // Invalid entry should have been deleted from WAL
+      expect(walStorage.walEntries.size).toBe(1)
+    })
+
+    it('should persist path in WAL entries', async () => {
+      const walStorage = createWALMockStorage()
+      const walStore = new ParquetStore({
+        r2: mockR2,
+        sql: walStorage,
+        prefix: 'test-repo',
+      })
+
+      const data = encoder.encode('file content')
+      await walStore.putObject('blob', data, '/src/main.ts')
+
+      const walEntry = Array.from(walStorage.walEntries.values())[0]
+      expect(walEntry.path).toBe('/src/main.ts')
+    })
+  })
 })

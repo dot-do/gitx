@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectLanguage, LANGUAGES } from '../../src/enrichment/language'
+import { detectLanguage, LANGUAGES, DOTFILES } from '../../src/enrichment/language'
 
 describe('language detection', () => {
   describe('LANGUAGES constant', () => {
@@ -13,11 +13,26 @@ describe('language detection', () => {
     })
   })
 
+  describe('DOTFILES constant', () => {
+    it('should be a non-empty map of dotfile names to language', () => {
+      expect(Object.keys(DOTFILES).length).toBeGreaterThanOrEqual(20)
+    })
+
+    it('should map dotfile names without leading dot', () => {
+      expect(DOTFILES['bashrc']).toBe('Shell')
+      expect(DOTFILES['gitignore']).toBe('gitignore')
+    })
+  })
+
   describe('detectLanguage', () => {
     it('returns null for empty or missing extension', () => {
       expect(detectLanguage('')).toBeNull()
       expect(detectLanguage('Makefile')).toBeNull()
-      expect(detectLanguage('.hidden')).toBeNull()
+    })
+
+    it('returns null for unknown dotfiles', () => {
+      expect(detectLanguage('.unknown_dotfile')).toBeNull()
+      expect(detectLanguage('.random123')).toBeNull()
     })
 
     it('detects TypeScript', () => {
@@ -185,6 +200,78 @@ describe('language detection', () => {
 
     it('handles deeply nested paths', () => {
       expect(detectLanguage('a/b/c/d/e/file.rs')).toBe('Rust')
+    })
+
+    describe('dotfile detection', () => {
+      it('detects shell config dotfiles', () => {
+        expect(detectLanguage('.bashrc')).toBe('Shell')
+        expect(detectLanguage('.bash_profile')).toBe('Shell')
+        expect(detectLanguage('.bash_aliases')).toBe('Shell')
+        expect(detectLanguage('.zshrc')).toBe('Shell')
+        expect(detectLanguage('.zshenv')).toBe('Shell')
+        expect(detectLanguage('.profile')).toBe('Shell')
+      })
+
+      it('detects git dotfiles', () => {
+        expect(detectLanguage('.gitignore')).toBe('gitignore')
+        expect(detectLanguage('.gitattributes')).toBe('gitattributes')
+        expect(detectLanguage('.gitconfig')).toBe('gitconfig')
+        expect(detectLanguage('.gitmodules')).toBe('gitconfig')
+      })
+
+      it('detects editor config dotfiles', () => {
+        expect(detectLanguage('.editorconfig')).toBe('EditorConfig')
+        expect(detectLanguage('.vimrc')).toBe('Vim Script')
+      })
+
+      it('detects linter/formatter dotfiles', () => {
+        expect(detectLanguage('.eslintrc')).toBe('JSON')
+        expect(detectLanguage('.prettierrc')).toBe('JSON')
+        expect(detectLanguage('.babelrc')).toBe('JSON')
+        expect(detectLanguage('.browserslistrc')).toBe('Browserslist')
+      })
+
+      it('detects environment dotfiles', () => {
+        expect(detectLanguage('.env')).toBe('dotenv')
+        expect(detectLanguage('.envrc')).toBe('Shell')
+        expect(detectLanguage('.npmrc')).toBe('INI')
+        expect(detectLanguage('.nvmrc')).toBe('Text')
+      })
+
+      it('detects docker dotfiles', () => {
+        expect(detectLanguage('.dockerignore')).toBe('dockerignore')
+      })
+
+      it('detects dotfiles with extensions', () => {
+        expect(detectLanguage('.eslintrc.json')).toBe('JSON')
+        expect(detectLanguage('.eslintrc.js')).toBe('JavaScript')
+        expect(detectLanguage('.prettierrc.yaml')).toBe('YAML')
+        expect(detectLanguage('.prettierrc.yml')).toBe('YAML')
+        expect(detectLanguage('.prettierrc.toml')).toBe('TOML')
+        expect(detectLanguage('.tsconfig.json')).toBe('JSON')
+        expect(detectLanguage('.babelrc.js')).toBe('JavaScript')
+        expect(detectLanguage('.stylelintrc.json')).toBe('JSON')
+      })
+
+      it('is case-insensitive for dotfile names', () => {
+        expect(detectLanguage('.BASHRC')).toBe('Shell')
+        expect(detectLanguage('.Gitignore')).toBe('gitignore')
+        expect(detectLanguage('.ESLINTRC')).toBe('JSON')
+      })
+
+      it('handles dotfiles in nested paths', () => {
+        expect(detectLanguage('home/user/.bashrc')).toBe('Shell')
+        expect(detectLanguage('/root/.gitignore')).toBe('gitignore')
+        expect(detectLanguage('project/config/.eslintrc.json')).toBe('JSON')
+      })
+
+      it('prefers extension over dotfile name when extension is known', () => {
+        // .prettierrc.json should return JSON (from extension), not JSON (from dotfile mapping)
+        expect(detectLanguage('.prettierrc.json')).toBe('JSON')
+        // A dotfile with unknown base but known extension
+        expect(detectLanguage('.something.ts')).toBe('TypeScript')
+        expect(detectLanguage('.config.yaml')).toBe('YAML')
+      })
     })
   })
 })
