@@ -86,6 +86,7 @@
     "@types/react": "^19.2.7",
     "@vitest/coverage-v8": "^2.1.8",
     "cac": "^6.7.14",
+    "fast-check": "^4.5.3",
     "shiki": "^1.24.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",

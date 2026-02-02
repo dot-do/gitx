@@ -123,3 +123,53 @@ export {
   type CollectedCounter,
   type CollectedGauge,
 } from './metrics'
+
+// Chunk Compaction
+export {
+  ChunkCompactor,
+  createChunkCompactor,
+  DEFAULT_COMPACTION_THRESHOLD,
+  DEFAULT_MIN_BLOBS_FOR_COMPACTION,
+  SUPER_CHUNK_PREFIX,
+  COMPACTION_INDEX_PREFIX,
+  getSuperChunkKey,
+  getSuperChunkMetadataKey,
+  getCompactionIndexKey,
+  packSuperChunk,
+  unpackBlob,
+  encodeSuperChunkMetadata,
+  decodeSuperChunkMetadata,
+  encodeIndexEntry,
+  decodeIndexEntry,
+  type ChunkCompactorConfig,
+  type CompactionIndexEntry,
+  type SuperChunkMetadata,
+  type CompactionCandidate,
+  type CompactionResult,
+  type CompactionStats,
+  type CompactorStorage,
+} from './chunk-compactor'
+
+// Chunked Blob Utilities
+export {
+  CHUNK_SIZE,
+  CHUNKED_BLOB_PREFIX,
+  calculateChunkCount,
+  shouldChunk,
+  getChunkRange,
+  getChunkKey,
+  getMetadataKey,
+  getAllChunkKeys,
+  splitIntoChunks,
+  reassembleChunks,
+  extractRange,
+  type ChunkedWriteResult,
+  type ChunkMetadata,
+} from './chunk-utils'
+
+// Chunked Blob Storage
+export {
+  createChunkedBlobStorage,
+  type ChunkedBlobStorage,
+  type ChunkedBlobStorageBackend,
+} from './chunked-blob'
