@@ -126,13 +126,15 @@ export function parseLfsPointer(data: Uint8Array): LfsPointer | null {
   const oidMatch = text.match(/oid sha256:([0-9a-f]{64})/)
   const sizeMatch = text.match(/size (\d+)/)
 
-  if (!oidMatch || !sizeMatch) {
+  const oid = oidMatch?.[1]
+  const sizeStr = sizeMatch?.[1]
+  if (!oid || !sizeStr) {
     return null
   }
 
   return {
-    oid: oidMatch[1],
-    size: parseInt(sizeMatch[1], 10),
+    oid,
+    size: parseInt(sizeStr, 10),
   }
 }
 
@@ -217,7 +219,7 @@ export function extractCommitFields(data: Uint8Array): ShreddedCommitFields | nu
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (line === '') {
+    if (line === undefined || line === '') {
       messageStart = i + 1
       break
     }
@@ -228,9 +230,11 @@ export function extractCommitFields(data: Uint8Array): ShreddedCommitFields | nu
       fields.parent_shas.push(line.slice(7))
     } else if (line.startsWith('author ')) {
       const match = line.match(/^author (.+) <.+> (\d+) [+-]\d{4}$/)
-      if (match) {
-        fields.author_name = match[1]
-        fields.author_date = parseInt(match[2], 10) * 1000 // to millis
+      const authorName = match?.[1]
+      const authorDateStr = match?.[2]
+      if (authorName && authorDateStr) {
+        fields.author_name = authorName
+        fields.author_date = parseInt(authorDateStr, 10) * 1000 // to millis
       }
     }
   }
@@ -253,7 +257,10 @@ export function extractCommitFields(data: Uint8Array): ShreddedCommitFields | nu
 function readUnsigned(buf: Uint8Array, pos: number, byteWidth: number): number {
   let value = 0
   for (let i = 0; i < byteWidth; i++) {
-    value |= buf[pos + i] << (i * 8)
+    const byte = buf[pos + i]
+    if (byte !== undefined) {
+      value |= byte << (i * 8)
+    }
   }
   return value >>> 0 // unsigned
 }
@@ -265,6 +272,7 @@ function decodeMetadata(metadata: Uint8Array): string[] {
   if (metadata.length < 2) return []
 
   const header = metadata[0]
+  if (header === undefined) return []
   // header: version (4 bits), sorted (1 bit), offset_size_minus_one (2 bits)
   const offsetSize = ((header >> 6) & 0x03) + 1
 
@@ -290,6 +298,9 @@ function decodeMetadata(metadata: Uint8Array): string[] {
  */
 function decodeValue(value: Uint8Array, pos: number, dictionary: string[]): { result: unknown; bytesRead: number } {
   const header = value[pos]
+  if (header === undefined) {
+    throw new Error(`Invalid VARIANT: no header byte at position ${pos}`)
+  }
   const basicType = header & 0x03
 
   switch (basicType) {
@@ -358,6 +369,9 @@ function decodePrimitive(buf: Uint8Array, pos: number, typeId: number): { result
  */
 function decodeObject(buf: Uint8Array, pos: number, dictionary: string[]): { result: Record<string, unknown>; bytesRead: number } {
   const header = buf[pos]
+  if (header === undefined) {
+    throw new Error(`Invalid VARIANT object: no header byte at position ${pos}`)
+  }
   const offsetSize = ((header >> 2) & 0x03) + 1
   const idSize = ((header >> 4) & 0x03) + 1
   const isLarge = (header & 0x40) !== 0
@@ -369,7 +383,8 @@ function decodeObject(buf: Uint8Array, pos: number, dictionary: string[]): { res
     numElements = view.getUint32(cursor, true)
     cursor += 4
   } else {
-    numElements = buf[cursor]
+    const elem = buf[cursor]
+    numElements = elem ?? 0
     cursor += 1
   }
 
@@ -391,12 +406,16 @@ function decodeObject(buf: Uint8Array, pos: number, dictionary: string[]): { res
   const valuesStart = cursor
   const result: Record<string, unknown> = {}
   for (let i = 0; i < numElements; i++) {
-    const key = dictionary[fieldIds[i]] ?? String(fieldIds[i])
-    const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary)
+    const fieldId = fieldIds[i]
+    const offset = offsets[i]
+    if (fieldId === undefined || offset === undefined) continue
+    const key = dictionary[fieldId] ?? String(fieldId)
+    const decoded = decodeValue(buf, valuesStart + offset, dictionary)
     result[key] = decoded.result
   }
 
-  const totalBytes = cursor - pos + offsets[numElements]
+  const lastOffset = offsets[numElements] ?? 0
+  const totalBytes = cursor - pos + lastOffset
   return { result, bytesRead: totalBytes }
 }
 
@@ -405,6 +424,9 @@ function decodeObject(buf: Uint8Array, pos: number, dictionary: string[]): { res
  */
 function decodeArray(buf: Uint8Array, pos: number, dictionary: string[]): { result: unknown[]; bytesRead: number } {
   const header = buf[pos]
+  if (header === undefined) {
+    throw new Error(`Invalid VARIANT array: no header byte at position ${pos}`)
+  }
   const offsetSize = ((header >> 2) & 0x03) + 1
   const isLarge = (header & 0x10) !== 0
 
@@ -415,7 +437,8 @@ function decodeArray(buf: Uint8Array, pos: number, dictionary: string[]): { resu
     numElements = view.getUint32(cursor, true)
     cursor += 4
   } else {
-    numElements = buf[cursor]
+    const elem = buf[cursor]
+    numElements = elem ?? 0
     cursor += 1
   }
 
@@ -430,11 +453,14 @@ function decodeArray(buf: Uint8Array, pos: number, dictionary: string[]): { resu
   const valuesStart = cursor
   const result: unknown[] = []
   for (let i = 0; i < numElements; i++) {
-    const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary)
+    const offset = offsets[i]
+    if (offset === undefined) continue
+    const decoded = decodeValue(buf, valuesStart + offset, dictionary)
     result.push(decoded.result)
   }
 
-  const totalBytes = cursor - pos + offsets[numElements]
+  const lastOffset = offsets[numElements] ?? 0
+  const totalBytes = cursor - pos + lastOffset
   return { result, bytesRead: totalBytes }
 }
 
@@ -493,13 +519,13 @@ export function decodeGitObject(
     case 'r2': {
       // R2: VARIANT contains { r2_key, size }
       const obj = decoded as Record<string, unknown>
-      return { sha, type, size, path, storage, content: String(obj.r2_key) }
+      return { sha, type, size, path, storage, content: String(obj['r2_key']) }
     }
 
     case 'lfs': {
       // LFS: VARIANT contains { r2_key, oid, size, pointer }
       const obj = decoded as Record<string, unknown>
-      return { sha, type, size, path, storage, content: String(obj.r2_key) }
+      return { sha, type, size, path, storage, content: String(obj['r2_key']) }
     }
   }
 }
@@ -530,10 +556,10 @@ export function encodeObjectBatch(
   const commitFields: Array<ShreddedCommitFields | null> = []
 
   for (const obj of objects) {
-    const encoded = encodeGitObject(obj.sha, obj.type, obj.data, {
-      path: obj.path,
-      r2Prefix: options?.r2Prefix,
-    })
+    const encodeOptions: { path?: string; r2Prefix?: string } = {}
+    if (obj.path !== undefined) encodeOptions.path = obj.path
+    if (options?.r2Prefix !== undefined) encodeOptions.r2Prefix = options.r2Prefix
+    const encoded = encodeGitObject(obj.sha, obj.type, obj.data, encodeOptions)
 
     shas.push(encoded.sha)
     types.push(encoded.type)

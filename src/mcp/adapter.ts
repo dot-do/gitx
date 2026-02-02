@@ -434,6 +434,15 @@ export class MCPAdapter {
   /** @internal */
   private prompts: Map<string, MCPPromptInfo> = new Map()
 
+  /** @internal Build a success response with proper id handling */
+  private successResponse(id: string | number | undefined, result: unknown): MCPResponse {
+    const response: MCPResponse = { jsonrpc: '2.0', result }
+    if (id !== undefined) {
+      response.id = id
+    }
+    return response
+  }
+
   /**
    * Create a new MCP adapter instance.
    *
@@ -677,7 +686,7 @@ export class MCPAdapter {
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            handler: tool.handler,
+            handler: tool.handler as (params: Record<string, unknown>) => Promise<MCPToolResult>,
           })
         }
       }
@@ -898,31 +907,27 @@ export class MCPAdapter {
    */
   private handleInitialize(request: MCPRequest): MCPResponse {
     const params = request.params || {}
-    const protocolVersion = (params.protocolVersion as string) || '2024-11-05'
+    const protocolVersion = (params['protocolVersion'] as string) || '2024-11-05'
 
     const capabilities: Record<string, unknown> = {}
     if (this.hasCapability('tools')) {
-      capabilities.tools = {}
+      capabilities['tools'] = {}
     }
     if (this.hasCapability('resources')) {
-      capabilities.resources = {}
+      capabilities['resources'] = {}
     }
     if (this.hasCapability('prompts')) {
-      capabilities.prompts = {}
+      capabilities['prompts'] = {}
     }
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: {
-        protocolVersion,
-        serverInfo: {
-          name: this.config.name,
-          version: this.config.version,
-        },
-        capabilities,
+    return this.successResponse(request.id, {
+      protocolVersion,
+      serverInfo: {
+        name: this.config.name,
+        version: this.config.version,
       },
-    }
+      capabilities,
+    })
   }
 
   /**
@@ -940,13 +945,7 @@ export class MCPAdapter {
       )
     }
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: {
-        tools: this.listTools(),
-      },
-    }
+    return this.successResponse(request.id, { tools: this.listTools() })
   }
 
   /**
@@ -965,8 +964,8 @@ export class MCPAdapter {
     }
 
     const params = request.params || {}
-    const toolName = params.name as string
-    const toolArgs = (params.arguments || {}) as Record<string, unknown>
+    const toolName = params['name'] as string
+    const toolArgs = (params['arguments'] || {}) as Record<string, unknown>
 
     const tool = this.tools.get(toolName)
     if (!tool) {
@@ -991,26 +990,18 @@ export class MCPAdapter {
     // Execute tool
     try {
       const result = await tool.handler(toolArgs)
-      return {
-        jsonrpc: '2.0',
-        id: request.id,
-        result,
-      }
+      return this.successResponse(request.id, result)
     } catch (error) {
       // Tool execution errors are returned as successful responses with isError flag
-      return {
-        jsonrpc: '2.0',
-        id: request.id,
-        result: {
-          content: [
-            {
-              type: 'text',
-              text: error instanceof Error ? error.message : String(error),
-            },
-          ],
-          isError: true,
-        },
-      }
+      return this.successResponse(request.id, {
+        content: [
+          {
+            type: 'text',
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        isError: true,
+      })
     }
   }
 
@@ -1044,7 +1035,7 @@ export class MCPAdapter {
         if (!propSchema) continue
 
         // Type validation
-        const expectedType = propSchema.type as string | undefined
+        const expectedType = propSchema['type'] as string | undefined
         const valueType = Array.isArray(value) ? 'array' : typeof value
         if (expectedType && valueType !== expectedType) {
           errors.push(
@@ -1056,12 +1047,12 @@ export class MCPAdapter {
         if (
           expectedType === 'string' &&
           typeof value === 'string' &&
-          propSchema.pattern
+          propSchema['pattern']
         ) {
-          const pattern = new RegExp(propSchema.pattern as string)
+          const pattern = new RegExp(propSchema['pattern'] as string)
           if (!pattern.test(value)) {
             errors.push(
-              `Parameter '${key}' does not match pattern: ${propSchema.pattern}`
+              `Parameter '${key}' does not match pattern: ${propSchema['pattern']}`
             )
           }
         }
@@ -1093,11 +1084,7 @@ export class MCPAdapter {
       description: r.description,
     }))
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: { resources },
-    }
+    return this.successResponse(request.id, { resources })
   }
 
   /**
@@ -1116,7 +1103,7 @@ export class MCPAdapter {
     }
 
     const params = request.params || {}
-    const uri = params.uri as string
+    const uri = params['uri'] as string
     const resource = this.resources.get(uri)
 
     if (!resource) {
@@ -1133,19 +1120,15 @@ export class MCPAdapter {
       content = result.content
     }
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: {
-        contents: [
-          {
-            uri: resource.uri,
-            mimeType: resource.mimeType,
-            text: content,
-          },
-        ],
-      },
-    }
+    return this.successResponse(request.id, {
+      contents: [
+        {
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          text: content,
+        },
+      ],
+    })
   }
 
   /**
@@ -1169,11 +1152,7 @@ export class MCPAdapter {
       arguments: p.arguments,
     }))
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: { prompts },
-    }
+    return this.successResponse(request.id, { prompts })
   }
 
   /**
@@ -1192,8 +1171,8 @@ export class MCPAdapter {
     }
 
     const params = request.params || {}
-    const name = params.name as string
-    const args = (params.arguments || {}) as Record<string, unknown>
+    const name = params['name'] as string
+    const args = (params['arguments'] || {}) as Record<string, unknown>
     const prompt = this.prompts.get(name)
 
     if (!prompt) {
@@ -1210,11 +1189,7 @@ export class MCPAdapter {
       messages = result.messages
     }
 
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: { messages },
-    }
+    return this.successResponse(request.id, { messages })
   }
 
   /**
@@ -1232,13 +1207,13 @@ export class MCPAdapter {
     message: string,
     data?: unknown
   ): MCPResponse {
-    const response: MCPResponse = {
-      jsonrpc: '2.0',
-      id,
-      error: { code, message },
-    }
+    const error: { code: number; message: string; data?: unknown } = { code, message }
     if (data !== undefined) {
-      response.error!.data = data
+      error.data = data
+    }
+    const response: MCPResponse = { jsonrpc: '2.0', error }
+    if (id !== undefined) {
+      response.id = id
     }
     return response
   }

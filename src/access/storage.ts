@@ -354,9 +354,9 @@ export class SqlPermissionStorage implements PermissionStorage {
       isUserPermRow
     )
 
-    if (rows.length === 0) return null
-
     const row = rows[0]
+    if (!row) return null
+
     const permission = this.rowToUserPermission(row)
 
     // Check if expired
@@ -455,13 +455,15 @@ export class SqlPermissionStorage implements PermissionStorage {
     if (rows.length === 0) return null
 
     const row = rows[0]
-    return {
+    if (!row) return null
+    const result: TeamPermission = {
       teamId: row.team_id,
       repoId: row.repo_id,
       permission: row.permission as Permission,
-      grantedBy: row.granted_by ?? undefined,
-      grantedAt: row.granted_at ?? undefined,
     }
+    if (row.granted_by !== null) result.grantedBy = row.granted_by
+    if (row.granted_at !== null) result.grantedAt = row.granted_at
+    return result
   }
 
   async listRepoTeamPermissions(repoId: string): Promise<TeamPermission[]> {
@@ -472,13 +474,16 @@ export class SqlPermissionStorage implements PermissionStorage {
       isTeamPermRow
     )
 
-    return rows.map((row) => ({
-      teamId: row.team_id,
-      repoId: row.repo_id,
-      permission: row.permission as Permission,
-      grantedBy: row.granted_by ?? undefined,
-      grantedAt: row.granted_at ?? undefined,
-    }))
+    return rows.map((row) => {
+      const result: TeamPermission = {
+        teamId: row.team_id,
+        repoId: row.repo_id,
+        permission: row.permission as Permission,
+      }
+      if (row.granted_by !== null) result.grantedBy = row.granted_by
+      if (row.granted_at !== null) result.grantedAt = row.granted_at
+      return result
+    })
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -496,19 +501,23 @@ export class SqlPermissionStorage implements PermissionStorage {
     if (rows.length === 0) return null
 
     const row = rows[0]
-    return {
+    if (!row) return null
+    const result: RepositoryAccessSettings = {
       repoId: row.repo_id,
       visibility: row.visibility as RepositoryVisibility,
       ownerId: row.owner_id,
-      allowAnonymousRead: row.allow_anonymous_read === 1,
-      defaultOrgPermission: row.default_org_permission
-        ? (row.default_org_permission as Permission)
-        : undefined,
-      protectedBranches: row.protected_branches
-        ? JSON.parse(row.protected_branches)
-        : undefined,
-      protectedTags: row.protected_tags ? JSON.parse(row.protected_tags) : undefined,
     }
+    if (row.allow_anonymous_read === 1) result.allowAnonymousRead = true
+    if (row.default_org_permission !== null) {
+      result.defaultOrgPermission = row.default_org_permission as Permission
+    }
+    if (row.protected_branches !== null) {
+      result.protectedBranches = JSON.parse(row.protected_branches)
+    }
+    if (row.protected_tags !== null) {
+      result.protectedTags = JSON.parse(row.protected_tags)
+    }
+    return result
   }
 
   async updateRepoSettings(settings: RepositoryAccessSettings): Promise<void> {
@@ -611,15 +620,16 @@ export class SqlPermissionStorage implements PermissionStorage {
     expires_at: number | null
     metadata: string | null
   }): UserPermission {
-    return {
+    const result: UserPermission = {
       userId: row.user_id,
       repoId: row.repo_id,
       permission: row.permission as Permission,
-      grantedBy: row.granted_by ?? undefined,
-      grantedAt: row.granted_at ?? undefined,
-      expiresAt: row.expires_at ?? undefined,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
     }
+    if (row.granted_by !== null) result.grantedBy = row.granted_by
+    if (row.granted_at !== null) result.grantedAt = row.granted_at
+    if (row.expires_at !== null) result.expiresAt = row.expires_at
+    if (row.metadata !== null) result.metadata = JSON.parse(row.metadata)
+    return result
   }
 }
 

@@ -23,6 +23,8 @@ import {
   type RPCHandlerOptions,
   type CancellableAsyncIterator,
   type Serializer,
+  type RPCArg,
+  type RPCMessage,
   RPCError,
   ErrorCodes,
 } from './rpc-mock'
@@ -335,8 +337,8 @@ export class RPCGitBackend extends SimpleEventEmitter {
     maxSize: number
     delayMs: number
   }
-  readonly serializer?: Serializer
-  readonly onTokenRefresh?: () => Promise<string>
+  readonly serializer?: Serializer | undefined
+  readonly onTokenRefresh?: (() => Promise<string>) | undefined
   readonly maxRefreshAttempts: number
 
   constructor(options: DOClientOptions) {
@@ -355,8 +357,8 @@ export class RPCGitBackend extends SimpleEventEmitter {
       maxSize: options.batching?.maxSize ?? 10,
       delayMs: options.batching?.delayMs ?? 50,
     }
-    this.serializer = options.serializer
-    this.onTokenRefresh = options.onTokenRefresh
+    this.serializer = options.serializer ?? undefined
+    this.onTokenRefresh = options.onTokenRefresh ?? undefined
     this.maxRefreshAttempts = options.maxRefreshAttempts ?? 3
   }
 
@@ -588,13 +590,13 @@ export class RPCGitBackend extends SimpleEventEmitter {
 
       switch (msg.type) {
         case 'response':
-          this.handleResponse(msg as RPCResponse)
+          this.handleResponse(msg as unknown as RPCResponse)
           break
         case 'stream':
-          this.handleStream(msg as RPCStreamMessage)
+          this.handleStream(msg as unknown as RPCStreamMessage)
           break
         case 'batch':
-          this.handleBatch(msg as RPCBatchMessage)
+          this.handleBatch(msg as unknown as RPCBatchMessage)
           break
         case 'ping':
           this.sendPong()
@@ -758,7 +760,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
     // Push operations are not idempotent
     const nonIdempotent = ['push', 'commit', 'createBlob', 'createTree', 'createTag', 'updateRef', 'batchCommit']
     const methodName = path[path.length - 1]
-    return !nonIdempotent.includes(methodName)
+    return methodName !== undefined && !nonIdempotent.includes(methodName)
   }
 
   private createProxy(path: string[]): MagicProxy {
@@ -778,7 +780,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
     }) as unknown as MagicProxy
   }
 
-  private async call(path: string[], args: unknown[]): Promise<unknown> {
+  private async call(path: string[], args: RPCArg[]): Promise<unknown> {
     const id = String(++this.messageIdCounter)
     const request: RPCRequest = {
       type: 'request',
@@ -795,11 +797,11 @@ export class RPCGitBackend extends SimpleEventEmitter {
     const lastArg = args[args.length - 1]
     if (lastArg && typeof lastArg === 'object') {
       const options = lastArg as Record<string, unknown>
-      if (typeof options.timeout === 'number') {
-        callTimeout = options.timeout
+      if (typeof options['timeout'] === 'number') {
+        callTimeout = options['timeout']
       }
-      if (typeof options.onProgress === 'function') {
-        onProgress = options.onProgress as (progress: unknown) => void
+      if (typeof options['onProgress'] === 'function') {
+        onProgress = options['onProgress'] as (progress: unknown) => void
       }
     }
 
@@ -909,7 +911,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
     this.ws!.send(message)
   }
 
-  private serializeMessage(msg: unknown): string | ArrayBuffer {
+  private serializeMessage(msg: RPCMessage): string | ArrayBuffer {
     if (this.serializer) {
       return this.serializer.encode(msg)
     }
@@ -1173,12 +1175,12 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
     ]
 
     const iterator: CancellableAsyncIterator<CloneProgress> = {
-      async next() {
+      async next(): Promise<IteratorResult<CloneProgress>> {
         if (cancelled || index >= phases.length) {
-          return { done: true, value: undefined }
+          return { done: true, value: undefined as unknown as CloneProgress }
         }
         const value = phases[index++]
-        return { done: false, value }
+        return { done: false, value: value! }
       },
       cancel() {
         cancelled = true
@@ -1268,7 +1270,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
   private async getTree(sha: string): Promise<{ entries?: TreeEntry[] }> {
     const obj = await this.getObject(sha).catch(() => null)
     if (!obj) {
-      return { entries: undefined }
+      return {}
     }
     // Parse tree object (simplified)
     return { entries: [] }
@@ -1414,6 +1416,9 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
 
     for (let i = 0; i < commits.length; i++) {
       const commit = commits[i]
+      if (!commit) {
+        continue
+      }
 
       // Check for simulated invalid tree
       if (commit.tree === 'invalid-tree' && options?.atomic) {
@@ -1519,7 +1524,7 @@ export function createRPCHandler(
           server.addEventListener('message', async (event) => {
             try {
               const data = JSON.parse(event.data as string) as RPCRequest
-              const result = await handleRPCRequest(instance, data, request, options)
+              const result = await handleRPCRequest(instance, data, request, _options)
               server.send(JSON.stringify(result))
             } catch (error) {
               server.send(
@@ -1555,7 +1560,7 @@ export function createRPCHandler(
       if (request.method === 'POST') {
         try {
           const body = await request.json() as RPCRequest
-          const result = await handleRPCRequest(instance, body, request, options)
+          const result = await handleRPCRequest(instance, body, request, _options)
           return new Response(JSON.stringify(result), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
@@ -1602,7 +1607,7 @@ async function handleRPCRequest(
     if (authHeader) {
       // Parse JWT and check permissions
       const scopes = parseJWTScopes(authHeader)
-      const methodName = path[path.length - 1]
+      const methodName = path[path.length - 1] ?? ''
 
       // Check if operation requires push scope
       if (['push', 'commit', 'updateRef'].includes(methodName)) {
@@ -1675,7 +1680,7 @@ async function handleRPCRequest(
     }
 
     // Add stack trace if not in production
-    if (!options?.production && error instanceof Error) {
+    if (!options?.production && error instanceof Error && error.stack) {
       errorResponse.error!.stack = error.stack
     }
 
@@ -1692,7 +1697,9 @@ function parseJWTScopes(authHeader: string): string[] {
     const parts = token.split('.')
     if (parts.length !== 3) return []
 
-    const payload = JSON.parse(atob(parts[1]))
+    const payloadPart = parts[1]
+    if (!payloadPart) return []
+    const payload = JSON.parse(atob(payloadPart)) as { scopes?: string[] }
     return payload.scopes || []
   } catch {
     return []
@@ -1720,12 +1727,6 @@ declare class DurableObjectStorage {
 declare class WebSocketPair {
   0: WebSocket
   1: WebSocket
-}
-
-interface ResponseInit {
-  status?: number
-  headers?: Record<string, string> | Headers
-  webSocket?: WebSocket
 }
 
 // Cloudflare binding types for RPCGitDOEnv

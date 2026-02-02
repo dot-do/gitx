@@ -214,39 +214,45 @@ export interface PullRequestStorage extends MergeStorage {
 // ============================================================================
 
 function rowToPullRequest(row: Record<string, unknown>): PullRequest {
+  const mergeCommitSha = row['merge_commit_sha'] as string | null
+  const mergeMethod = row['merge_method'] as PullRequestMergeMethod | null
+  const closedAt = row['closed_at'] as number | null
+
   return {
-    number: row.number as number,
-    title: row.title as string,
-    description: row.description as string,
-    status: row.status as PullRequestStatus,
-    sourceBranch: row.source_branch as string,
-    targetBranch: row.target_branch as string,
+    number: row['number'] as number,
+    title: row['title'] as string,
+    description: row['description'] as string,
+    status: row['status'] as PullRequestStatus,
+    sourceBranch: row['source_branch'] as string,
+    targetBranch: row['target_branch'] as string,
     author: {
-      name: row.author_name as string,
-      email: row.author_email as string,
+      name: row['author_name'] as string,
+      email: row['author_email'] as string,
     },
-    labels: JSON.parse((row.labels as string) || '[]'),
-    sourceSha: row.source_sha as string,
-    targetSha: row.target_sha as string,
-    mergeCommitSha: (row.merge_commit_sha as string) || undefined,
-    mergeMethod: (row.merge_method as PullRequestMergeMethod) || undefined,
-    createdAt: row.created_at as number,
-    updatedAt: row.updated_at as number,
-    closedAt: (row.closed_at as number) || undefined,
+    labels: JSON.parse((row['labels'] as string) || '[]'),
+    sourceSha: row['source_sha'] as string,
+    targetSha: row['target_sha'] as string,
+    createdAt: row['created_at'] as number,
+    updatedAt: row['updated_at'] as number,
+    ...(mergeCommitSha != null && { mergeCommitSha }),
+    ...(mergeMethod != null && { mergeMethod }),
+    ...(closedAt != null && { closedAt }),
   }
 }
 
 function rowToReview(row: Record<string, unknown>): PullRequestReview {
+  const body = row['body'] as string | null
+
   return {
-    id: row.id as number,
-    prNumber: row.pr_number as number,
+    id: row['id'] as number,
+    prNumber: row['pr_number'] as number,
     reviewer: {
-      name: row.reviewer_name as string,
-      email: row.reviewer_email as string,
+      name: row['reviewer_name'] as string,
+      email: row['reviewer_email'] as string,
     },
-    state: row.state as ReviewState,
-    body: (row.body as string) || undefined,
-    createdAt: row.created_at as number,
+    state: row['state'] as ReviewState,
+    createdAt: row['created_at'] as number,
+    ...(body != null && body !== '' && { body }),
   }
 }
 
@@ -312,11 +318,14 @@ export async function createPullRequest(
       options.targetBranch,
       now,
     ).rows
-    if (fallback.length === 0) throw new Error('Failed to create pull request')
-    return rowToPullRequest(fallback[0])
+    const fallbackRow = fallback[0]
+    if (!fallbackRow) throw new Error('Failed to create pull request')
+    return rowToPullRequest(fallbackRow)
   }
 
-  return rowToPullRequest(rows[0])
+  const row = rows[0]
+  if (!row) throw new Error('Failed to create pull request')
+  return rowToPullRequest(row)
 }
 
 /**
@@ -330,7 +339,8 @@ export function getPullRequest(
     'SELECT * FROM pull_requests WHERE number = ?',
     prNumber,
   ).rows
-  return rows.length > 0 ? rowToPullRequest(rows[0]) : null
+  const row = rows[0]
+  return row ? rowToPullRequest(row) : null
 }
 
 /**
@@ -398,7 +408,7 @@ export function updatePullRequestStatus(
     prNumber,
   )
 
-  return { ...pr, status, updatedAt: now, closedAt: closedAt ?? undefined }
+  return { ...pr, status, updatedAt: now, ...(closedAt != null && { closedAt }) }
 }
 
 /**
@@ -552,7 +562,9 @@ export function addReview(
     prNumber,
   ).rows
 
-  return rowToReview(rows[0])
+  const row = rows[0]
+  if (!row) throw new Error('Failed to create review')
+  return rowToReview(row)
 }
 
 /**
