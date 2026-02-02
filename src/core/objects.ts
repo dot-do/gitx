@@ -283,18 +283,22 @@ export function parseTag(data: Uint8Array): TagObject {
 // Type Guards
 // ============================================================================
 
+/** Type guard that checks whether a GitObject is a blob. */
 export function isBlob(obj: GitObject): obj is BlobObject {
   return obj.type === 'blob'
 }
 
+/** Type guard that checks whether a GitObject is a tree. */
 export function isTree(obj: GitObject): obj is TreeObject {
   return obj.type === 'tree'
 }
 
+/** Type guard that checks whether a GitObject is a commit. */
 export function isCommit(obj: GitObject): obj is CommitObject {
   return obj.type === 'commit'
 }
 
+/** Type guard that checks whether a GitObject is an annotated tag. */
 export function isTag(obj: GitObject): obj is TagObject {
   return obj.type === 'tag'
 }

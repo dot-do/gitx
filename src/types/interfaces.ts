@@ -24,6 +24,41 @@
  */
 
 // ============================================================================
+// Constructor Generic for Mixins
+// ============================================================================
+
+/**
+ * Typed constructor generic for mixin composition.
+ *
+ * @description
+ * Represents a class constructor that produces instances of type T.
+ * This is the standard constraint used by all mixin functions (withGit,
+ * withFs, withBash, etc.) to accept a base class and return an
+ * extended class with additional capabilities.
+ *
+ * @template T - The instance type produced by the constructor (defaults to object)
+ *
+ * @example
+ * ```typescript
+ * // Use in a mixin function signature
+ * function withCapability<TBase extends Constructor>(Base: TBase) {
+ *   return class extends Base {
+ *     capability = true
+ *   }
+ * }
+ *
+ * // Constrain to a specific base type
+ * function withStorage<TBase extends Constructor<{ storage: SqlStorage }>>(Base: TBase) {
+ *   return class extends Base {
+ *     async query(sql: string) { return this.storage.sql.exec(sql) }
+ *   }
+ * }
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Constructor<T = object> = new (...args: any[]) => T
+
+// ============================================================================
 // SQL Storage Interfaces
 // ============================================================================
 

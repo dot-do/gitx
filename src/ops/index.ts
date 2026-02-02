@@ -117,3 +117,37 @@ export {
   type SetTrackingResult,
   type RemoveTrackingResult,
 } from './branch'
+
+// Sparse Checkout Operations
+export {
+  SparseCheckout,
+  compilePattern,
+  filterEntries,
+  filterTreeEntries,
+  type SparsePattern,
+  type SparseFilterResult,
+} from './sparse-checkout'
+
+// Worktree Operations
+export {
+  addWorktree,
+  listWorktrees,
+  removeWorktree,
+  lockWorktree,
+  unlockWorktree,
+  moveWorktree,
+  pruneWorktrees,
+  getWorktreeHead,
+  setWorktreeHead,
+  type AddWorktreeOptions,
+  type AddWorktreeResult,
+  type WorktreeInfo,
+  type RemoveWorktreeOptions,
+  type RemoveWorktreeResult,
+  type ListWorktreeOptions,
+  type LockWorktreeOptions,
+  type PruneWorktreeOptions,
+  type PruneWorktreeResult,
+  type MoveWorktreeOptions,
+  type MoveWorktreeResult,
+} from './worktree'

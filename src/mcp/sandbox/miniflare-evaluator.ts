@@ -103,6 +103,7 @@ export default {
 `
 }
 
+/** Evaluates untrusted code in a Miniflare sandbox with network access blocked. */
 export async function evaluateWithMiniflare(
   code: string,
   config?: MiniflareEvaluatorConfig

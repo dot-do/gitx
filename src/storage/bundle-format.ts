@@ -163,7 +163,7 @@ function verifyBundleChecksum(bundleData: Uint8Array): boolean {
   return true
 }
 
-// Header functions
+/** Parses and validates a bundle header from raw bytes, optionally verifying the checksum. */
 export function parseBundleHeader(
   data: Uint8Array,
   options?: { verifyChecksum?: boolean }
@@ -219,6 +219,7 @@ export function parseBundleHeader(
   }
 }
 
+/** Serializes a bundle header with magic bytes, version, entry count, and checksum. */
 export function createBundleHeader(options: {
   entryCount: number
   indexOffset: number
@@ -261,7 +262,7 @@ export function createBundleHeader(options: {
   return header
 }
 
-// Index functions
+/** Deserializes the bundle index section into an array of index entries. */
 export function parseBundleIndex(data: Uint8Array, entryCount: number): BundleIndexEntry[] {
   const expectedSize = entryCount * BUNDLE_INDEX_ENTRY_SIZE
   if (data.length < expectedSize) {
@@ -312,6 +313,7 @@ export function parseBundleIndex(data: Uint8Array, entryCount: number): BundleIn
   return entries
 }
 
+/** Serializes an array of bundle index entries into raw bytes. */
 export function createBundleIndex(entries: BundleIndexEntry[]): Uint8Array {
   if (entries.length === 0) {
     return new Uint8Array(0)
@@ -347,6 +349,7 @@ export function createBundleIndex(entries: BundleIndexEntry[]): Uint8Array {
   return indexData
 }
 
+/** Performs a binary search for an entry by OID in a sorted index. */
 export function lookupEntryByOid(
   entries: BundleIndexEntry[],
   oid: string
@@ -373,7 +376,7 @@ export function lookupEntryByOid(
   return null
 }
 
-// Bundle functions
+/** Creates a complete bundle from an array of git objects, sorted by OID. */
 export function createBundle(
   objects: Array<{ oid: string; type: BundleObjectType; data: Uint8Array }>
 ): Uint8Array {
@@ -449,6 +452,7 @@ export function createBundle(
   return bundle
 }
 
+/** Parses a complete bundle from raw bytes, returning the header, index, and object data. */
 export function parseBundle(data: Uint8Array, options?: { verify?: boolean }): Bundle {
   // First check minimum size for header
   if (data.length < BUNDLE_HEADER_SIZE) {

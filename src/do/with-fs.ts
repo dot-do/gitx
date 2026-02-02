@@ -51,16 +51,7 @@ import {
   type CopyOptions,
 } from './fs-module'
 
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * Type for a class constructor.
- * Used as the base constraint for mixin composition.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Constructor<T = object> = new (...args: any[]) => T
+import { type Constructor } from '../types/interfaces'
 
 /**
  * Interface for DOs that have filesystem capability.
@@ -582,6 +573,8 @@ export function hasFsCapability(value: unknown): value is WithFsCapability {
 // ============================================================================
 // Re-exports for Convenience
 // ============================================================================
+
+export { type Constructor }
 
 export {
   FsModule,

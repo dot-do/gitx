@@ -39,7 +39,13 @@
 import type { DurableObjectStorage } from './types'
 import type { ObjectLocation, StorageTier, RecordLocationOptions } from './object-index'
 import { ObjectIndex } from './object-index'
-import { BundleObjectType } from './bundle-format'
+import {
+  BundleObjectType,
+  objectTypeToBundleType,
+  createBundle,
+  BUNDLE_HEADER_SIZE,
+  BUNDLE_INDEX_ENTRY_SIZE,
+} from './bundle/format'
 
 // =============================================================================
 // Types and Interfaces
@@ -396,19 +402,13 @@ function generateMigrationId(): string {
 
 /**
  * Convert Git object type string to BundleObjectType enum.
+ * Falls back to BLOB for unknown types.
  */
 function toBundleObjectType(type: string): BundleObjectType {
-  switch (type) {
-    case 'blob':
-      return BundleObjectType.BLOB
-    case 'tree':
-      return BundleObjectType.TREE
-    case 'commit':
-      return BundleObjectType.COMMIT
-    case 'tag':
-      return BundleObjectType.TAG
-    default:
-      return BundleObjectType.BLOB
+  try {
+    return objectTypeToBundleType(type)
+  } catch {
+    return BundleObjectType.BLOB
   }
 }
 
@@ -847,7 +847,7 @@ export class LooseToBundleMigrator {
     }
 
     // Check if object would exceed bundle size
-    const objectOverhead = 64 + 40 + 4 + 4 + 4 // Rough estimate of index entry size
+    const objectOverhead = BUNDLE_HEADER_SIZE + BUNDLE_INDEX_ENTRY_SIZE
     if (this.currentBundle.size + data.length + objectOverhead > this.config.maxBundleSize) {
       // Flush current bundle and start new one
       if (!dryRun) {
@@ -877,6 +877,9 @@ export class LooseToBundleMigrator {
 
   /**
    * Flush the current bundle to R2 and update the index.
+   *
+   * Uses the canonical `createBundle` from the bundle format module to produce
+   * a valid BNDL binary that is readable by `parseBundle` / `R2BundleReader`.
    */
   private async flushCurrentBundle(): Promise<void> {
     if (!this.currentBundle || this.currentBundle.objects.length === 0) {
@@ -885,108 +888,40 @@ export class LooseToBundleMigrator {
 
     const bundle = this.currentBundle
 
-    // Build the bundle data
-    // For now, create a simple format. In production, this would use BundleWriter.
-    const bundleData = await this.buildBundleData(bundle)
+    // Build canonical bundle binary using the bundle format module
+    const bundleData = createBundle(
+      bundle.objects.map((obj) => ({
+        oid: obj.sha,
+        type: obj.type,
+        data: obj.data,
+      }))
+    )
 
     // Write to R2
     const bundleKey = `${this.config.bundlePrefix}${bundle.id}.bundle`
     await this.r2.put(bundleKey, bundleData)
 
     // Update object index for all objects in the bundle
-    let offset = 64 // Start after header
+    const objectTypeNames: Record<number, string> = {
+      [BundleObjectType.BLOB]: 'blob',
+      [BundleObjectType.TREE]: 'tree',
+      [BundleObjectType.COMMIT]: 'commit',
+      [BundleObjectType.TAG]: 'tag',
+    }
+
     for (const obj of bundle.objects) {
       await this.objectIndex.recordLocation({
         sha: obj.sha,
         tier: 'r2',
         packId: bundle.id,
-        offset,
+        offset: 0,
         size: obj.data.length,
-        type: ['blob', 'tree', 'commit', 'tag'][obj.type - 1]
+        type: objectTypeNames[obj.type] ?? 'blob',
       })
-      offset += obj.data.length
     }
 
     this.createdBundleIds.push(bundle.id)
     this.currentBundle = null
-  }
-
-  /**
-   * Build bundle binary data from pending bundle.
-   * This is a simplified implementation - production would use full bundle format.
-   */
-  private async buildBundleData(bundle: PendingBundle): Promise<Uint8Array> {
-    // Calculate total size
-    const headerSize = 64
-    const indexEntrySize = 40 + 4 + 4 + 4 // sha + offset + size + type
-    const indexSize = bundle.objects.length * indexEntrySize
-    let dataSize = 0
-    for (const obj of bundle.objects) {
-      dataSize += obj.data.length
-    }
-    const totalSize = headerSize + dataSize + indexSize
-
-    const result = new Uint8Array(totalSize)
-    const view = new DataView(result.buffer)
-    let offset = 0
-
-    // Write header (64 bytes)
-    // Magic: BNDL
-    result[offset++] = 0x42 // B
-    result[offset++] = 0x4E // N
-    result[offset++] = 0x44 // D
-    result[offset++] = 0x4C // L
-
-    // Version: 1
-    view.setUint32(offset, 1, false)
-    offset += 4
-
-    // Entry count
-    view.setUint32(offset, bundle.objects.length, false)
-    offset += 4
-
-    // Index offset (after header + data)
-    view.setUint32(offset, headerSize + dataSize, false)
-    offset += 4
-
-    // Total size
-    view.setUint32(offset, totalSize, false)
-    offset += 4
-
-    // Padding to 64 bytes
-    offset = headerSize
-
-    // Write object data
-    const objectOffsets: number[] = []
-    for (const obj of bundle.objects) {
-      objectOffsets.push(offset)
-      result.set(obj.data, offset)
-      offset += obj.data.length
-    }
-
-    // Write index
-    for (let i = 0; i < bundle.objects.length; i++) {
-      const obj = bundle.objects[i]
-
-      // SHA (40 bytes as hex string)
-      const shaBytes = new TextEncoder().encode(obj.sha)
-      result.set(shaBytes, offset)
-      offset += 40
-
-      // Offset (4 bytes)
-      view.setUint32(offset, objectOffsets[i], false)
-      offset += 4
-
-      // Size (4 bytes)
-      view.setUint32(offset, obj.data.length, false)
-      offset += 4
-
-      // Type (4 bytes)
-      view.setUint32(offset, obj.type, false)
-      offset += 4
-    }
-
-    return result
   }
 
   /**

@@ -45,16 +45,7 @@ import {
   type R2BucketLike,
 } from './git-module'
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
-/**
- * Type for a class constructor.
- * @template T - The type that the constructor creates
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Constructor<T = object> = new (...args: any[]) => T
+import { type Constructor } from '../types/interfaces'
 
 /**
  * Interface for DOs that have git capability.
@@ -397,6 +388,8 @@ export function hasGitCapability(value: unknown): value is WithGitCapability {
 // ============================================================================
 // Re-exports for Convenience
 // ============================================================================
+
+export { type Constructor }
 
 export {
   GitModule,
