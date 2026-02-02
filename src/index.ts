@@ -503,6 +503,52 @@ export {
   type ExternalBaseResolver,
 } from './pack/unpack'
 
+/**
+ * Pack multi-index operations.
+ *
+ * @description
+ * Functions for managing multiple pack indices for improved scalability:
+ * - Incremental index updates without full rebuilds
+ * - Sharded indices for memory efficiency
+ * - Batch lookups across multiple packs
+ * - Fanout tables for O(1) range narrowing
+ *
+ * @example
+ * ```typescript
+ * import { MultiIndexManager, createMultiIndexManager } from 'gitx.do'
+ *
+ * // Create a multi-index manager
+ * const manager = createMultiIndexManager({ shardCount: 16 })
+ *
+ * // Add pack indices
+ * manager.addPackIndex(packId, entries)
+ *
+ * // Lookup objects
+ * const location = manager.lookupObject(sha)
+ * if (location) {
+ *   console.log(`Found in ${location.packId} at offset ${location.offset}`)
+ * }
+ *
+ * // Batch lookup
+ * const result = manager.batchLookup(shas)
+ * ```
+ */
+export {
+  MultiIndexManager,
+  createMultiIndexManager,
+  addPackIndexFromData,
+  batchLookupAcrossManagers,
+  // Types
+  type PackObjectLocation,
+  type MultiIndexEntry,
+  type IndexShard,
+  type PackRegistry,
+  type PackRegistryEntry,
+  type MultiIndexConfig,
+  type BatchLookupResult as MultiIndexBatchLookupResult,
+  type MultiIndexStats,
+} from './pack/multi-index'
+
 // =============================================================================
 // Git Operations - Core git commands (merge, blame, commit, branch)
 // =============================================================================

@@ -204,10 +204,12 @@ export function parseRefLine(line: string): { sha: string; name: string } | null
   if (!match) {
     return null
   }
-  return {
-    sha: match[1],
-    name: match[2]
+  const sha = match[1]
+  const name = match[2]
+  if (sha === undefined || name === undefined) {
+    return null
   }
+  return { sha, name }
 }
 
 /**

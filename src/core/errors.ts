@@ -43,8 +43,8 @@ export class ObjectNotFoundError extends GitError {
  * Error thrown when a Git object is corrupted or invalid.
  */
 export class CorruptObjectError extends GitError {
-  public readonly sha?: string
-  public readonly objectType?: string
+  public readonly sha: string | undefined
+  public readonly objectType: string | undefined
 
   constructor(message: string, sha?: string, objectType?: string) {
     super(message, 'CORRUPT_OBJECT')
@@ -72,7 +72,7 @@ export class RefNotFoundError extends GitError {
  */
 export class InvalidRefNameError extends GitError {
   public readonly refName: string
-  public readonly reason?: string
+  public readonly reason: string | undefined
 
   constructor(refName: string, reason?: string) {
     const message = reason
@@ -102,7 +102,7 @@ export class InvalidShaError extends GitError {
  * Error thrown when a pack file is corrupted or invalid.
  */
 export class PackFormatError extends GitError {
-  public readonly offset?: number
+  public readonly offset: number | undefined
 
   constructor(message: string, offset?: number) {
     super(offset !== undefined ? `${message} at offset ${offset}` : message, 'PACK_FORMAT_ERROR')
@@ -115,9 +115,9 @@ export class PackFormatError extends GitError {
  * Error thrown when delta application fails.
  */
 export class DeltaError extends GitError {
-  public readonly baseSize?: number
-  public readonly expectedSize?: number
-  public readonly actualSize?: number
+  public readonly baseSize: number | undefined
+  public readonly expectedSize: number | undefined
+  public readonly actualSize: number | undefined
 
   constructor(message: string, options?: { baseSize?: number; expectedSize?: number; actualSize?: number }) {
     super(message, 'DELTA_ERROR')
@@ -132,7 +132,7 @@ export class DeltaError extends GitError {
  * Error thrown when a wire protocol message is invalid.
  */
 export class ProtocolError extends GitError {
-  public readonly protocolCode?: string
+  public readonly protocolCode: string | undefined
 
   constructor(message: string, protocolCode?: string) {
     super(message, 'PROTOCOL_ERROR')
@@ -158,8 +158,8 @@ export class NotSupportedError extends GitError {
  * Error thrown when there's a conflict (e.g., merge conflict).
  */
 export class ConflictError extends GitError {
-  public readonly path?: string
-  public readonly conflictType?: 'merge' | 'rebase' | 'cherry-pick' | 'update'
+  public readonly path: string | undefined
+  public readonly conflictType: 'merge' | 'rebase' | 'cherry-pick' | 'update' | undefined
 
   constructor(message: string, path?: string, conflictType?: 'merge' | 'rebase' | 'cherry-pick' | 'update') {
     super(message, 'CONFLICT')
@@ -173,8 +173,8 @@ export class ConflictError extends GitError {
  * Error thrown when storage operations fail.
  */
 export class CoreStorageError extends GitError {
-  public readonly operation?: string
-  public readonly path?: string
+  public readonly operation: string | undefined
+  public readonly path: string | undefined
 
   constructor(message: string, operation?: string, path?: string) {
     super(message, 'STORAGE_ERROR')

@@ -28,7 +28,7 @@
  */
 
 import type { GitObject, ObjectType } from '../types/objects'
-import { isValidObjectType, isValidShortSha, MIN_SHORT_SHA_LENGTH } from '../types/objects'
+import { isValidObjectType } from '../types/objects'
 
 // Re-export types from objects for convenience
 export type { GitObject, ObjectType, BlobObject, TreeObject, CommitObject, TagObject } from '../types/objects'
@@ -279,6 +279,54 @@ export interface MemoryBackend extends GitBackend {
    * Resets the backend to a clean state. Useful for test isolation.
    */
   clear(): void
+
+  /**
+   * Read a pack file by name.
+   *
+   * @param name - Name of the pack file
+   * @returns Pack data or null if not found
+   */
+  readPack(name: string): Promise<Uint8Array | null>
+
+  /**
+   * List all pack files.
+   *
+   * @returns Array of pack file names
+   */
+  listPacks(): Promise<string[]>
+
+  /**
+   * Write a symbolic reference.
+   *
+   * @param name - Symbolic ref name (e.g., 'HEAD')
+   * @param target - Target ref name (e.g., 'refs/heads/main')
+   */
+  writeSymbolicRef(name: string, target: string): Promise<void>
+
+  /**
+   * Read a symbolic reference.
+   *
+   * @param name - Symbolic ref name
+   * @returns Target ref name or null if not found
+   */
+  readSymbolicRef(name: string): Promise<string | null>
+
+  /**
+   * Compare and swap a reference atomically.
+   *
+   * @param name - Ref name
+   * @param expectedSha - Expected current value (null for new refs)
+   * @param newSha - New value to set
+   * @returns True if successful, false if current value didn't match
+   */
+  compareAndSwapRef(name: string, expectedSha: string | null, newSha: string): Promise<boolean>
+
+  /**
+   * Delete an object from storage.
+   *
+   * @param sha - SHA of object to delete
+   */
+  deleteObject(sha: string): Promise<void>
 }
 
 // ============================================================================
@@ -365,12 +413,12 @@ async function parsePackfile(pack: Uint8Array): Promise<GitObject[]> {
     return objects // Invalid signature
   }
 
-  const version = (pack[4] << 24) | (pack[5] << 16) | (pack[6] << 8) | pack[7]
+  const version = (pack[4]! << 24) | (pack[5]! << 16) | (pack[6]! << 8) | pack[7]!
   if (version !== 2) {
     return objects // Unsupported version
   }
 
-  const objectCount = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11]
+  const objectCount = (pack[8]! << 24) | (pack[9]! << 16) | (pack[10]! << 8) | pack[11]!
 
   if (objectCount === 0) {
     return objects // Empty pack
@@ -383,6 +431,7 @@ async function parsePackfile(pack: Uint8Array): Promise<GitObject[]> {
     // Read object header (variable-length encoded)
     // First byte: bit 7 = MSB/continuation, bits 4-6 = type, bits 0-3 = size low bits
     const firstByte = pack[offset]
+    if (firstByte === undefined) break
     const typeNum = (firstByte >> 4) & 0x07
     let size = firstByte & 0x0f
     let shift = 4
@@ -402,7 +451,9 @@ async function parsePackfile(pack: Uint8Array): Promise<GitObject[]> {
       // Skip unknown types or delta objects (6, 7)
       // Skip remaining size bytes
       while (hasContinuation && offset < pack.length) {
-        hasContinuation = (pack[offset] & 0x80) !== 0
+        const nextByte = pack[offset]
+        if (nextByte === undefined) break
+        hasContinuation = (nextByte & 0x80) !== 0
         offset++
       }
       continue
@@ -414,6 +465,7 @@ async function parsePackfile(pack: Uint8Array): Promise<GitObject[]> {
     // We detect extra bytes by checking if the NEXT byte has MSB set or looks like a size byte
     while (offset < pack.length - 20) {
       const byte = pack[offset]
+      if (byte === undefined) break
       // If first byte indicated continuation, we must read
       // If first byte didn't indicate continuation but this byte has MSB set,
       // it's a continuation byte from the test's format
@@ -571,10 +623,13 @@ export function createMemoryBackend(): MemoryBackend {
     // =========================================================================
 
     async readPackedRefs(): Promise<PackedRefs> {
-      return {
+      const result: PackedRefs = {
         refs: new Map(packedRefs.refs),
-        peeled: packedRefs.peeled ? new Map(packedRefs.peeled) : undefined,
       }
+      if (packedRefs.peeled) {
+        result.peeled = new Map(packedRefs.peeled)
+      }
+      return result
     },
 
     async writePackfile(pack: Uint8Array): Promise<void> {

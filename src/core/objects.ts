@@ -210,8 +210,8 @@ export function serializeTag(tag: Omit<TagObject, 'type' | 'data'>): Uint8Array 
     object: tag.object,
     objectType: tag.objectType,
     name: tag.name,
-    tagger: tag.tagger as GitIdentity | undefined,
     message: tag.message,
+    ...(tag.tagger !== undefined ? { tagger: tag.tagger as GitIdentity } : {}),
   })
   return gitTag.serialize()
 }
@@ -274,8 +274,8 @@ export function parseTag(data: Uint8Array): TagObject {
     object: tag.object,
     objectType: tag.objectType,
     name: tag.name,
-    tagger: tag.tagger as Author | undefined,
     message: tag.message,
+    ...(tag.tagger !== undefined ? { tagger: tag.tagger as Author } : {}),
   }
 }
 
@@ -349,8 +349,9 @@ export function validateCommit(commit: Omit<CommitObject, 'type' | 'data'>): { i
     return { isValid: false, error: `Invalid tree SHA: ${commit.tree}` }
   }
   for (let i = 0; i < commit.parents.length; i++) {
-    if (!isValidSha(commit.parents[i])) {
-      return { isValid: false, error: `Invalid parent SHA at index ${i}: ${commit.parents[i]}` }
+    const parent = commit.parents[i]
+    if (parent === undefined || !isValidSha(parent)) {
+      return { isValid: false, error: `Invalid parent SHA at index ${i}: ${parent}` }
     }
   }
   const authorResult = validateAuthor(commit.author)

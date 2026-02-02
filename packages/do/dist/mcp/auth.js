@@ -124,21 +124,27 @@ async function introspectToken(token, config) {
  * Create GitAuthContext from introspection response
  */
 function createAuthContext(response) {
-    const scopes = parseScopes(response.scope);
+    const scopeStr = response['scope'];
+    const scopes = parseScopes(scopeStr);
     const readonly = isReadonlyScope(scopes);
     const isAdmin = hasAdminScope(scopes);
-    const id = response.sub ?? response['client_id'] ?? 'unknown';
+    const sub = response['sub'];
+    const clientId = response['client_id'];
+    const id = sub ?? clientId ?? 'unknown';
     const metadata = {};
-    if (response['scope'])
-        metadata.scope = response['scope'];
-    if (response['exp'])
-        metadata.exp = response['exp'];
-    if (response['iat'])
-        metadata.iat = response['iat'];
-    if (response['client_id'])
-        metadata.client_id = response['client_id'];
-    if (response['iss'])
-        metadata.iss = response['iss'];
+    if (scopeStr)
+        metadata['scope'] = scopeStr;
+    const exp = response['exp'];
+    if (exp)
+        metadata['exp'] = exp;
+    const iat = response['iat'];
+    if (iat)
+        metadata['iat'] = iat;
+    if (clientId)
+        metadata['client_id'] = clientId;
+    const iss = response['iss'];
+    if (iss)
+        metadata['iss'] = iss;
     const context = {
         type: 'oauth',
         id,
@@ -244,7 +250,7 @@ export function requireGitAdmin() {
         if (!auth.isAdmin) {
             return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, { status: 403 });
         }
-        await next();
+        return next();
     };
 }
 /**

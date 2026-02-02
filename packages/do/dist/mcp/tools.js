@@ -697,13 +697,13 @@ export function requiresWriteAccess(toolName, params) {
     if (CONDITIONAL_WRITE_TOOLS.has(toolName)) {
         // Check params to determine if write is needed
         if (toolName === 'git_branch') {
-            return !!(params.name || params.delete);
+            return !!(params['name'] || params['delete']);
         }
         if (toolName === 'git_tag') {
-            return !!(params.name || params.delete) && !params.list;
+            return !!(params['name'] || params['delete']) && !params['list'];
         }
         if (toolName === 'git_remote') {
-            return ['add', 'remove', 'rename', 'set-url'].includes(params.action);
+            return ['add', 'remove', 'rename', 'set-url'].includes(params['action']);
         }
     }
     return false;

@@ -135,3 +135,39 @@ export {
   type RateLimiter,
   type RateLimiterHook,
 } from './hardening'
+
+// Streaming Support for Large Blobs
+export {
+  // Constants
+  DEFAULT_CHUNK_SIZE,
+  MIN_CHUNK_SIZE,
+  MAX_SIDEBAND_PAYLOAD,
+  LARGE_BLOB_THRESHOLD,
+  // Enums
+  StreamChannel,
+  // Blob streaming
+  createBlobReadStream,
+  createR2ReadStream,
+  // Side-band streaming
+  createSideBandTransform,
+  createSideBandExtractTransform,
+  // Pkt-line streaming
+  createPktLineTransform,
+  // Pack streaming
+  createStreamingPackWriter,
+  createStreamingPackReader,
+  StreamingPackWriter,
+  // Utilities
+  isLargeBlob,
+  createProgressTransform,
+  concatStreams,
+  teeStream,
+  // Types
+  type BlobStreamOptions,
+  type SideBandOptions,
+  type StreamingPackWriterOptions,
+  type StreamableObject,
+  type StreamingStats,
+  type StreamProgressCallback,
+  type StreamingPackReaderOptions,
+} from './streaming'

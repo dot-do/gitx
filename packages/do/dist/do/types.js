@@ -30,7 +30,9 @@ export class GitRepoDOError extends Error {
         super(message);
         this.name = 'GitRepoDOError';
         this.code = code;
-        this.context = context;
+        if (context !== undefined) {
+            this.context = context;
+        }
         // Maintains proper stack trace for where our error was thrown (only available on V8)
         const ErrorWithCapture = Error;
         if (ErrorWithCapture.captureStackTrace) {
@@ -44,7 +46,7 @@ export class GitRepoDOError extends Error {
             code: this.code,
         };
         if (this.context !== undefined) {
-            result.context = this.context;
+            result['context'] = this.context;
         }
         return result;
     }

@@ -72,7 +72,7 @@ import {
   // Types
   type ObjectType,
   type GitObjectData,
-} from '../../../packages/core/objects'
+} from '@dotdo/gitx/objects'
 
 // =============================================================================
 // Test Helpers

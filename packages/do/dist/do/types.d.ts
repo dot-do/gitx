@@ -223,8 +223,8 @@ export declare enum GitRepoDOErrorCode {
  */
 export declare class GitRepoDOError extends Error {
     readonly code: GitRepoDOErrorCode;
-    readonly context?: Record<string, unknown>;
-    constructor(message: string, code: GitRepoDOErrorCode, context?: Record<string, unknown>);
+    readonly context?: Record<string, unknown> | undefined;
+    constructor(message: string, code: GitRepoDOErrorCode, context?: Record<string, unknown> | undefined);
     toJSON(): Record<string, unknown>;
 }
 /**
