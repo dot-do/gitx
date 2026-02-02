@@ -513,14 +513,14 @@ export class CloudflareContainerExecutor implements BashExecutor {
    * @param options - Configuration options
    */
   constructor(options: ContainerExecutorOptions = {}) {
-    this.sandbox = options.sandbox
-    this.container = options.container
+    if (options.sandbox !== undefined) this.sandbox = options.sandbox
+    if (options.container !== undefined) this.container = options.container
     this.sessionId = options.sessionId ?? crypto.randomUUID()
     this.defaultCwd = options.cwd ?? '/'
     this.defaultTimeout = options.timeout ?? 30000
     this.defaultEnv = options.env ?? {}
-    this.wsEndpoint = options.wsEndpoint
-    this.httpExecEndpoint = options.httpExecEndpoint
+    if (options.wsEndpoint !== undefined) this.wsEndpoint = options.wsEndpoint
+    if (options.httpExecEndpoint !== undefined) this.httpExecEndpoint = options.httpExecEndpoint
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis)
 
     // Initialize session state
@@ -553,17 +553,23 @@ export class CloudflareContainerExecutor implements BashExecutor {
 
     // Try sandbox SDK first
     if (this.sandbox) {
-      return this.executeViaSandbox(command, { cwd, timeout, env, stdin: options?.stdin })
+      const sandboxOpts: SandboxExecOptions = { cwd, timeout, env }
+      if (options?.stdin !== undefined) sandboxOpts.stdin = options.stdin
+      return this.executeViaSandbox(command, sandboxOpts)
     }
 
     // Try HTTP exec endpoint
     if (this.httpExecEndpoint) {
-      return this.executeViaHttp(command, { cwd, timeout, env, stdin: options?.stdin })
+      const httpOpts: SandboxExecOptions = { cwd, timeout, env }
+      if (options?.stdin !== undefined) httpOpts.stdin = options.stdin
+      return this.executeViaHttp(command, httpOpts)
     }
 
     // Try container fetch with custom exec endpoint
     if (this.container) {
-      return this.executeViaContainer(command, { cwd, timeout, env, stdin: options?.stdin })
+      const containerOpts: SandboxExecOptions = { cwd, timeout, env }
+      if (options?.stdin !== undefined) containerOpts.stdin = options.stdin
+      return this.executeViaContainer(command, containerOpts)
     }
 
     // No execution backend available
@@ -1000,12 +1006,12 @@ export class CloudflareContainerExecutor implements BashExecutor {
     const pid = this.pidCounter++
 
     const executeAndStream = async (): Promise<BashResult> => {
-      const result = await this.execute(command, {
-        cwd: execOptions.cwd,
-        timeout: execOptions.timeout,
-        env: execOptions.env,
-        stdin: execOptions.stdin,
-      })
+      const opts: ExecOptions = {}
+      if (execOptions.cwd !== undefined) opts.cwd = execOptions.cwd
+      if (execOptions.timeout !== undefined) opts.timeout = execOptions.timeout
+      if (execOptions.env !== undefined) opts.env = execOptions.env
+      if (execOptions.stdin !== undefined) opts.stdin = execOptions.stdin
+      const result = await this.execute(command, opts)
 
       // Simulate streaming by emitting all output at once
       if (result.stdout) {
@@ -1210,7 +1216,9 @@ export function createSandboxExecutor(
   sandbox: CloudflareSandbox,
   sessionId?: string
 ): CloudflareContainerExecutor {
-  return new CloudflareContainerExecutor({ sandbox, sessionId })
+  const opts: ContainerExecutorOptions = { sandbox }
+  if (sessionId !== undefined) opts.sessionId = sessionId
+  return new CloudflareContainerExecutor(opts)
 }
 
 /**
@@ -1224,7 +1232,9 @@ export function createHttpExecutor(
   endpoint: string,
   sessionId?: string
 ): CloudflareContainerExecutor {
-  return new CloudflareContainerExecutor({ httpExecEndpoint: endpoint, sessionId })
+  const opts: ContainerExecutorOptions = { httpExecEndpoint: endpoint }
+  if (sessionId !== undefined) opts.sessionId = sessionId
+  return new CloudflareContainerExecutor(opts)
 }
 
 /**
@@ -1238,7 +1248,9 @@ export function createWebSocketExecutor(
   endpoint: string,
   sessionId?: string
 ): CloudflareContainerExecutor {
-  return new CloudflareContainerExecutor({ wsEndpoint: endpoint, sessionId })
+  const opts: ContainerExecutorOptions = { wsEndpoint: endpoint }
+  if (sessionId !== undefined) opts.sessionId = sessionId
+  return new CloudflareContainerExecutor(opts)
 }
 
 // ============================================================================

@@ -566,7 +566,8 @@ export class WALManager {
       transactionId
     )
     const rows = result.toArray() as { state: TransactionState }[]
-    return rows.length > 0 ? rows[0].state : null
+    const firstRow = rows[0]
+    return rows.length > 0 && firstRow ? firstRow.state : null
   }
 
   /**
@@ -659,8 +660,8 @@ export class WALManager {
       created_at: number
       metadata: string | null
     }>
-    if (rawRows.length === 0) return null
     const row = rawRows[0]
+    if (rawRows.length === 0 || !row) return null
     return {
       id: row.id,
       walPosition: row.wal_position,

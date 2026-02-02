@@ -223,7 +223,6 @@ export {
   validateRefName,
   validateRefUpdate,
   validateStoreParams,
-  assertValidSha,
   assertValidRefName,
   // Storage interfaces
   type ObjectStore as StorageObjectStore,
@@ -233,6 +232,9 @@ export {
   type CommitProvider,
   type BasicCommitProvider,
 } from './types/storage'
+
+// Re-export assertValidSha from sha-validation module
+export { assertValidSha } from './utils/sha-validation'
 
 /**
  * GitCapability types for DO integration.
@@ -293,7 +295,7 @@ export {
   type CheckoutOptions as CapabilityCheckoutOptions,
   type MergeOptions as CapabilityMergeOptions,
   // Authentication
-  type AuthOptions,
+  type AuthOptions as CapabilityAuthOptions,
   // Callbacks and progress
   type ProgressCallback,
   type ProgressEvent,
@@ -362,7 +364,7 @@ export {
   type WithCapability,
   // Errors
   type GitxError,
-  type StorageError,
+  type StorageError as InterfaceStorageError,
   type R2Error,
   type GitError,
 } from './types/interfaces'
@@ -1175,7 +1177,7 @@ export {
   // Classes
   TierMigrator,
   AccessTracker,
-  MigrationError,
+  MigrationError as TierMigrationError,
   MigrationRollback,
   ConcurrentAccessHandler,
   // Types

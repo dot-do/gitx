@@ -148,13 +148,16 @@ export async function evaluateWithMiniflare(
 
       const result = await response.json() as EvaluatorResult
 
-      return {
+      const evalResult: EvaluatorResult = {
         success: result.success,
         value: result.value,
-        error: result.error,
         logs: result.logs,
         duration: result.duration
       }
+      if (result.error !== undefined) {
+        evalResult.error = result.error
+      }
+      return evalResult
     } finally {
       await mf.dispose()
     }

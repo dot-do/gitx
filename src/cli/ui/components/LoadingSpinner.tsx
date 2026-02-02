@@ -12,9 +12,10 @@ export interface LoadingSpinnerElement {
 }
 
 export function LoadingSpinner(props: LoadingSpinnerProps): LoadingSpinnerElement {
-  return {
+  const result: LoadingSpinnerElement = {
     type: 'LoadingSpinner',
-    props,
-    message: props.message
+    props
   }
+  if (props.message !== undefined) result.message = props.message
+  return result
 }

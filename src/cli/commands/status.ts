@@ -444,13 +444,14 @@ export async function getBranchInfo(cwd: string): Promise<BranchInfo> {
     }
   }
 
-  return {
+  const result: BranchInfo = {
     name: branchName,
-    upstream: upstreamName,
-    ahead,
-    behind,
     detached: false
   }
+  if (upstreamName !== undefined) result.upstream = upstreamName
+  if (ahead !== undefined) result.ahead = ahead
+  if (behind !== undefined) result.behind = behind
+  return result
 }
 
 /**

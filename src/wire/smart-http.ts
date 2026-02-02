@@ -612,7 +612,7 @@ export async function handleInfoRefs(
   capabilities?: ServerCapabilities
 ): Promise<SmartHTTPResponse> {
   // Validate service parameter
-  const service = request.query.service
+  const service = request.query['service']
   if (!service) {
     return createErrorResponse(400, 'Missing service parameter')
   }
@@ -985,11 +985,17 @@ export function formatRefAdvertisement(
     lines.push(formatRefLineWithCapabilities(ZERO_SHA, 'capabilities^{}', capabilitiesString))
   } else {
     // First ref includes capabilities
-    lines.push(formatRefLineWithCapabilities(refs[0].sha, refs[0].name, capabilitiesString))
+    const firstRef = refs[0]
+    if (firstRef) {
+      lines.push(formatRefLineWithCapabilities(firstRef.sha, firstRef.name, capabilitiesString))
+    }
 
     // Remaining refs (without capabilities)
     for (let i = 1; i < refs.length; i++) {
-      lines.push(formatRefLine(refs[i].sha, refs[i].name))
+      const ref = refs[i]
+      if (ref) {
+        lines.push(formatRefLine(ref.sha, ref.name))
+      }
     }
 
     // Peeled refs for annotated tags
@@ -1139,7 +1145,9 @@ export function parseUploadPackRequest(body: Uint8Array): {
       // First want line may contain capabilities after SHA
       const parts = rest.split(' ')
       const sha = parts[0]
-      wants.push(sha)
+      if (sha) {
+        wants.push(sha)
+      }
 
       if (firstWant && parts.length > 1) {
         capabilities = parts.slice(1)
@@ -1249,11 +1257,15 @@ export function parseReceivePackRequest(body: Uint8Array): {
     // Parse command: oldSha newSha refName
     const parts = cmdLine.split(' ')
     if (parts.length >= 3) {
-      commands.push({
-        oldSha: parts[0],
-        newSha: parts[1],
-        refName: parts.slice(2).join(' '),
-      })
+      const oldSha = parts[0]
+      const newSha = parts[1]
+      if (oldSha && newSha) {
+        commands.push({
+          oldSha,
+          newSha,
+          refName: parts.slice(2).join(' '),
+        })
+      }
     }
   }
 
@@ -1582,7 +1594,12 @@ export function validateContentType(
   }
 
   // Normalize: lowercase and strip charset or other parameters
-  const normalized = contentType.toLowerCase().split(';')[0].trim()
+  const parts = contentType.toLowerCase().split(';')
+  const firstPart = parts[0]
+  if (!firstPart) {
+    return false
+  }
+  const normalized = firstPart.trim()
   const expected = expectedType.toLowerCase()
 
   return normalized === expected

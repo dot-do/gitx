@@ -110,27 +110,27 @@ export interface Tag {
    * For annotated tags: the commit/object the tag points to.
    * Undefined for lightweight tags.
    */
-  targetSha?: string
+  targetSha?: string | undefined
   /**
    * For annotated tags: the type of object being tagged.
    * Usually 'commit', but could be 'blob', 'tree', or even 'tag'.
    */
-  targetType?: ObjectType
+  targetType?: ObjectType | undefined
   /**
    * For annotated tags: the tagger information.
    * Contains name, email, timestamp, and timezone.
    */
-  tagger?: Author
+  tagger?: Author | undefined
   /**
    * For annotated tags: the tag message.
    * Can be multi-line with a subject and body.
    */
-  message?: string
+  message?: string | undefined
   /**
    * For signed annotated tags: the GPG signature.
    * ASCII-armored GPG signature block.
    */
-  signature?: string
+  signature?: string | undefined
 }
 
 /**
@@ -411,7 +411,7 @@ export interface GPGSigner {
 export class TagManager {
   private refStorage: TagRefStorage
   private objectStorage: TagObjectStorage
-  private gpgSigner?: GPGSigner
+  private gpgSigner: GPGSigner | undefined
   // Simple in-memory lock to handle concurrent tag creation
   private pendingCreations = new Set<string>()
 
@@ -539,8 +539,10 @@ export class TagManager {
           object: target,
           objectType: targetType || 'commit',
           name,
-          tagger,
           message: finalMessage
+        }
+        if (tagger !== undefined) {
+          tagObj.tagger = tagger
         }
 
         // Write tag object and get its SHA
@@ -549,16 +551,21 @@ export class TagManager {
         // Write ref pointing to tag object
         await this.refStorage.setRef(refName, tagObjSha)
 
-        return {
+        const annotatedResult: Tag = {
           name,
           type: 'annotated',
           sha: tagObjSha,
           targetSha: target,
           targetType: targetType || 'commit',
-          tagger,
           message: formattedMessage,
-          signature
         }
+        if (tagger !== undefined) {
+          annotatedResult.tagger = tagger
+        }
+        if (signature !== undefined) {
+          annotatedResult.signature = signature
+        }
+        return annotatedResult
       } else {
         // Lightweight tag - just write ref pointing to target
         await this.refStorage.setRef(refName, target)
@@ -671,8 +678,12 @@ export class TagManager {
         if (needMetadata) {
           tag.targetSha = tagObj.object
           tag.targetType = tagObj.objectType
-          tag.tagger = tagObj.tagger
-          tag.message = tagObj.message
+          if (tagObj.tagger !== undefined) {
+            tag.tagger = tagObj.tagger
+          }
+          if (tagObj.message !== undefined) {
+            tag.message = tagObj.message
+          }
         }
 
         tags.push(tag)
@@ -773,13 +784,17 @@ export class TagManager {
       if (options?.resolve) {
         tag.targetSha = tagObj.object
         tag.targetType = tagObj.objectType
-        tag.tagger = tagObj.tagger
-        tag.message = tagObj.message
-        // Check for signature in message
-        const parsed = parseTagMessage(tagObj.message)
-        if (parsed.signature) {
-          tag.signature = parsed.signature
-          tag.message = parsed.message
+        if (tagObj.tagger !== undefined) {
+          tag.tagger = tagObj.tagger
+        }
+        if (tagObj.message !== undefined) {
+          tag.message = tagObj.message
+          // Check for signature in message
+          const parsed = parseTagMessage(tagObj.message)
+          if (parsed.signature) {
+            tag.signature = parsed.signature
+            tag.message = parsed.message
+          }
         }
       }
 
@@ -1358,7 +1373,9 @@ export function sortTagsByVersion(tags: Tag[], direction: 'asc' | 'desc' = 'asc'
     // Remove 'v' prefix if present
     const normalized = name.startsWith('v') ? name.slice(1) : name
     // Extract numeric version parts (split on non-digit, non-dot)
-    const parts = normalized.split(/[^0-9.]/)[0].split('.')
+    const splitResult = normalized.split(/[^0-9.]/)
+    const versionPart = splitResult[0] ?? ''
+    const parts = versionPart.split('.')
     return parts.map(p => parseInt(p, 10) || 0)
   }
 

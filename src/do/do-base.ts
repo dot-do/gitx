@@ -191,8 +191,8 @@ export function isDO(value: unknown): value is DO {
   const candidate = value as Record<string, unknown>
 
   return (
-    typeof candidate.$type === 'string' &&
-    typeof candidate.hasCapability === 'function' &&
-    typeof candidate.getTypeHierarchy === 'function'
+    typeof candidate['$type'] === 'string' &&
+    typeof candidate['hasCapability'] === 'function' &&
+    typeof candidate['getTypeHierarchy'] === 'function'
   )
 }

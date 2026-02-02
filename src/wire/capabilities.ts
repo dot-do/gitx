@@ -757,11 +757,11 @@ export function parseRefAdvertisement(line: string, isFirst: boolean): RefAdvert
     }
   }
 
-  return {
-    oid,
-    name,
-    capabilities,
+  const result: RefAdvertisement = { oid, name }
+  if (capabilities !== undefined) {
+    result.capabilities = capabilities
   }
+  return result
 }
 
 /**
@@ -826,6 +826,7 @@ export function parseServerCapabilitiesV2(lines: string[]): ServerCapabilitiesV2
   // Process each line after "version 2"
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]
+    if (!line) continue
     const eqIndex = line.indexOf('=')
 
     if (eqIndex === -1) {
@@ -850,13 +851,18 @@ export function parseServerCapabilitiesV2(lines: string[]): ServerCapabilitiesV2
     }
   }
 
-  return {
+  const result: ServerCapabilitiesV2 = {
     version: 2,
     commands,
-    agent,
-    objectFormat,
     capabilities,
   }
+  if (agent !== undefined) {
+    result.agent = agent
+  }
+  if (objectFormat !== undefined) {
+    result.objectFormat = objectFormat
+  }
+  return result
 }
 
 // ============================================================================
@@ -999,6 +1005,7 @@ export function buildFetchRequest(request: WantRequest): string[] {
 
   for (let i = 0; i < request.wants.length; i++) {
     const oid = request.wants[i]
+    if (!oid) continue
     if (i === 0) {
       // First want line includes capabilities
       lines.push(buildWantLine(oid, request.capabilities))

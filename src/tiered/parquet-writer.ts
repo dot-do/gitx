@@ -1181,14 +1181,17 @@ export class ParquetWriter {
       const stats = this.options.enableStatistics ? this._computeStatistics(values, field.type) : undefined
       const compression = this.options.columnCompression?.[field.name] ?? this.options.compression
 
-      return {
+      const chunk: ColumnChunkMetadata = {
         column: field.name,
         type: field.type,
         compression,
         encodedSize: this._estimateEncodedSize(values, field.type, compression),
-        uncompressedSize: this._estimateUncompressedSize(values, field.type),
-        statistics: stats
+        uncompressedSize: this._estimateUncompressedSize(values, field.type)
       }
+      if (stats !== undefined) {
+        chunk.statistics = stats
+      }
+      return chunk
     })
 
     return {
@@ -1331,11 +1334,17 @@ export class ParquetWriter {
       numRows: this._rowCount,
       rowGroups: this._rowGroups,
       compression: this.options.compression,
-      columnCompression: this.options.columnCompression,
       keyValueMetadata: this._keyValueMetadata,
-      createdAt: this._createdAt,
-      sortedBy: this.options.sortBy,
-      partitionColumns: this.options.partitionColumns
+      createdAt: this._createdAt
+    }
+    if (this.options.columnCompression !== undefined) {
+      metadata.columnCompression = this.options.columnCompression
+    }
+    if (this.options.sortBy !== undefined) {
+      metadata.sortedBy = this.options.sortBy
+    }
+    if (this.options.partitionColumns !== undefined) {
+      metadata.partitionColumns = this.options.partitionColumns
     }
 
     // Encode metadata to JSON and then to bytes
@@ -1499,15 +1508,23 @@ export function defineSchema(
     names.add(field.name)
   }
 
-  return {
-    fields: fields.map(f => ({
-      name: f.name,
-      type: f.type,
-      required: f.required,
-      metadata: f.metadata
-    })),
-    metadata
+  const schema: ParquetSchema = {
+    fields: fields.map(f => {
+      const field: ParquetField = {
+        name: f.name,
+        type: f.type,
+        required: f.required
+      }
+      if (f.metadata !== undefined) {
+        field.metadata = f.metadata
+      }
+      return field
+    })
   }
+  if (metadata !== undefined) {
+    schema.metadata = metadata
+  }
+  return schema
 }
 
 /**
@@ -1690,18 +1707,27 @@ export function getMetadata(bytes: Uint8Array): ParquetMetadata {
     }
   }
 
-  return {
+  const result: ParquetMetadata = {
     schema: internal.schema,
     numRows: internal.numRows,
     rowGroups: internal.rowGroups,
     compression: internal.compression,
-    columnMetadata: Object.keys(columnMetadata).length > 0 ? columnMetadata : undefined,
-    keyValueMetadata: Object.keys(internal.keyValueMetadata).length > 0 ? internal.keyValueMetadata : undefined,
     createdAt: internal.createdAt,
-    fileSize: bytes.length,
-    sortedBy: internal.sortedBy,
-    partitionColumns: internal.partitionColumns
+    fileSize: bytes.length
   }
+  if (Object.keys(columnMetadata).length > 0) {
+    result.columnMetadata = columnMetadata
+  }
+  if (Object.keys(internal.keyValueMetadata).length > 0) {
+    result.keyValueMetadata = internal.keyValueMetadata
+  }
+  if (internal.sortedBy !== undefined) {
+    result.sortedBy = internal.sortedBy
+  }
+  if (internal.partitionColumns !== undefined) {
+    result.partitionColumns = internal.partitionColumns
+  }
+  return result
 }
 
 /**

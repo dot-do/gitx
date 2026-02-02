@@ -6,7 +6,7 @@
  * @module do/logger
  */
 
-import { Logger, LogLevel, LogEntry } from './types'
+import { Logger, LogLevel, LogEntry, type LogContext } from './types'
 
 // ============================================================================
 // Logger Implementation
@@ -135,23 +135,23 @@ export function createLogger(options: LoggerOptions = {}): Logger {
  */
 export function createChildLogger(
   parent: Logger,
-  context: Record<string, unknown>
+  context: LogContext
 ): Logger {
   return {
-    debug(message: string, childContext?: Record<string, unknown>): void {
-      parent.debug(message, { ...context, ...childContext })
+    debug(message: string, childContext?: LogContext): void {
+      parent.debug(message, { ...context, ...childContext } as LogContext)
     },
 
-    info(message: string, childContext?: Record<string, unknown>): void {
-      parent.info(message, { ...context, ...childContext })
+    info(message: string, childContext?: LogContext): void {
+      parent.info(message, { ...context, ...childContext } as LogContext)
     },
 
-    warn(message: string, childContext?: Record<string, unknown>): void {
-      parent.warn(message, { ...context, ...childContext })
+    warn(message: string, childContext?: LogContext): void {
+      parent.warn(message, { ...context, ...childContext } as LogContext)
     },
 
-    error(message: string, childContext?: Record<string, unknown>): void {
-      parent.error(message, { ...context, ...childContext })
+    error(message: string, childContext?: LogContext): void {
+      parent.error(message, { ...context, ...childContext } as LogContext)
     },
   }
 }

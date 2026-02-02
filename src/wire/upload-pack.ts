@@ -586,7 +586,11 @@ export function parseWantLine(
 
   const rest = trimmed.slice(5) // Remove "want "
   const parts = rest.split(/\s+/)
-  const sha = parts[0].toLowerCase()
+  const firstPart = parts[0]
+  if (!firstPart) {
+    throw new Error(`Invalid want line: missing SHA in ${line}`)
+  }
+  const sha = firstPart.toLowerCase()
 
   if (!isValidSha1(sha)) {
     throw new Error(`Invalid SHA in want line: ${sha}`)
@@ -939,7 +943,7 @@ export async function processHaves(
 function extractTreeFromCommit(commitData: Uint8Array): string | null {
   const commitStr = decoder.decode(commitData)
   const match = commitStr.match(/^tree ([0-9a-f]{40})/m)
-  return match ? match[1] : null
+  return match && match[1] ? match[1] : null
 }
 
 /**
@@ -956,7 +960,10 @@ function extractParentsFromCommit(commitData: Uint8Array): string[] {
   const regex = /^parent ([0-9a-f]{40})/gm
   let match
   while ((match = regex.exec(commitStr)) !== null) {
-    parents.push(match[1])
+    const parentSha = match[1]
+    if (parentSha) {
+      parents.push(parentSha)
+    }
   }
   return parents
 }
@@ -972,7 +979,7 @@ function extractParentsFromCommit(commitData: Uint8Array): string[] {
 function extractObjectFromTag(tagData: Uint8Array): string | null {
   const tagStr = decoder.decode(tagData)
   const match = tagStr.match(/^object ([0-9a-f]{40})/m)
-  return match ? match[1] : null
+  return match && match[1] ? match[1] : null
 }
 
 /**
@@ -987,7 +994,7 @@ function extractCommitterTimestamp(commitData: Uint8Array): number | null {
   const commitStr = decoder.decode(commitData)
   // Format: committer Name <email> timestamp timezone
   const match = commitStr.match(/^committer [^<]*<[^>]*> (\d+)/m)
-  return match ? parseInt(match[1], 10) : null
+  return match && match[1] ? parseInt(match[1], 10) : null
 }
 
 // ============================================================================
@@ -1139,7 +1146,7 @@ export async function processShallow(
   // Parse existing shallow lines from client
   for (const line of shallowLines) {
     const match = line.match(/^shallow ([0-9a-f]{40})$/i)
-    if (match) {
+    if (match && match[1]) {
       result.shallowCommits.push(match[1].toLowerCase())
     }
   }
@@ -1245,9 +1252,15 @@ export async function processShallow(
 
   // Update session
   session.shallowCommits = result.shallowCommits
-  session.depth = depth
-  session.deepenSince = deepenSince
-  session.deepenNot = deepenNot
+  if (depth !== undefined) {
+    session.depth = depth
+  }
+  if (deepenSince !== undefined) {
+    session.deepenSince = deepenSince
+  }
+  if (deepenNot !== undefined) {
+    session.deepenNot = deepenNot
+  }
 
   return result
 }
@@ -1634,16 +1647,18 @@ export async function handleFetch(
 
   // Generate packfile if ready
   if (negotiation.ready || done) {
+    const packfileOptions: PackfileOptions = {
+      clientHasObjects: session.commonAncestors,
+      shallowCommits: session.shallowCommits
+    }
+    if (session.capabilities.thinPack !== undefined) {
+      packfileOptions.thinPack = session.capabilities.thinPack
+    }
     const packResult = await generatePackfile(
       store,
       session.wants,
       session.commonAncestors,
-      {
-        onProgress: sideBand ? undefined : undefined,
-        thinPack: session.capabilities.thinPack,
-        clientHasObjects: session.commonAncestors,
-        shallowCommits: session.shallowCommits
-      }
+      packfileOptions
     )
 
     // Add packfile data

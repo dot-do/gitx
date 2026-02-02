@@ -519,7 +519,9 @@ export class MigrationError extends Error {
   ) {
     super(message)
     this.name = 'MigrationError'
-    this.rollbackReason = cause?.message
+    if (cause?.message !== undefined) {
+      this.rollbackReason = cause.message
+    }
   }
 
   /**
@@ -1435,10 +1437,13 @@ export class TierMigrator {
 
       this.recordHistory(sha, sourceTier, targetTier, 'completed')
 
-      return {
-        success: true,
-        checksumVerified: options?.verifyChecksum ? true : undefined
+      const result: MigrationResult = {
+        success: true
       }
+      if (options?.verifyChecksum) {
+        result.checksumVerified = true
+      }
+      return result
     } catch (error) {
       this.recordHistory(sha, sourceTier, targetTier, 'failed')
       throw error
@@ -1552,11 +1557,16 @@ export class TierMigrator {
     const jobWithMeta = job as MigrationJob & { packId?: string; offset?: number }
 
     // Update location
-    await this.storage.updateLocation(job.sha, {
-      tier: job.targetTier,
-      packId: jobWithMeta.packId,
-      offset: jobWithMeta.offset
-    })
+    const locationUpdate: Partial<ObjectLocation> = {
+      tier: job.targetTier
+    }
+    if (jobWithMeta.packId !== undefined) {
+      locationUpdate.packId = jobWithMeta.packId
+    }
+    if (jobWithMeta.offset !== undefined) {
+      locationUpdate.offset = jobWithMeta.offset
+    }
+    await this.storage.updateLocation(job.sha, locationUpdate)
 
     // Delete from hot tier
     await this.storage.deleteFromHot(job.sha)

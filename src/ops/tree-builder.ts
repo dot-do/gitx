@@ -226,6 +226,7 @@ export function buildTreeHierarchy(entries: IndexEntry[]): TreeNode {
 
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i]
+      if (part === undefined) continue
       const isLast = i === parts.length - 1
       const currentPath = parts.slice(0, i + 1).join('/')
 
@@ -235,17 +236,24 @@ export function buildTreeHierarchy(entries: IndexEntry[]): TreeNode {
           path: currentPath,
           isDirectory: !isLast,
           children: new Map(),
-          entry: isLast ? entry : undefined
+        }
+        if (isLast) {
+          node.entry = entry
         }
         current.children.set(part, node)
       } else if (isLast) {
         // Update entry for duplicate paths (last one wins)
-        const existing = current.children.get(part)!
-        existing.entry = entry
-        existing.isDirectory = false
+        const existing = current.children.get(part)
+        if (existing) {
+          existing.entry = entry
+          existing.isDirectory = false
+        }
       }
 
-      current = current.children.get(part)!
+      const next = current.children.get(part)
+      if (next) {
+        current = next
+      }
     }
   }
 
@@ -434,14 +442,17 @@ export async function buildTreeFromIndex(
       subtreesConverted[name] = convertToResult(sub)
     }
 
-    return {
+    const result: BuildTreeResult = {
       sha: br.sha,
       entries: br.entries,
       treeCount,
       uniqueTreeCount,
       deduplicatedCount: treeCount - uniqueTreeCount,
-      subtrees: Object.keys(subtreesConverted).length > 0 ? subtreesConverted : undefined
     }
+    if (Object.keys(subtreesConverted).length > 0) {
+      result.subtrees = subtreesConverted
+    }
+    return result
   }
 
   return convertToResult(result)

@@ -174,11 +174,12 @@ export function selectDiffViewMode(terminalWidth: number): 'split' | 'unified' {
 
 export function LoadingSpinner(props: LoadingSpinnerProps): LoadingSpinnerElement {
   // Returns a representation of the loading spinner component
-  return {
+  const result: LoadingSpinnerElement = {
     type: 'LoadingSpinner',
-    props,
-    message: props.message
+    props
   }
+  if (props.message !== undefined) result.message = props.message
+  return result
 }
 
 // ============================================================================

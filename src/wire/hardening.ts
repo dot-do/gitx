@@ -520,7 +520,11 @@ export function validateSha(sha: string): ValidationResult {
  */
 export function validateShas(shas: string[]): ValidationResult & { invalidIndex?: number } {
   for (let i = 0; i < shas.length; i++) {
-    const result = validateSha(shas[i])
+    const sha = shas[i]
+    if (!sha) {
+      return { valid: false, error: 'Empty SHA at index ' + i, code: 'EMPTY_SHA', invalidIndex: i }
+    }
+    const result = validateSha(sha)
     if (!result.valid) {
       return { ...result, invalidIndex: i }
     }
@@ -613,10 +617,11 @@ export function validateCapabilities(
   }
 
   // In non-strict mode, just report unknown capabilities
-  return {
-    valid: true,
-    unknownCapabilities: unknown.length > 0 ? unknown : undefined,
+  const result: ValidationResult & { unknownCapabilities?: string[] } = { valid: true }
+  if (unknown.length > 0) {
+    result.unknownCapabilities = unknown
   }
+  return result
 }
 
 // ============================================================================
@@ -767,9 +772,13 @@ function parseWantPart(
   const parts = rest.split(/\s+/)
   const sha = parts[0]
 
+  if (!sha) {
+    return { valid: false, error: 'Want line must contain SHA', code: 'MISSING_SHA' }
+  }
+
   const shaResult = validateSha(sha)
   if (!shaResult.valid) {
-    return { valid: false, error: shaResult.error!, code: shaResult.code! }
+    return { valid: false, error: shaResult.error ?? 'Invalid SHA', code: shaResult.code ?? 'INVALID_SHA' }
   }
 
   return { valid: true, sha: sha.toLowerCase() }
@@ -791,11 +800,11 @@ function parseWantPartWithCaps(
     return { valid: false, error: 'Want line must contain SHA', code: 'MISSING_SHA' }
   }
 
-  const sha = parts[0]
+  const sha = parts[0]!
 
   const shaResult = validateSha(sha)
   if (!shaResult.valid) {
-    return { valid: false, error: shaResult.error!, code: shaResult.code! }
+    return { valid: false, error: shaResult.error ?? 'Invalid SHA', code: shaResult.code ?? 'INVALID_SHA' }
   }
 
   // Everything after SHA is capabilities
@@ -947,12 +956,15 @@ export function createInMemoryRateLimiter(config: RateLimiterConfig): RateLimite
       const remaining = Math.max(0, config.maxRequests - window.count)
       const allowed = window.count < config.maxRequests
 
-      return {
+      const result: RateLimitResult = {
         allowed,
         remaining,
         resetAt: window.resetAt,
-        retryAfter: allowed ? undefined : Math.ceil((window.resetAt - now) / 1000),
       }
+      if (!allowed) {
+        result.retryAfter = Math.ceil((window.resetAt - now) / 1000)
+      }
+      return result
     },
 
     async record(request: RateLimitRequest): Promise<void> {

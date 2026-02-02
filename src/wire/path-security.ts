@@ -217,7 +217,7 @@ export function validateRefPath(refPath: string): PathValidationResult {
   // Check for dangerous characters
   const dangerCheck = containsDangerousCharacters(trimmed)
   if (dangerCheck.dangerous) {
-    return { valid: false, error: dangerCheck.reason, code: 'DANGEROUS_CHARS' }
+    return { valid: false, error: dangerCheck.reason ?? 'dangerous characters detected', code: 'DANGEROUS_CHARS' }
   }
 
   // Check for path traversal
@@ -290,7 +290,7 @@ export function validateRepositoryId(repoId: string): PathValidationResult {
   // Check for dangerous characters
   const dangerCheck = containsDangerousCharacters(trimmed)
   if (dangerCheck.dangerous) {
-    return { valid: false, error: dangerCheck.reason, code: 'DANGEROUS_CHARS' }
+    return { valid: false, error: dangerCheck.reason ?? 'dangerous characters detected', code: 'DANGEROUS_CHARS' }
   }
 
   // Check for path traversal

@@ -103,9 +103,9 @@ function globSegmentToRegex(segment: string): string {
         result += segment.slice(i, close + 1)
         i = close
       }
-    } else if ('.+^${}()|\\'.includes(ch)) {
+    } else if (ch && '.+^${}()|\\'.includes(ch)) {
       result += '\\' + ch
-    } else {
+    } else if (ch) {
       result += ch
     }
     i++
@@ -318,10 +318,10 @@ export async function filterTreeEntries(
     throw new Error(`Object ${treeSha} is not a tree`)
   }
 
-  const entries = parseTree(obj.data)
+  const treeObj = parseTree(obj.data)
   const matchedPaths: string[] = []
 
-  for (const entry of entries) {
+  for (const entry of treeObj.entries) {
     const fullPath = basePath ? basePath + '/' + entry.name : entry.name
     const isDir = entry.mode === '040000'
 

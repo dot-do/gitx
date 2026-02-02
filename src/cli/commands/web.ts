@@ -132,12 +132,15 @@ void _DEFAULT_ENDPOINT // Reserved for production use
  * // gitx web --open              - Upload and open in browser
  */
 export async function webCommand(ctx: CommandContext): Promise<WebResult> {
-  const options: WebOptions = {
-    expires: ctx.options['expires'],
-    open: ctx.options['open'],
-    endpoint: ctx.options['endpoint'],
-    timeout: ctx.options['timeout'],
-  }
+  const options: WebOptions = {}
+  const expiresOpt = ctx.options['expires']
+  const openOpt = ctx.options['open']
+  const endpointOpt = ctx.options['endpoint']
+  const timeoutOpt = ctx.options['timeout']
+  if (typeof expiresOpt === 'string') options.expires = expiresOpt
+  if (typeof openOpt === 'boolean') options.open = openOpt
+  if (typeof endpointOpt === 'string') options.endpoint = endpointOpt
+  if (typeof timeoutOpt === 'number') options.timeout = timeoutOpt
 
   // Get diff from working directory
   const diff = await getUnstagedDiff(ctx.cwd)
@@ -495,11 +498,15 @@ export function convertAnsiToHTML(ansiText: string): string {
   let i = 0
 
   while (i < ansiText.length) {
+    const currentChar = ansiText[i]
+    const nextChar = ansiText[i + 1]
     // Check for ANSI escape sequence
-    if (ansiText[i] === '\x1b' && ansiText[i + 1] === '[') {
+    if (currentChar === '\x1b' && nextChar === '[') {
       // Find the end of the escape sequence
       let j = i + 2
-      while (j < ansiText.length && !/[a-zA-Z]/.test(ansiText[j])) {
+      while (j < ansiText.length) {
+        const testChar = ansiText[j]
+        if (testChar && /[a-zA-Z]/.test(testChar)) break
         j++
       }
       if (j < ansiText.length) {
@@ -517,7 +524,9 @@ export function convertAnsiToHTML(ansiText: string): string {
     }
 
     // Regular character - escape and add
-    result += escapeHtml(ansiText[i])
+    if (currentChar !== undefined) {
+      result += escapeHtml(currentChar)
+    }
     i++
   }
 
@@ -546,9 +555,12 @@ function parseAnsiCode(code: string): string {
 
   // 256 color: 38;5;N
   if (code.startsWith('38;5;')) {
-    const colorNum = parseInt(code.split(';')[2], 10)
-    const color = get256Color(colorNum)
-    return `<span style="color: ${color};">`
+    const colorStr = code.split(';')[2]
+    if (colorStr !== undefined) {
+      const colorNum = parseInt(colorStr, 10)
+      const color = get256Color(colorNum)
+      return `<span style="color: ${color};">`
+    }
   }
 
   // Basic ANSI colors
@@ -591,7 +603,9 @@ function get256Color(n: number): string {
   ]
 
   if (n < 16) {
-    return standardColors[n]
+    const color = standardColors[n]
+    if (color !== undefined) return color
+    return '#000000'
   }
 
   // 216-color cube (16-231)
@@ -794,8 +808,12 @@ function parseExpiration(expires?: string): number {
     throw new Error(`Invalid expires format: ${expires}. Use format like '30m', '1h', or '7d'`)
   }
 
-  const value = parseInt(match[1], 10)
+  const valueStr = match[1]
   const unit = match[2]
+  if (valueStr === undefined || unit === undefined) {
+    throw new Error(`Invalid expires format: ${expires}. Use format like '30m', '1h', or '7d'`)
+  }
+  const value = parseInt(valueStr, 10)
 
   switch (unit) {
     case 'm':

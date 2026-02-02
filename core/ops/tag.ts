@@ -690,16 +690,17 @@ export async function getTag(
   if (obj.type === 'tag') {
     // Annotated tag
     const parsed = parseTagObject(obj.data)
-    return {
+    const result: TagInfo = {
       name,
       target: parsed.object,
       isAnnotated: true,
       sha,
       objectType: parsed.objectType,
-      tagger: parsed.tagger,
-      message: parsed.message,
-      signature: parsed.signature
+      message: parsed.message
     }
+    if (parsed.tagger !== undefined) result.tagger = parsed.tagger
+    if (parsed.signature !== undefined) result.signature = parsed.signature
+    return result
   } else {
     // Lightweight tag
     return {
@@ -760,13 +761,14 @@ export async function verifyTag(
 
     const result = await verifier(dataToVerify, tag.signature)
 
-    return {
+    const verifyResult: TagVerifyResult = {
       valid: result.valid,
-      signed: true,
-      keyId: result.keyId,
-      signer: result.signer,
-      error: result.error
+      signed: true
     }
+    if (result.keyId !== undefined) verifyResult.keyId = result.keyId
+    if (result.signer !== undefined) verifyResult.signer = result.signer
+    if (result.error !== undefined) verifyResult.error = result.error
+    return verifyResult
   } catch (error) {
     return {
       valid: false,
@@ -798,7 +800,7 @@ export function parseTagObject(data: Uint8Array): {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (line === '') {
+    if (line === undefined || line === '') {
       messageStartIndex = i + 1
       break
     }
@@ -812,11 +814,17 @@ export function parseTagObject(data: Uint8Array): {
     } else if (line.startsWith('tagger ')) {
       const match = line.match(/^tagger (.+) <(.+)> (\d+) ([+-]\d{4})$/)
       if (match) {
-        tagger = {
-          name: match[1]!,
-          email: match[2]!,
-          timestamp: parseInt(match[3]!, 10),
-          timezone: match[4]!
+        const matchName = match[1]
+        const matchEmail = match[2]
+        const matchTimestamp = match[3]
+        const matchTimezone = match[4]
+        if (matchName && matchEmail && matchTimestamp && matchTimezone) {
+          tagger = {
+            name: matchName,
+            email: matchEmail,
+            timestamp: parseInt(matchTimestamp, 10),
+            timezone: matchTimezone
+          }
         }
       }
     }
@@ -840,14 +848,22 @@ export function parseTagObject(data: Uint8Array): {
     message = messageContent
   }
 
-  return {
+  const result: {
+    object: string
+    objectType: ObjectType
+    tag: string
+    tagger?: Author
+    message: string
+    signature?: string
+  } = {
     object,
     objectType,
     tag,
-    tagger,
-    message,
-    signature
+    message
   }
+  if (tagger !== undefined) result.tagger = tagger
+  if (signature !== undefined) result.signature = signature
+  return result
 }
 
 /**

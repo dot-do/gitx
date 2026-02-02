@@ -30,7 +30,7 @@ export interface ParquetRefStoreOptions {
   onRefUpdate?: RefUpdateCallback
 }
 
-export interface RefRow {
+export interface RefRow extends Record<string, unknown> {
   name: string
   target: string
   type: string
@@ -63,7 +63,7 @@ export class ParquetRefStore {
     this.r2 = options.r2
     this.sql = options.sql
     this.prefix = options.prefix
-    this.onRefUpdate = options.onRefUpdate
+    if (options.onRefUpdate) this.onRefUpdate = options.onRefUpdate
   }
 
   /**

@@ -575,11 +575,11 @@ export class StreamingSHA1 {
       // Return cached result
       const result = new Uint8Array(20)
       const resultView = new DataView(result.buffer)
-      resultView.setUint32(0, this.h[0], false)
-      resultView.setUint32(4, this.h[1], false)
-      resultView.setUint32(8, this.h[2], false)
-      resultView.setUint32(12, this.h[3], false)
-      resultView.setUint32(16, this.h[4], false)
+      resultView.setUint32(0, this.h[0] ?? 0, false)
+      resultView.setUint32(4, this.h[1] ?? 0, false)
+      resultView.setUint32(8, this.h[2] ?? 0, false)
+      resultView.setUint32(12, this.h[3] ?? 0, false)
+      resultView.setUint32(16, this.h[4] ?? 0, false)
       return result
     }
 
@@ -612,11 +612,11 @@ export class StreamingSHA1 {
     // Produce the final hash value (big-endian)
     const result = new Uint8Array(20)
     const resultView = new DataView(result.buffer)
-    resultView.setUint32(0, this.h[0], false)
-    resultView.setUint32(4, this.h[1], false)
-    resultView.setUint32(8, this.h[2], false)
-    resultView.setUint32(12, this.h[3], false)
-    resultView.setUint32(16, this.h[4], false)
+    resultView.setUint32(0, this.h[0] ?? 0, false)
+    resultView.setUint32(4, this.h[1] ?? 0, false)
+    resultView.setUint32(8, this.h[2] ?? 0, false)
+    resultView.setUint32(12, this.h[3] ?? 0, false)
+    resultView.setUint32(16, this.h[4] ?? 0, false)
 
     return result
   }
@@ -641,7 +641,7 @@ export class StreamingSHA1 {
     const hash = this.digest()
     let hex = ''
     for (let i = 0; i < hash.length; i++) {
-      hex += hash[i].toString(16).padStart(2, '0')
+      hex += (hash[i] ?? 0).toString(16).padStart(2, '0')
     }
     return hex
   }

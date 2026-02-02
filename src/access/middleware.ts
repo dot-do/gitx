@@ -291,13 +291,18 @@ export class AccessControl {
     const permissionRecord =
       auth.userId ? await this.storage.getPermission(auth.userId, repoId) : null
 
-    return {
+    const ctx: PermissionContext = {
       ...auth,
       permission,
-      repoId,
-      repoSettings: repoSettings ?? undefined,
-      permissionRecord: permissionRecord ?? undefined,
+      repoId
     }
+    if (repoSettings) {
+      ctx.repoSettings = repoSettings
+    }
+    if (permissionRecord) {
+      ctx.permissionRecord = permissionRecord
+    }
+    return ctx
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -324,19 +329,30 @@ export class AccessControl {
     // Check admin has permission to manage permissions
     const accessCheck = await this.checkOperation(adminAuth, repoId, 'manage_permissions')
     if (!accessCheck.allowed) {
-      return { success: false, error: accessCheck.reason }
+      const result: { success: boolean; error?: string } = { success: false }
+      if (accessCheck.reason) {
+        result.error = accessCheck.reason
+      }
+      return result
     }
 
     // Grant the permission
-    await this.storage.grantPermission({
+    const userPermission: UserPermission = {
       userId: targetUserId,
       repoId,
       permission,
-      grantedBy: adminAuth.userId,
-      grantedAt: Date.now(),
-      expiresAt: options?.expiresAt,
-      metadata: options?.metadata,
-    })
+      grantedAt: Date.now()
+    }
+    if (adminAuth.userId) {
+      userPermission.grantedBy = adminAuth.userId
+    }
+    if (options?.expiresAt !== undefined) {
+      userPermission.expiresAt = options.expiresAt
+    }
+    if (options?.metadata !== undefined) {
+      userPermission.metadata = options.metadata
+    }
+    await this.storage.grantPermission(userPermission)
 
     return { success: true }
   }
@@ -357,7 +373,11 @@ export class AccessControl {
     // Check admin has permission
     const accessCheck = await this.checkOperation(adminAuth, repoId, 'manage_permissions')
     if (!accessCheck.allowed) {
-      return { success: false, error: accessCheck.reason }
+      const result: { success: boolean; error?: string } = { success: false }
+      if (accessCheck.reason) {
+        result.error = accessCheck.reason
+      }
+      return result
     }
 
     // Prevent revoking own admin permission
@@ -386,7 +406,11 @@ export class AccessControl {
   ): Promise<{ permissions?: UserPermission[]; error?: string }> {
     const accessCheck = await this.checkOperation(adminAuth, repoId, 'manage_permissions')
     if (!accessCheck.allowed) {
-      return { error: accessCheck.reason }
+      const result: { permissions?: UserPermission[]; error?: string } = {}
+      if (accessCheck.reason) {
+        result.error = accessCheck.reason
+      }
+      return result
     }
 
     const permissions = await this.storage.listRepoPermissions(repoId)
@@ -406,7 +430,11 @@ export class AccessControl {
   ): Promise<{ success: boolean; error?: string }> {
     const accessCheck = await this.checkOperation(adminAuth, settings.repoId, 'update_settings')
     if (!accessCheck.allowed) {
-      return { success: false, error: accessCheck.reason }
+      const result: { success: boolean; error?: string } = { success: false }
+      if (accessCheck.reason) {
+        result.error = accessCheck.reason
+      }
+      return result
     }
 
     if (this.storage.updateRepoSettings) {

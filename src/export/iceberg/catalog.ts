@@ -494,7 +494,8 @@ export class R2DataCatalog {
    */
   private extractVersionFromPath(metadataPath: string): number {
     const match = metadataPath.match(/\/v(\d+)\.metadata\.json$/)
-    return match ? parseInt(match[1], 10) : 1
+    const versionStr = match?.[1]
+    return versionStr !== undefined ? parseInt(versionStr, 10) : 1
   }
 
   /**

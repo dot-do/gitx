@@ -234,7 +234,7 @@ export interface MigrationSchedulerState {
   paused: boolean
 
   /** Pause reason if paused */
-  pauseReason?: string
+  pauseReason?: string | undefined
 }
 
 // ============================================================================
@@ -625,15 +625,28 @@ export class TierMigrationScheduler {
     }
 
     const row = rows[0]
-    return {
+    if (!row) {
+      return {
+        consecutiveFailures: 0,
+        lastMigrationAt: null,
+        nextMigrationAt: null,
+        totalMigrated: 0,
+        totalBytesMigrated: 0,
+        paused: false,
+      }
+    }
+    const result: MigrationSchedulerState = {
       consecutiveFailures: row.consecutive_failures,
       lastMigrationAt: row.last_migration_at,
       nextMigrationAt: row.next_migration_at,
       totalMigrated: row.total_migrated,
       totalBytesMigrated: row.total_bytes_migrated,
       paused: row.paused === 1,
-      pauseReason: row.pause_reason ?? undefined,
     }
+    if (row.pause_reason != null) {
+      result.pauseReason = row.pause_reason
+    }
+    return result
   }
 
   /**
@@ -684,7 +697,7 @@ export class TierMigrationScheduler {
     fromTier: string
     toTier: string
     success: boolean
-    error?: string
+    error?: string | undefined
     size: number
     createdAt: number
   }>> {

@@ -10,7 +10,7 @@ import type { GitRepoDOInstance, RouteContext } from './routes'
 import type { DurableObjectStorage } from './schema'
 import { EXPORT_COMMITS_SCHEMA } from '../storage/parquet-schemas'
 import { SqliteObjectStore } from './object-store'
-import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer'
+import { parquetWriteBuffer, encodeVariant, type SchemaElement } from 'hyparquet-writer'
 import type { CompressionCodec } from 'hyparquet'
 import type { GitCommitData, GitRefData } from '../export/git-parquet'
 import * as lz4js from 'lz4js'
@@ -163,7 +163,7 @@ export async function handleExport(
           const buffer = parquetWriteBuffer({
             codec,
             ...(useLZ4 && { compressors: lz4Compressors }),
-            schema: EXPORT_COMMITS_SCHEMA,
+            schema: EXPORT_COMMITS_SCHEMA as SchemaElement[],
             columnData: [
               { name: 'sha', data: commits.map(c => c.sha) },
               { name: 'tree_sha', data: commits.map(c => c.treeSha) },
@@ -297,7 +297,7 @@ export async function handleExport(
         const buffer = parquetWriteBuffer({
           codec,
           ...(useLZ4 && { compressors: lz4Compressors }),
-          schema: EXPORT_COMMITS_SCHEMA,
+          schema: EXPORT_COMMITS_SCHEMA as SchemaElement[],
           columnData: [
             { name: 'sha', data: commits.map(c => c.sha) },
             { name: 'tree_sha', data: commits.map(c => c.treeSha) },

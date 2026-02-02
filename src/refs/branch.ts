@@ -121,13 +121,13 @@ export interface Branch {
   /** True if this is a remote tracking branch (refs/remotes/) */
   isRemote: boolean
   /** Upstream tracking information (if configured) */
-  tracking?: BranchTrackingInfo
+  tracking?: BranchTrackingInfo | undefined
   /** Subject line of the last commit (optional, for display) */
-  lastCommitMessage?: string
+  lastCommitMessage?: string | undefined
   /** Author name of the last commit (optional, for display) */
-  lastCommitAuthor?: string
+  lastCommitAuthor?: string | undefined
   /** Date of the last commit (optional, for sorting/display) */
-  lastCommitDate?: Date
+  lastCommitDate?: Date | undefined
 }
 
 /**
@@ -330,7 +330,7 @@ export class BranchManager {
   /** Storage for tracking information (simulated config) */
   private trackingInfo: Map<string, BranchTrackingInfo> = new Map()
   /** Optional callback to check if commits exist */
-  private commitExists?: (sha: string) => Promise<boolean>
+  private commitExists: ((sha: string) => Promise<boolean>) | undefined
 
   /**
    * Create a new BranchManager.
@@ -459,7 +459,9 @@ export class BranchManager {
       sha,
       isCurrent,
       isRemote: false,
-      tracking
+    }
+    if (tracking !== undefined) {
+      branch.tracking = tracking
     }
 
     // If dryRun, return without actually creating
@@ -468,7 +470,11 @@ export class BranchManager {
     }
 
     // Create the ref
-    await this.storage.updateRef(branchRef, sha, { create: true, force: options?.force })
+    const updateOptions: { create: boolean; force?: boolean } = { create: true }
+    if (options?.force !== undefined) {
+      updateOptions.force = options.force
+    }
+    await this.storage.updateRef(branchRef, sha, updateOptions)
 
     return branch
   }
@@ -610,7 +616,9 @@ export class BranchManager {
       sha,
       isCurrent: wasCurrent ?? false,
       isRemote: false,
-      tracking: oldTracking
+    }
+    if (oldTracking !== undefined) {
+      branch.tracking = oldTracking
     }
 
     // If dryRun, return without actually renaming
@@ -619,7 +627,11 @@ export class BranchManager {
     }
 
     // Create new ref with the same SHA
-    await this.storage.updateRef(newRef, sha, { create: true, force: options?.force })
+    const renameUpdateOptions: { create: boolean; force?: boolean } = { create: true }
+    if (options?.force !== undefined) {
+      renameUpdateOptions.force = options.force
+    }
+    await this.storage.updateRef(newRef, sha, renameUpdateOptions)
 
     // Delete old ref
     await this.storage.deleteRef(oldRef)
@@ -678,14 +690,20 @@ export class BranchManager {
           if (!regex.test(name)) continue
         }
 
-        branches.push({
+        const localBranch: Branch = {
           name,
           ref: ref.name,
           sha: ref.target,
           isCurrent: currentBranch?.name === name,
           isRemote: false,
-          tracking: options?.includeTracking ? this.trackingInfo.get(name) : undefined
-        })
+        }
+        if (options?.includeTracking) {
+          const trackingInfo = this.trackingInfo.get(name)
+          if (trackingInfo !== undefined) {
+            localBranch.tracking = trackingInfo
+          }
+        }
+        branches.push(localBranch)
       }
     }
 
@@ -746,14 +764,18 @@ export class BranchManager {
 
     const name = normalizeBranchName(branchRef)
 
-    return {
+    const currentBranch: Branch = {
       name,
       ref: branchRef,
       sha: ref.target,
       isCurrent: true,
       isRemote: false,
-      tracking: this.trackingInfo.get(name)
     }
+    const currentTracking = this.trackingInfo.get(name)
+    if (currentTracking !== undefined) {
+      currentBranch.tracking = currentTracking
+    }
+    return currentBranch
   }
 
   /**
@@ -782,14 +804,18 @@ export class BranchManager {
 
     const currentBranch = await this.getCurrentBranch()
 
-    return {
+    const result: Branch = {
       name: normalizedName,
       ref: branchRef,
       sha: ref.target,
       isCurrent: currentBranch?.name === normalizedName,
       isRemote: false,
-      tracking: this.trackingInfo.get(normalizedName)
     }
+    const branchTracking = this.trackingInfo.get(normalizedName)
+    if (branchTracking !== undefined) {
+      result.tracking = branchTracking
+    }
+    return result
   }
 
   /**

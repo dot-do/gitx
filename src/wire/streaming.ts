@@ -931,14 +931,26 @@ function tryParseObject(
         const decompressed = pako.inflate(compressed)
         if (decompressed.length === size) {
           const typeStr = packTypeToString(type)
-          return {
+          const result: {
+            type: PackTypeString
+            data: Uint8Array
+            consumed: number
+            offset: number
+            baseOffset?: number
+            baseSha?: string
+          } = {
             type: typeStr,
             data: decompressed,
             consumed: offset + tryLen,
             offset: startOffset,
-            baseOffset,
-            baseSha,
           }
+          if (baseOffset !== undefined) {
+            result.baseOffset = baseOffset
+          }
+          if (baseSha !== undefined) {
+            result.baseSha = baseSha
+          }
+          return result
         }
       } catch {
         // Continue trying with more data

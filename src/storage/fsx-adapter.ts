@@ -75,6 +75,9 @@ function parseGitObject(data: Uint8Array): { type: string; content: Uint8Array }
 
   const headerStr = decoder.decode(data.subarray(0, nullIndex))
   const [type] = headerStr.split(' ')
+  if (type === undefined) {
+    throw new Error('Invalid git object: no type found')
+  }
   const content = data.subarray(nullIndex + 1)
 
   return { type, content }

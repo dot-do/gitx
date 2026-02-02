@@ -299,7 +299,8 @@ export function findMatchingRule(
 
   // Sort by specificity (highest first) and return the most specific
   matches.sort((a, b) => b.specificity - a.specificity)
-  return matches[0].rule
+  const bestMatch = matches[0]
+  return bestMatch ? bestMatch.rule : undefined
 }
 
 // ============================================================================
@@ -509,12 +510,15 @@ function createRejection(
   suggestion?: string
 ): ProtectionCheckResult {
   const customMessage = rule.customMessage
-  return {
+  const result: ProtectionCheckResult = {
     allowed: false,
     reason: customMessage ?? reason,
     violatedRule: rule,
-    suggestion,
   }
+  if (suggestion !== undefined) {
+    result.suggestion = suggestion
+  }
+  return result
 }
 
 // ============================================================================
@@ -556,7 +560,7 @@ export function createBranchProtectionHook(
 
       // Determine if this is a non-fast-forward update
       // In a real implementation, this would check ancestry
-      const isNonFastForward = command.type === 'update' && env.GIT_PUSH_OPTION_FORCE === 'true'
+      const isNonFastForward = command.type === 'update' && env['GIT_PUSH_OPTION_FORCE'] === 'true'
 
       // Check protection rules
       const result = checkProtectionRule(command, config, context, isNonFastForward)
@@ -718,42 +722,62 @@ export function createStandardProtectionConfig(options: {
   const mainBranch = options.mainBranchName ?? 'main'
 
   if (options.protectMain !== false) {
-    rules.push({
+    const mainRule: BranchProtectionRule = {
       pattern: `refs/heads/${mainBranch}`,
       blockForcePush: true,
       blockDeletion: true,
-      requiredReviews: options.requiredReviewsForMain,
-      requireLinearHistory: options.requireLinearHistoryForMain,
-      allowAdminBypass: options.allowAdminBypass,
-    })
+    }
+    if (options.requiredReviewsForMain !== undefined) {
+      mainRule.requiredReviews = options.requiredReviewsForMain
+    }
+    if (options.requireLinearHistoryForMain !== undefined) {
+      mainRule.requireLinearHistory = options.requireLinearHistoryForMain
+    }
+    if (options.allowAdminBypass !== undefined) {
+      mainRule.allowAdminBypass = options.allowAdminBypass
+    }
+    rules.push(mainRule)
 
     // Also protect 'master' if main is specified
     if (mainBranch === 'main') {
-      rules.push({
+      const masterRule: BranchProtectionRule = {
         pattern: 'refs/heads/master',
         blockForcePush: true,
         blockDeletion: true,
-        requiredReviews: options.requiredReviewsForMain,
-        requireLinearHistory: options.requireLinearHistoryForMain,
-        allowAdminBypass: options.allowAdminBypass,
-      })
+      }
+      if (options.requiredReviewsForMain !== undefined) {
+        masterRule.requiredReviews = options.requiredReviewsForMain
+      }
+      if (options.requireLinearHistoryForMain !== undefined) {
+        masterRule.requireLinearHistory = options.requireLinearHistoryForMain
+      }
+      if (options.allowAdminBypass !== undefined) {
+        masterRule.allowAdminBypass = options.allowAdminBypass
+      }
+      rules.push(masterRule)
     }
   }
 
   if (options.protectReleases !== false) {
-    rules.push({
+    const releaseRule: BranchProtectionRule = {
       pattern: 'refs/heads/release/*',
       blockForcePush: true,
       blockDeletion: true,
-      allowAdminBypass: options.allowAdminBypass,
-    })
+    }
+    if (options.allowAdminBypass !== undefined) {
+      releaseRule.allowAdminBypass = options.allowAdminBypass
+    }
+    rules.push(releaseRule)
 
-    rules.push({
+    const releaseGlobRule: BranchProtectionRule = {
       pattern: 'refs/heads/release/**',
       blockForcePush: true,
       blockDeletion: true,
-      allowAdminBypass: options.allowAdminBypass,
-    })
+    }
+    if (options.allowAdminBypass !== undefined) {
+      releaseGlobRule.allowAdminBypass = options.allowAdminBypass
+    }
+    rules.push(releaseGlobRule)
   }
 
   return {

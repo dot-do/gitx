@@ -261,7 +261,10 @@ export async function handleLfsDownload(
     }
 
     // Return binary data with appropriate headers
-    return new Response(data, {
+    // Copy to a new ArrayBuffer to avoid SharedArrayBuffer type issues
+    const buffer = new ArrayBuffer(data.length)
+    new Uint8Array(buffer).set(data)
+    return new Response(buffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/octet-stream',

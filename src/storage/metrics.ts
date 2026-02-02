@@ -307,7 +307,7 @@ export interface ConsoleMetricsOptions {
 export class ConsoleMetrics implements StorageMetrics {
   private prefix: string
   private logLevel: 'debug' | 'info' | 'warn'
-  private filter?: (operation: string, data: Record<string, unknown>) => boolean
+  private filter: ((operation: string, data: Record<string, unknown>) => boolean) | undefined
   private includeTimestamp: boolean
 
   constructor(options?: ConsoleMetricsOptions) {
@@ -470,8 +470,8 @@ export interface CollectedRead {
   sha: string
   tier: StorageTier
   latencyMs: number
-  objectType?: ObjectType
-  sizeBytes?: number
+  objectType?: ObjectType | undefined
+  sizeBytes?: number | undefined
   timestamp: number
 }
 
@@ -480,7 +480,7 @@ export interface CollectedWrite {
   sizeBytes: number
   tier: StorageTier
   latencyMs: number
-  objectType?: ObjectType
+  objectType?: ObjectType | undefined
   timestamp: number
 }
 
@@ -509,28 +509,28 @@ export interface CollectedCompaction {
 export interface CollectedError {
   operation: StorageOperation
   error: Error
-  context?: Record<string, unknown>
+  context?: Record<string, unknown> | undefined
   timestamp: number
 }
 
 export interface CollectedTiming {
   operation: StorageOperation
   latencyMs: number
-  labels?: Record<string, string | number>
+  labels?: Record<string, string | number> | undefined
   timestamp: number
 }
 
 export interface CollectedCounter {
   name: string
   value: number
-  labels?: Record<string, string | number>
+  labels?: Record<string, string | number> | undefined
   timestamp: number
 }
 
 export interface CollectedGauge {
   name: string
   value: number
-  labels?: Record<string, string | number>
+  labels?: Record<string, string | number> | undefined
   timestamp: number
 }
 

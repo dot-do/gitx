@@ -16,7 +16,7 @@
 
 import type { Hono } from 'hono'
 import type { ObjectStore, CommitProvider } from '../types/storage'
-import type { CommitObject, TreeEntry } from '../types/objects'
+import type { CommitObject } from '../types/objects'
 import { detectLanguage } from '../enrichment/language'
 
 // ============================================================================
@@ -214,7 +214,9 @@ async function gatherAnalytics(
   const sampleCommits = commits.slice(0, 100)
   for (const c of sampleCommits) {
     if (c.parents.length === 0) continue
-    const parentCommit = await provider.getCommit(c.parents[0])
+    const parentSha = c.parents[0]
+    if (parentSha === undefined) continue
+    const parentCommit = await provider.getCommit(parentSha)
     if (!parentCommit) continue
 
     const parentTree = await store.getTree(parentCommit.tree)

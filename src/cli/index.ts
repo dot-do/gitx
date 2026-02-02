@@ -306,7 +306,7 @@ export class CLI {
         return { exitCode: 0, command: parsed.command }
       } else {
         this.stdout(this.getHelp())
-        return { exitCode: 0, command: parsed.command }
+        return { exitCode: 0 }
       }
     }
 
@@ -698,7 +698,8 @@ export function parseArgs(args: string[]): ParsedArgs {
   // Find command from positional args
   for (let i = 0; i < positionalArgs.length; i++) {
     const arg = positionalArgs[i]
-    if (!command && SUBCOMMANDS.includes(arg as any)) {
+    if (arg === undefined) continue
+    if (!command && SUBCOMMANDS.includes(arg as (typeof SUBCOMMANDS)[number])) {
       command = arg
     } else if (arg === '--') {
       rawArgs = positionalArgs.slice(i + 1)
@@ -742,13 +743,16 @@ export function parseArgs(args: string[]): ParsedArgs {
     options['port'] = parseInt(options['port'], 10)
   }
 
-  return {
-    command,
+  const result: ParsedArgs = {
     args: commandArgs,
     options,
     rawArgs,
     cwd
   }
+  if (command !== undefined) {
+    result.command = command
+  }
+  return result
 }
 
 /**
@@ -775,10 +779,14 @@ export function parseArgs(args: string[]): ParsedArgs {
  * })
  */
 export async function runCLI(args: string[], options: CLIOptions = {}): Promise<CLIResult> {
-  const cli = createCLI({
-    stdout: options.stdout,
-    stderr: options.stderr
-  })
+  const cliOptions: { name?: string; version?: string; stdout?: (msg: string) => void; stderr?: (msg: string) => void } = {}
+  if (options.stdout) {
+    cliOptions.stdout = options.stdout
+  }
+  if (options.stderr) {
+    cliOptions.stderr = options.stderr
+  }
+  const cli = createCLI(cliOptions)
 
   // Register built-in command handlers
   cli.registerCommand('checkout', checkoutCommand)

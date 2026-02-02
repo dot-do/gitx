@@ -23,7 +23,7 @@
  * ```
  */
 
-import type { AsyncFn } from '@dotdo/do/types'
+import type { AsyncFn } from '@dotdo/types/fn'
 
 // =============================================================================
 // GitX Types
@@ -322,9 +322,9 @@ export const gitx: GitXFn = createGitX()
 // =============================================================================
 
 // Re-export AsyncFn for consumers who want to define their own git functions
-export type { AsyncFn } from '@dotdo/do/types'
+export type { AsyncFn } from '@dotdo/types/fn'
 
-// Re-export relevant git types from @dotdo/do/types
+// Re-export relevant git types from @dotdo/types/fn (git module)
 export type {
   GitRepository,
   GitStatus,
@@ -335,7 +335,6 @@ export type {
   GitCloneOptions,
   GitCommitOptions,
   GitLogOptions,
-  GitBranchOptions,
   GitCheckoutOptions,
   GitMergeOptions,
   GitFetchOptions,
@@ -344,4 +343,20 @@ export type {
   GitDiffOptions,
   MergeResult,
   StatusFile,
-} from '@dotdo/do/types'
+} from '@dotdo/types/fn'
+
+// GitBranchOptions is not in @dotdo/types/fn, define locally
+export interface GitBranchOptions {
+  /** List branches */
+  list?: boolean
+  /** Create a branch with this name */
+  create?: string
+  /** Delete a branch */
+  delete?: string
+  /** Force delete */
+  force?: boolean
+  /** Show remote branches too */
+  remote?: boolean
+  /** Show all branches */
+  all?: boolean
+}

@@ -423,11 +423,13 @@ export class ParquetStore implements CASBackend {
         : new Uint8Array(row.data as ArrayBufferLike)
 
       // Add to buffer
-      const buffObj = {
+      const buffObj: BufferedObject = {
         sha: row.sha,
-        type: row.type,
+        type: row.type as ObjectType,
         data,
-        path: row.path ?? undefined,
+      }
+      if (row.path != null) {
+        buffObj.path = row.path
       }
       this.buffer.push(buffObj)
       this.bufferIndex.set(row.sha, buffObj)
@@ -487,7 +489,10 @@ export class ParquetStore implements CASBackend {
       }
 
       // Buffer the object for Parquet write
-      const buffObj2 = { sha, type, data, path }
+      const buffObj2: BufferedObject = { sha, type, data }
+      if (path !== undefined) {
+        buffObj2.path = path
+      }
       this.buffer.push(buffObj2)
       this.bufferIndex.set(sha, buffObj2)
       this.bufferBytes += data.length
@@ -729,7 +734,8 @@ export class ParquetStore implements CASBackend {
 
         const buffer = parquetWriteBuffer({
           codec: this.codec,
-          schema: GIT_OBJECTS_SCHEMA,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          schema: GIT_OBJECTS_SCHEMA as any,
           columnData: [
             { name: 'sha', data: batch.shas },
             { name: 'type', data: batch.types },
@@ -933,7 +939,8 @@ export class ParquetStore implements CASBackend {
 
       const buffer = parquetWriteBuffer({
         codec: this.codec,
-        schema: GIT_OBJECTS_SCHEMA,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        schema: GIT_OBJECTS_SCHEMA as any,
         columnData: [
           { name: 'sha', data: batch.shas },
           { name: 'type', data: batch.types },

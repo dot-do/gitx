@@ -46,7 +46,9 @@ export class RPCError<T = unknown> extends Error {
     super(message)
     this.name = 'RPCError'
     this.code = code
-    this.data = data
+    if (data !== undefined) {
+      this.data = data
+    }
   }
 }
 

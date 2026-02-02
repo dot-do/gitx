@@ -37,7 +37,7 @@ import { parseCapabilities } from '../wire/smart-http'
 import type { ServerCapabilities, GitRef } from '../wire/smart-http'
 import { PackObjectType, parsePackHeader, decodeTypeAndSize, packObjectTypeToString } from '../pack/format'
 import { applyDelta } from '../pack/delta'
-import type { GitBackend, GitObject } from '../core/backend'
+import type { GitBackend } from '../core/backend'
 import type { ObjectType } from '../types/objects'
 import * as pako from 'pako'
 
@@ -172,14 +172,15 @@ export function parseCloneUrl(url: string): ParsedCloneUrl {
       throw new Error(`Invalid SSH URL format: ${url}`)
     }
     const [, username, host, path] = match
-    return {
+    const result: ParsedCloneUrl = {
       protocol: 'ssh',
       host: host!,
       port: null,
       path: path!.startsWith('/') ? path! : '/' + path,
-      username,
       baseUrl: `ssh://${username}@${host}/${path}`
     }
+    if (username !== undefined) result.username = username
+    return result
   }
 
   // Handle standard URL format
@@ -206,15 +207,16 @@ export function parseCloneUrl(url: string): ParsedCloneUrl {
   const port = parsedUrl.port ? parseInt(parsedUrl.port) : null
   const baseUrl = `${protocol}://${parsedUrl.host}${path}`
 
-  return {
+  const result: ParsedCloneUrl = {
     protocol: protocol === 'http' ? 'https' : protocol as 'https' | 'ssh',
     host: parsedUrl.hostname,
     port,
     path,
-    username: parsedUrl.username || undefined,
-    password: parsedUrl.password || undefined,
     baseUrl
   }
+  if (parsedUrl.username) result.username = parsedUrl.username
+  if (parsedUrl.password) result.password = parsedUrl.password
+  return result
 }
 
 /**
@@ -403,7 +405,9 @@ function parseRefAdvertisement(body: string): RefAdvertisement {
     refs.push({ sha, name })
   }
 
-  return { refs, capabilities, head, symrefs }
+  const result: RefAdvertisement = { refs, capabilities, symrefs }
+  if (head !== undefined) result.head = head
+  return result
 }
 
 /**
@@ -1139,9 +1143,7 @@ export async function clone(
       return {
         success: true,
         refs: [],
-        objectCount: 0,
-        head: undefined,
-        defaultBranch: undefined
+        objectCount: 0
       }
     }
 
@@ -1181,9 +1183,7 @@ export async function clone(
       return {
         success: true,
         refs: [],
-        objectCount: 0,
-        head: undefined,
-        defaultBranch: undefined
+        objectCount: 0
       }
     }
 
@@ -1221,13 +1221,14 @@ export async function clone(
       onProgress('Clone complete.')
     }
 
-    return {
+    const result: CloneResult = {
       success: true,
       refs: wantRefs.filter(r => r.name !== 'HEAD'),
-      head: refAdvert.head,
-      defaultBranch,
       objectCount
     }
+    if (refAdvert.head !== undefined) result.head = refAdvert.head
+    if (defaultBranch !== undefined) result.defaultBranch = defaultBranch
+    return result
   } catch (error) {
     return {
       success: false,

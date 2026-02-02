@@ -336,13 +336,16 @@ export class HookExecutor {
       if (hook.type === 'function') {
         return (hook.handler as PreReceiveHookHandler)(commands, env)
       } else {
-        return this.executeWebhook(hook, {
+        const payload: WebhookPayload = {
           hook: 'pre-receive',
           timestamp: new Date().toISOString(),
-          repository: opts.repoId,
           commands,
           env,
-        }, opts)
+        }
+        if (opts.repoId !== undefined) {
+          payload.repository = opts.repoId
+        }
+        return this.executeWebhook(hook, payload, opts)
       }
     }, opts)
   }
@@ -428,11 +431,14 @@ export class HookExecutor {
 
       // Stop on first hook failure
       if (!hookOutcome.success) {
-        return {
+        const result: RefUpdateResult = {
           refName: command.refName,
           success: false,
-          error: hookOutcome.errorMessage,
         }
+        if (hookOutcome.errorMessage !== undefined) {
+          result.error = hookOutcome.errorMessage
+        }
+        return result
       }
     }
 
@@ -467,11 +473,14 @@ export class HookExecutor {
       const output = this.createHookOutput(hook.id, result.success, result.message, startTime)
 
       if (!result.success) {
-        return {
+        const failResult: { success: boolean; errorMessage?: string; output?: HookOutput } = {
           success: false,
-          errorMessage: result.message,
           output,
         }
+        if (result.message !== undefined) {
+          failResult.errorMessage = result.message
+        }
+        return failResult
       }
 
       return { success: true, output }
@@ -516,13 +525,15 @@ export class HookExecutor {
     const payload: WebhookPayload = {
       hook: 'update',
       timestamp: new Date().toISOString(),
-      repository: options.repoId,
       ref: {
         name: command.refName,
         oldSha: command.oldSha,
         newSha: command.newSha,
       },
       env,
+    }
+    if (options.repoId !== undefined) {
+      payload.repository = options.repoId
     }
 
     return this.executeWebhook(hook, payload, options)
@@ -547,14 +558,17 @@ export class HookExecutor {
       if (hook.type === 'function') {
         return (hook.handler as PostReceiveHookHandler)(successfulCommands, results, env)
       } else {
-        return this.executeWebhook(hook, {
+        const payload: WebhookPayload = {
           hook: 'post-receive',
           timestamp: new Date().toISOString(),
-          repository: opts.repoId,
           commands: successfulCommands,
           results,
           env,
-        }, opts)
+        }
+        if (opts.repoId !== undefined) {
+          payload.repository = opts.repoId
+        }
+        return this.executeWebhook(hook, payload, opts)
       }
     }, { ...opts, mode: 'async' }) // Post-receive is typically async
 
@@ -582,12 +596,15 @@ export class HookExecutor {
       if (hook.type === 'function') {
         return (hook.handler as PostUpdateHookHandler)(successfulRefs)
       } else {
-        return this.executeWebhook(hook, {
+        const payload: WebhookPayload = {
           hook: 'post-update',
           timestamp: new Date().toISOString(),
-          repository: opts.repoId,
           commands: successfulRefs.map((name) => ({ refName: name } as RefUpdateCommand)),
-        }, opts)
+        }
+        if (opts.repoId !== undefined) {
+          payload.repository = opts.repoId
+        }
+        return this.executeWebhook(hook, payload, opts)
       }
     }, { ...opts, mode: 'async' })
   }
@@ -611,14 +628,17 @@ export class HookExecutor {
     message: string | undefined,
     startTime: number
   ): HookOutput {
-    return {
+    const output: HookOutput = {
       hookId,
       success,
-      message,
       duration: Date.now() - startTime,
       startedAt: new Date(startTime),
       completedAt: new Date(),
     }
+    if (message !== undefined) {
+      output.message = message
+    }
+    return output
   }
 
   /**
@@ -760,12 +780,15 @@ export class HookExecutor {
       .filter((o) => !o.success && o.message)
       .map((o) => o.message)
 
-    return {
+    const result: HookExecutionResult = {
       success: allSuccess,
       outputs,
-      message: failedMessages.length > 0 ? failedMessages.join('; ') : undefined,
       totalDuration: Date.now() - totalStart,
     }
+    if (failedMessages.length > 0) {
+      result.message = failedMessages.join('; ')
+    }
+    return result
   }
 
   /**

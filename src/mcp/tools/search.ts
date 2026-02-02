@@ -95,16 +95,19 @@ export const searchToolDefinition = {
  * Create a SearchResult for a branch
  */
 function createBranchResult(branch: { name: string; sha?: string }): SearchResult {
-  return {
+  const result: SearchResult = {
     // Base SearchResult fields
     id: branch.sha ?? branch.name,
     title: branch.name,
     description: `Branch: ${branch.name}${branch.sha ? ` @ ${branch.sha.slice(0, 7)}` : ''}`,
     // Git-specific extensions
     gitType: 'branch',
-    ref: branch.name,
-    sha: branch.sha
+    ref: branch.name
   }
+  if (branch.sha !== undefined) {
+    result.sha = branch.sha
+  }
+  return result
 }
 
 /**
@@ -117,7 +120,7 @@ function createCommitResult(commit: {
   date?: string
 }): SearchResult {
   const summary = commit.message?.split('\n')[0] ?? commit.sha.slice(0, 7)
-  return {
+  const result: SearchResult = {
     // Base SearchResult fields
     id: commit.sha,
     title: summary,
@@ -125,10 +128,15 @@ function createCommitResult(commit: {
     // Git-specific extensions
     gitType: 'commit',
     ref: commit.sha,
-    sha: commit.sha,
-    author: commit.author,
-    date: commit.date
+    sha: commit.sha
   }
+  if (commit.author !== undefined) {
+    result.author = commit.author
+  }
+  if (commit.date !== undefined) {
+    result.date = commit.date
+  }
+  return result
 }
 
 /**

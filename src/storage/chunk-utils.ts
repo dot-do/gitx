@@ -313,8 +313,12 @@ export function extractRange(
 
   // If only one chunk needed and it's the exact range
   if (neededChunks.length === 1) {
+    const chunk = neededChunks[0]
+    if (chunk === undefined) {
+      throw new Error('Chunk is undefined')
+    }
     const startOffset = offset - startChunk * chunkSize
-    return neededChunks[0].slice(startOffset, startOffset + length)
+    return chunk.slice(startOffset, startOffset + length)
   }
 
   // Calculate total size of fetched chunks
