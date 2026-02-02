@@ -7,7 +7,7 @@
  */
 
 // Re-export everything from the core protocol module
-export * from '../../packages/core/protocol'
+export * from '../../core/protocol'
 
 // ============================================================================
 // Legacy Types (for backward compatibility)

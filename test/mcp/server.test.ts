@@ -12,7 +12,7 @@ import {
   invokeTool,
   clearToolRegistry,
   type GitAuthContext,
-} from '../../packages/do/src/mcp/index'
+} from '../../src/mcp/index'
 
 describe('Git MCP Server', () => {
   describe('createGitMCPServer', () => {

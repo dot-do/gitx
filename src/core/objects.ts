@@ -73,7 +73,7 @@ export {
   detectObjectType,
   parseGitObject,
   createGitObject,
-} from '../../packages/core/objects'
+} from '../../core/objects'
 
 // ============================================================================
 // Legacy API Compatibility Layer
@@ -94,7 +94,7 @@ import {
   type ObjectType as CoreObjectType,
   type TreeEntry as CoreTreeEntry,
   type GitIdentity,
-} from '../../packages/core/objects'
+} from '../../core/objects'
 
 /**
  * Base interface for all Git objects.

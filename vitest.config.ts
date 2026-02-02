@@ -4,9 +4,8 @@ import path from 'path'
 export default defineWorkersConfig({
   resolve: {
     alias: [
-      { find: /^@dotdo\/gitx\/(.*)$/, replacement: path.resolve(__dirname, './packages/core/$1') },
-      { find: '@dotdo/gitx', replacement: path.resolve(__dirname, './packages/core') },
-      { find: 'core', replacement: path.resolve(__dirname, './packages/core') },
+      { find: /^@dotdo\/gitx\/(.*)$/, replacement: path.resolve(__dirname, './core/$1') },
+      { find: '@dotdo/gitx', replacement: path.resolve(__dirname, './core') },
     ],
   },
   test: {

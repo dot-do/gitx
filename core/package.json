@@ -65,10 +65,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/dot-do/gitx.git",
-    "directory": "packages/core"
+    "directory": "core"
   },
   "devDependencies": {
-    "@dotdo/types": "file:../../../types",
+    "@dotdo/types": "file:../../types",
     "typescript": "^5.7.2"
   },
   "dependencies": {

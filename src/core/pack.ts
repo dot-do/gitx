@@ -90,7 +90,7 @@ export {
   decodeOfsDelta,
   encodeRefDelta,
   decodeRefDelta,
-} from '../../packages/core/pack'
+} from '../../core/pack'
 
 // Import types for ObjectType from objects
 import type { ObjectType } from './objects'

@@ -24,11 +24,11 @@
     "noFallthroughCasesInSwitch": true,
     "jsx": "react-jsx",
     "paths": {
-      "@dotdo/gitx": ["./packages/core/index.ts"],
-      "@dotdo/gitx/*": ["./packages/core/*"]
+      "@dotdo/gitx": ["./core/index.ts"],
+      "@dotdo/gitx/*": ["./core/*"]
     },
     "baseUrl": "."
   },
-  "include": ["src/**/*", "packages/core/**/*", "App.tsx", "Site.tsx"],
+  "include": ["index.ts", "core/**/*", "src/**/*", "App.tsx", "Site.tsx"],
   "exclude": ["node_modules", "dist", "test"]
 }

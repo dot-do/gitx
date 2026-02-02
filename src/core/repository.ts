@@ -33,7 +33,7 @@
 
 import type { GitBackend, Ref } from './backend'
 import type { ObjectType, CommitObject, TreeEntry, Author } from '../types/objects'
-import { GitCommit, parseTreeEntries } from '../../packages/core/objects'
+import { GitCommit, parseTreeEntries } from '../../core/objects'
 
 // ============================================================================
 // Repository Interface
