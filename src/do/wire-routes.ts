@@ -162,45 +162,6 @@ class DORepositoryProvider implements RepositoryProvider {
   }
 
   /**
-   * Unpack a packfile into the DO's object store.
-   *
-   * This is a minimal implementation that validates the packfile header
-   * and delegates to the object store. A full implementation would parse
-   * individual objects from the pack format.
-   */
-  private async unpackPackfile(packData: Uint8Array): Promise<void> {
-    if (packData.length < 12) {
-      console.warn('[WireProtocol] unpackPackfile: packfile too short, skipping')
-      return
-    }
-
-    // Validate PACK signature
-    const sig = new TextDecoder().decode(packData.slice(0, 4))
-    if (sig !== 'PACK') {
-      throw new Error('Invalid packfile signature')
-    }
-
-    // TODO: Implement full packfile unpacking.
-    // This requires parsing the variable-length object headers, decompressing
-    // zlib data, resolving delta chains, and computing SHA-1 hashes.
-    // For now, log that we received the packfile but cannot fully unpack it.
-    const version =
-      ((packData[4] ?? 0) << 24) |
-      ((packData[5] ?? 0) << 16) |
-      ((packData[6] ?? 0) << 8) |
-      (packData[7] ?? 0)
-    const objectCount =
-      ((packData[8] ?? 0) << 24) |
-      ((packData[9] ?? 0) << 16) |
-      ((packData[10] ?? 0) << 8) |
-      (packData[11] ?? 0)
-
-    console.log(
-      `[WireProtocol] unpackPackfile: version=${version}, objects=${objectCount}, bytes=${packData.length} (full unpack not yet implemented)`
-    )
-  }
-
-  /**
    * Unpack a packfile into a PushTransaction's buffer instead of
    * writing directly to the object store.
    *
@@ -212,37 +173,40 @@ class DORepositoryProvider implements RepositoryProvider {
     packData: Uint8Array,
     tx: PushTransaction
   ): Promise<void> {
-    if (packData.length < 12) {
+    if (packData.length < 32) {
       console.warn('[WireProtocol] unpackPackfileIntoTransaction: packfile too short, skipping')
       return
     }
 
-    // Validate PACK signature
-    const sig = new TextDecoder().decode(packData.slice(0, 4))
-    if (sig !== 'PACK') {
-      throw new Error('Invalid packfile signature')
+    // Use the full packfile unpacking implementation
+    const { unpackPackfile } = await import('../pack/unpack')
+
+    // Create an external base resolver that looks up objects in the existing store
+    // This supports receiving thin packs where delta bases may already exist
+    const resolveExternalBase = async (sha: string) => {
+      const obj = await this.objectStore.getObject(sha)
+      if (!obj) return null
+      return { type: obj.type, data: obj.data }
     }
 
-    const version =
-      ((packData[4] ?? 0) << 24) |
-      ((packData[5] ?? 0) << 16) |
-      ((packData[6] ?? 0) << 8) |
-      (packData[7] ?? 0)
-    const objectCount =
-      ((packData[8] ?? 0) << 24) |
-      ((packData[9] ?? 0) << 16) |
-      ((packData[10] ?? 0) << 8) |
-      (packData[11] ?? 0)
+    const result = await unpackPackfile(packData, {
+      resolveExternalBase,
+      verifyChecksum: true,
+      maxDeltaDepth: 50,
+    })
 
     console.log(
-      `[WireProtocol] unpackPackfileIntoTransaction: version=${version}, objects=${objectCount}, bytes=${packData.length} (objects buffered in transaction)`
+      `[WireProtocol] unpackPackfileIntoTransaction: version=${result.version}, objects=${result.objectCount}, bytes=${packData.length}`
     )
 
-    // TODO: When full packfile unpacking is implemented, each unpacked
-    // object should be buffered via tx.bufferObject(sha, type, data)
-    // instead of being written directly to the object store.
-    // For now, this matches the existing unpackPackfile behavior
-    // (header validation + logging) but routes through the transaction.
+    // Buffer each unpacked object in the transaction
+    for (const obj of result.objects) {
+      tx.bufferObject(obj.sha, obj.type, obj.data)
+    }
+
+    console.log(
+      `[WireProtocol] unpackPackfileIntoTransaction: buffered ${result.objects.length} objects`
+    )
   }
 
   /**

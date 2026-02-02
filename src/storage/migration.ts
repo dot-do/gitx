@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { DurableObjectStorage } from '../do/schema'
+import type { DurableObjectStorage } from './types'
 import type { ObjectLocation, StorageTier, RecordLocationOptions } from './object-index'
 import { ObjectIndex } from './object-index'
 import { BundleObjectType } from './bundle-format'

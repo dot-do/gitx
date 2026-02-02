@@ -5,7 +5,7 @@ import {
   serializeMetadata,
   GIT_OBJECTS_ICEBERG_SCHEMA,
   type IcebergTableMetadata,
-} from '../../src/iceberg/metadata'
+} from '../../src/iceberg'
 
 describe('Iceberg Metadata', () => {
   describe('GIT_OBJECTS_ICEBERG_SCHEMA', () => {

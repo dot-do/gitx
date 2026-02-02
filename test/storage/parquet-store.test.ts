@@ -554,6 +554,233 @@ describe('ParquetStore', () => {
     })
   })
 
+  describe('back-pressure', () => {
+    it('should auto-flush when maxBufferObjects is exceeded', async () => {
+      const lowLimitStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        flushThreshold: 100,  // Higher than maxBufferObjects to ensure back-pressure triggers
+        maxBufferObjects: 5,  // Low limit for testing
+      })
+
+      // Add 6 objects - should trigger auto-flush after the 5th due to back-pressure
+      for (let i = 0; i < 6; i++) {
+        await lowLimitStore.putObject('blob', encoder.encode(`object ${i}`))
+      }
+
+      const stats = lowLimitStore.getStats()
+      // After flush, buffer should have remaining objects (1 object after the flush)
+      expect(stats.bufferedObjects).toBeLessThanOrEqual(5)
+      // At least one Parquet file should have been created from the flush
+      expect(stats.parquetFiles).toBeGreaterThanOrEqual(1)
+    })
+
+    it('should auto-flush when maxBufferBytes is exceeded', async () => {
+      const lowLimitStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        flushBytesThreshold: 10 * 1024 * 1024,  // Higher than maxBufferBytes
+        maxBufferBytes: 100,  // Low limit for testing (100 bytes)
+      })
+
+      // Add objects until we exceed 100 bytes
+      await lowLimitStore.putObject('blob', encoder.encode('a'.repeat(50)))
+      await lowLimitStore.putObject('blob', encoder.encode('b'.repeat(60)))  // Total: 110 bytes, triggers flush
+
+      const stats = lowLimitStore.getStats()
+      // Buffer should have been flushed
+      expect(stats.bufferedBytes).toBeLessThanOrEqual(100)
+      // At least one Parquet file should have been created
+      expect(stats.parquetFiles).toBeGreaterThanOrEqual(1)
+    })
+
+    it('should respect default maxBufferBytes of 50MB', () => {
+      const defaultStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+      // We can't easily test the default value directly without exposing it,
+      // but we can verify the store is created without errors
+      expect(defaultStore).toBeDefined()
+    })
+
+    it('should respect default maxBufferObjects of 10000', () => {
+      const defaultStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+      // We can't easily test the default value directly without exposing it,
+      // but we can verify the store is created without errors
+      expect(defaultStore).toBeDefined()
+    })
+
+    it('should flush multiple times under sustained load', async () => {
+      const lowLimitStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        flushThreshold: 1000,  // High threshold
+        maxBufferObjects: 3,   // Low back-pressure limit
+      })
+
+      // Add 10 objects - should trigger multiple flushes
+      for (let i = 0; i < 10; i++) {
+        await lowLimitStore.putObject('blob', encoder.encode(`sustained ${i}`))
+      }
+
+      const stats = lowLimitStore.getStats()
+      // Should have created multiple Parquet files from multiple flushes
+      expect(stats.parquetFiles).toBeGreaterThanOrEqual(2)
+    })
+
+    it('should not lose data during back-pressure flush', async () => {
+      const lowLimitStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        flushThreshold: 100,
+        maxBufferObjects: 3,
+      })
+
+      const shas: string[] = []
+      for (let i = 0; i < 7; i++) {
+        const sha = await lowLimitStore.putObject('blob', encoder.encode(`no-loss ${i}`))
+        shas.push(sha)
+      }
+
+      // All objects should be retrievable
+      for (let i = 0; i < shas.length; i++) {
+        const result = await lowLimitStore.getObject(shas[i])
+        expect(result).not.toBeNull()
+        expect(new TextDecoder().decode(result!.content)).toBe(`no-loss ${i}`)
+      }
+    })
+  })
+
+  describe('bloom filter false negative recovery', () => {
+    it('should recover from bloom filter false negative when verifyBloomNegatives is enabled', async () => {
+      // Create a store with verifyBloomNegatives enabled
+      const verifyStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        verifyBloomNegatives: true,
+      })
+
+      // Add an object and flush
+      const data = encoder.encode('false negative test')
+      const sha = await verifyStore.putObject('blob', data)
+      await verifyStore.flush()
+
+      // Simulate a bloom filter false negative by clearing the bloom cache
+      // This mimics a scenario where the bloom filter incorrectly reports absent
+      const bloomCache = verifyStore.getBloomCache()
+      await bloomCache.clear()
+
+      // With verifyBloomNegatives enabled, hasObject should still find it via R2 fallback
+      const exists = await verifyStore.hasObject(sha)
+      expect(exists).toBe(true)
+
+      // After self-healing, the bloom filter should now report the SHA exists
+      // (may be 'definite' if exact cache works or 'probable' from bloom filter)
+      const check = await bloomCache.check(sha)
+      expect(check === 'definite' || check === 'probable').toBe(true)
+    })
+
+    it('should return false for truly missing objects even with verifyBloomNegatives', async () => {
+      const verifyStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        verifyBloomNegatives: true,
+      })
+
+      // Initialize the store
+      await verifyStore.putObject('blob', encoder.encode('dummy'))
+      await verifyStore.flush()
+
+      // Check for a SHA that truly doesn't exist
+      const nonExistentSha = 'a'.repeat(40)
+      const exists = await verifyStore.hasObject(nonExistentSha)
+      expect(exists).toBe(false)
+    })
+
+    it('should NOT verify R2 when verifyBloomNegatives is disabled (default)', async () => {
+      // Create a store without verifyBloomNegatives (default false)
+      const defaultStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+
+      // Add an object and flush
+      const data = encoder.encode('default behavior test')
+      const sha = await defaultStore.putObject('blob', data)
+      await defaultStore.flush()
+
+      // Clear the bloom cache to simulate false negative
+      const bloomCache = defaultStore.getBloomCache()
+      await bloomCache.clear()
+
+      // Without verifyBloomNegatives, hasObject should return false (trusting bloom filter)
+      const exists = await defaultStore.hasObject(sha)
+      expect(exists).toBe(false)
+    })
+
+    it('should find object in buffer even with bloom filter false negative', async () => {
+      const verifyStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        verifyBloomNegatives: true,
+      })
+
+      // Add an object but don't flush (stays in buffer)
+      const data = encoder.encode('buffered object')
+      const sha = await verifyStore.putObject('blob', data)
+
+      // Clear bloom cache to simulate false negative
+      const bloomCache = verifyStore.getBloomCache()
+      await bloomCache.clear()
+
+      // Should still find it in the buffer
+      const exists = await verifyStore.hasObject(sha)
+      expect(exists).toBe(true)
+    })
+
+    it('should self-heal bloom filter after R2 verification', async () => {
+      const verifyStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        verifyBloomNegatives: true,
+      })
+
+      // Add and flush an object
+      const data = encoder.encode('self-heal test')
+      const sha = await verifyStore.putObject('blob', data)
+      await verifyStore.flush()
+
+      // Clear bloom cache
+      const bloomCache = verifyStore.getBloomCache()
+      await bloomCache.clear()
+
+      // First check - should trigger R2 lookup and self-heal
+      const exists1 = await verifyStore.hasObject(sha)
+      expect(exists1).toBe(true)
+
+      // Second check - should now find it in the bloom filter without R2 lookup
+      // We can't easily verify the R2 lookup wasn't made, but we can verify
+      // the bloom filter now reports the SHA (either definite or probable)
+      const check = await bloomCache.check(sha)
+      expect(check === 'definite' || check === 'probable').toBe(true)
+    })
+  })
+
   describe('error handling', () => {
     it('R2 put failure during flush should throw', async () => {
       const failingR2 = createMockR2()

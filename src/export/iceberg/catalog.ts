@@ -28,6 +28,18 @@ export interface R2CatalogConfig {
   prefix?: string
   /** Warehouse location URL */
   warehouseLocation: string
+  /** Maximum retry attempts for optimistic concurrency conflicts (default: 3) */
+  maxRetries?: number
+}
+
+/**
+ * Location pointer data stored alongside table metadata.
+ */
+interface LocationData {
+  location: string
+  current_metadata: string
+  /** Metadata version number for optimistic concurrency control */
+  metadata_version?: number
 }
 
 /**
@@ -75,10 +87,12 @@ export class CatalogError extends Error {
 export class R2DataCatalog {
   private bucket: R2Bucket
   private prefix: string
+  private maxRetries: number
 
   constructor(config: R2CatalogConfig) {
     this.bucket = config.bucket
     this.prefix = config.prefix ?? ''
+    this.maxRetries = config.maxRetries ?? 3
     // warehouseLocation stored for future use in catalog operations
   }
 
@@ -219,10 +233,15 @@ export class R2DataCatalog {
       { httpMetadata: { contentType: 'application/json' } }
     )
 
-    // Store table location pointer
+    // Store table location pointer with initial version
+    const locationData: LocationData = {
+      location,
+      current_metadata: metadataPath,
+      metadata_version: 1,
+    }
     await this.bucket.put(
       this.catalogPath(`namespaces/${namespace}/${table}/location.json`),
-      JSON.stringify({ location, current_metadata: metadataPath }, null, 2),
+      JSON.stringify(locationData, null, 2),
       { httpMetadata: { contentType: 'application/json' } }
     )
 
@@ -233,28 +252,56 @@ export class R2DataCatalog {
    * Gets table metadata.
    */
   async getTable(namespace: string, table: string): Promise<TableMetadata> {
+    const result = await this.getTableWithVersion(namespace, table)
+    return result.metadata
+  }
+
+  /**
+   * Gets table metadata along with version information for optimistic concurrency control.
+   * @internal
+   */
+  private async getTableWithVersion(namespace: string, table: string): Promise<{
+    metadata: TableMetadata
+    locationData: LocationData
+    locationEtag: string
+  }> {
     const locationPath = this.catalogPath(`namespaces/${namespace}/${table}/location.json`)
     const locationObj = await this.bucket.get(locationPath)
     if (!locationObj) {
       throw new CatalogError(`Table ${namespace}.${table} not found`, 'NOT_FOUND')
     }
 
-    const locationData = await locationObj.json<{ current_metadata: string }>()
+    const locationEtag = locationObj.etag
+    const locationData = await locationObj.json<LocationData>()
     const metadataObj = await this.bucket.get(this.r2Path(locationData.current_metadata))
     if (!metadataObj) {
       throw new CatalogError(`Metadata for ${namespace}.${table} not found`, 'NOT_FOUND')
     }
 
-    return metadataObj.json<TableMetadata>()
+    return {
+      metadata: await metadataObj.json<TableMetadata>(),
+      locationData,
+      locationEtag,
+    }
   }
 
   /**
-   * Updates table metadata with atomic operations.
+   * Updates table metadata with atomic operations using optimistic concurrency control.
+   *
+   * This method implements the Iceberg standard pattern:
+   * 1. Reads current metadata and location pointer (with ETag)
+   * 2. Validates requirements against current state
+   * 3. Applies updates in memory
+   * 4. Writes new versioned metadata file (v1.metadata.json, v2.metadata.json, etc.)
+   * 5. Atomically updates location pointer using conditional put (ETag check)
+   *
+   * If a concurrent update occurs, the conditional put fails and the operation is retried.
    *
    * @param namespace - Catalog namespace
    * @param table - Table name
    * @param updates - List of update operations
    * @param requirements - Optional requirements for optimistic locking
+   * @throws CatalogError with code 'CONFLICT' if max retries exceeded due to concurrent updates
    */
   async updateTable(
     namespace: string,
@@ -262,8 +309,44 @@ export class R2DataCatalog {
     updates: TableUpdate[],
     requirements?: TableRequirement[]
   ): Promise<TableMetadata> {
-    // Get current metadata
-    const current = await this.getTable(namespace, table)
+    let lastError: Error | null = null
+
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      try {
+        return await this.tryUpdateTable(namespace, table, updates, requirements)
+      } catch (error) {
+        if (error instanceof CatalogError && error.code === 'CONFLICT') {
+          // Concurrent modification detected, retry
+          lastError = error
+          // Small exponential backoff: 10ms, 20ms, 40ms, ...
+          await new Promise(resolve => setTimeout(resolve, 10 * Math.pow(2, attempt)))
+          continue
+        }
+        // Non-conflict errors should be rethrown immediately
+        throw error
+      }
+    }
+
+    // Max retries exceeded
+    throw new CatalogError(
+      `Failed to update table ${namespace}.${table} after ${this.maxRetries} attempts due to concurrent modifications`,
+      'CONFLICT',
+      { attempts: this.maxRetries, lastError: lastError?.message }
+    )
+  }
+
+  /**
+   * Attempts a single table update with optimistic concurrency control.
+   * @internal
+   */
+  private async tryUpdateTable(
+    namespace: string,
+    table: string,
+    updates: TableUpdate[],
+    requirements?: TableRequirement[]
+  ): Promise<TableMetadata> {
+    // Get current metadata with version info
+    const { metadata: current, locationData, locationEtag } = await this.getTableWithVersion(namespace, table)
 
     // Validate requirements
     if (requirements) {
@@ -278,39 +361,111 @@ export class R2DataCatalog {
       metadata = this.applyUpdate(metadata, update)
     }
 
-    // Increment version and update timestamp
-    const version = this.getMetadataVersion(current) + 1
+    // Calculate new version number
+    const currentVersion = locationData.metadata_version ?? this.extractVersionFromPath(locationData.current_metadata)
+    const newVersion = currentVersion + 1
     metadata.last_updated_ms = Date.now()
 
-    // Write new metadata file
-    const locationPath = this.catalogPath(`namespaces/${namespace}/${table}/location.json`)
-    const locationObj = await this.bucket.get(locationPath)
-    const locationData = await locationObj!.json<{ location: string }>()
-
-    const newMetadataPath = `${locationData.location}/metadata/v${version}.metadata.json`
+    // Write new metadata file (versioned, immutable once written)
+    const newMetadataPath = `${locationData.location}/metadata/v${newVersion}.metadata.json`
     await this.bucket.put(
       this.r2Path(newMetadataPath),
       JSON.stringify(metadata, null, 2),
       { httpMetadata: { contentType: 'application/json' } }
     )
 
-    // Update location pointer
-    await this.bucket.put(
-      locationPath,
-      JSON.stringify({ ...locationData, current_metadata: newMetadataPath }, null, 2),
-      { httpMetadata: { contentType: 'application/json' } }
-    )
+    // Atomically update location pointer with ETag check (optimistic concurrency)
+    const locationPath = this.catalogPath(`namespaces/${namespace}/${table}/location.json`)
+    const newLocationData: LocationData = {
+      ...locationData,
+      current_metadata: newMetadataPath,
+      metadata_version: newVersion,
+    }
+
+    try {
+      await this.bucket.put(
+        locationPath,
+        JSON.stringify(newLocationData, null, 2),
+        {
+          httpMetadata: { contentType: 'application/json' },
+          onlyIf: { etagMatches: locationEtag },
+        }
+      )
+    } catch (error) {
+      // R2 returns a 412 Precondition Failed if ETag doesn't match
+      // This indicates a concurrent modification
+      if (this.isPreconditionFailed(error)) {
+        // Clean up the orphaned metadata file we just wrote
+        await this.bucket.delete(this.r2Path(newMetadataPath)).catch(() => {
+          // Best effort cleanup, ignore errors
+        })
+        throw new CatalogError(
+          `Concurrent modification detected for table ${namespace}.${table}`,
+          'CONFLICT',
+          { expectedVersion: currentVersion, attemptedVersion: newVersion }
+        )
+      }
+      throw error
+    }
+
+    // Add to metadata log for history tracking
+    if (!metadata.metadata_log) {
+      metadata.metadata_log = []
+    }
+    metadata.metadata_log.push({
+      metadata_file: newMetadataPath,
+      timestamp_ms: metadata.last_updated_ms,
+    })
 
     return metadata
   }
 
   /**
+   * Extracts version number from metadata path (e.g., "v2.metadata.json" -> 2).
+   * @internal
+   */
+  private extractVersionFromPath(metadataPath: string): number {
+    const match = metadataPath.match(/\/v(\d+)\.metadata\.json$/)
+    return match ? parseInt(match[1], 10) : 1
+  }
+
+  /**
+   * Checks if an error is a precondition failed error (412).
+   * @internal
+   */
+  private isPreconditionFailed(error: unknown): boolean {
+    // R2 throws an error when onlyIf condition fails
+    // The specific error format may vary, so we check multiple indicators
+    if (error && typeof error === 'object') {
+      const e = error as { status?: number; code?: string; message?: string }
+      if (e.status === 412) return true
+      if (e.code === 'PreconditionFailed') return true
+      if (e.message?.includes('412') || e.message?.includes('precondition')) return true
+    }
+    return false
+  }
+
+  /**
    * Drops a table from the catalog.
+   *
+   * @param namespace - Catalog namespace
+   * @param table - Table name
+   * @param purge - If true, delete all data files under the table location
    */
   async dropTable(namespace: string, table: string, purge = false): Promise<void> {
     const tables = await this.listTables(namespace)
     if (!tables.some(t => t.name === table)) {
       throw new CatalogError(`Table ${namespace}.${table} not found`, 'NOT_FOUND')
+    }
+
+    // IMPORTANT: Read all metadata BEFORE deleting anything
+    // This prevents errors when purge=true needs metadata after location is deleted
+    let tableLocation: string | null = null
+    if (purge) {
+      const metadata = await this.getTable(namespace, table).catch(() => null)
+      if (metadata) {
+        tableLocation = metadata.location
+      }
     }
 
     // Remove from tables list
@@ -324,16 +479,12 @@ export class R2DataCatalog {
     // Delete location pointer
     await this.bucket.delete(this.catalogPath(`namespaces/${namespace}/${table}/location.json`))
 
-    // Optionally purge data
-    if (purge) {
-      const metadata = await this.getTable(namespace, table).catch(() => null)
-      if (metadata) {
-        // Delete all objects under the table location
-        const prefix = this.r2Path(metadata.location)
-        const listed = await this.bucket.list({ prefix })
-        for (const obj of listed.objects) {
-          await this.bucket.delete(obj.key)
-        }
+    // Purge data files if requested and location was retrieved
+    if (purge && tableLocation) {
+      const prefix = this.r2Path(tableLocation)
+      const listed = await this.bucket.list({ prefix })
+      for (const obj of listed.objects) {
+        await this.bucket.delete(obj.key)
       }
     }
   }

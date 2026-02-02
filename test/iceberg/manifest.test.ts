@@ -7,7 +7,7 @@ import {
   serializeManifestList,
   type ManifestEntry,
   type Manifest,
-} from '../../src/iceberg/manifest'
+} from '../../src/iceberg'
 
 describe('Iceberg Manifest', () => {
   const sampleDataFile = {

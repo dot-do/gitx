@@ -115,24 +115,60 @@ function bufferToHex(buffer: ArrayBuffer): string {
 }
 
 /**
+ * Performs constant-time byte array comparison.
+ *
+ * @description
+ * Prevents timing attacks by always comparing all bytes,
+ * regardless of where the first difference is. Critically,
+ * this function also avoids early returns based on length
+ * to prevent timing leaks that could reveal length information.
+ *
+ * @param a - First byte array
+ * @param b - Second byte array
+ * @returns True if arrays are equal
+ */
+export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  // Always perform a comparison loop of the same length
+  // to avoid leaking length information through timing
+  const maxLen = Math.max(a.length, b.length)
+
+  // Start with length difference - will be non-zero if lengths differ
+  let result = a.length ^ b.length
+
+  // Always iterate over the full length, using 0 for out-of-bounds access
+  for (let i = 0; i < maxLen; i++) {
+    result |= (a[i] || 0) ^ (b[i] || 0)
+  }
+
+  return result === 0
+}
+
+/**
  * Performs constant-time string comparison.
  *
  * @description
  * Prevents timing attacks by always comparing all bytes,
- * regardless of where the first difference is.
+ * regardless of where the first difference is. Critically,
+ * this function also avoids early returns based on length
+ * to prevent timing leaks that could reveal length information.
  *
  * @param a - First string
  * @param b - Second string
  * @returns True if strings are equal
  */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false
-  }
+export function timingSafeEqual(a: string, b: string): boolean {
+  // Always perform a comparison loop of the same length
+  // to avoid leaking length information through timing
+  const maxLen = Math.max(a.length, b.length)
 
-  let result = 0
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  // Start with length difference - will be non-zero if lengths differ
+  let result = a.length ^ b.length
+
+  // Always iterate over the full length, using 0 for out-of-bounds access
+  for (let i = 0; i < maxLen; i++) {
+    const charA = i < a.length ? a.charCodeAt(i) : 0
+    const charB = i < b.length ? b.charCodeAt(i) : 0
+    result |= charA ^ charB
   }
 
   return result === 0

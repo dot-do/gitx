@@ -21,7 +21,7 @@
  */
 
 import type { ObjectType } from '../types/objects'
-import type { DurableObjectStorage } from '../do/schema'
+import type { DurableObjectStorage } from './types'
 
 // ============================================================================
 // Types

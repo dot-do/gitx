@@ -12,19 +12,17 @@
  */
 
 import type { OnFlushHandler, FlushEvent } from '../storage/parquet-store'
-import type { IcebergTableMetadata } from './metadata'
+import type { IcebergTableMetadata } from './adapter'
 import {
   createTableMetadata,
   addSnapshot,
   serializeMetadata,
-} from './metadata'
-import {
   createManifestEntry,
   createManifest,
   serializeManifest,
   createManifestList,
   serializeManifestList,
-} from './manifest'
+} from './adapter'
 
 // ============================================================================
 // Factory

@@ -7,7 +7,12 @@
  */
 
 export { GitHubWebhookHandler, createGitHubWebhookHandler } from './github'
-export { verifyGitHubSignature, createGitHubSignature } from './signature'
+export {
+  verifyGitHubSignature,
+  createGitHubSignature,
+  timingSafeEqual,
+  constantTimeEqual,
+} from './signature'
 export type {
   // Payload types
   GitHubEventPayload,

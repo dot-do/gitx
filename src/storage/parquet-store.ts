@@ -79,6 +79,12 @@ const FLUSH_THRESHOLD = DEFAULT_FLUSH_THRESHOLD
 /** Maximum buffer size in bytes before flushing */
 const FLUSH_BYTES_THRESHOLD = DEFAULT_FLUSH_BYTES_THRESHOLD
 
+/** Default maximum buffer bytes before back-pressure triggers auto-flush (50MB) */
+const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024
+
+/** Default maximum buffer objects before back-pressure triggers auto-flush */
+const DEFAULT_MAX_BUFFER_OBJECTS = 10000
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -125,6 +131,27 @@ export interface ParquetStoreOptions {
    * Use this to hook in Iceberg metadata generation or other post-flush logic.
    */
   onFlush?: OnFlushHandler
+  /**
+   * Maximum buffer size in bytes before back-pressure triggers auto-flush.
+   * This is a hard limit to prevent unbounded memory growth and OOM.
+   * Default: 50MB
+   */
+  maxBufferBytes?: number
+  /**
+   * Maximum number of objects in buffer before back-pressure triggers auto-flush.
+   * This is a hard limit to prevent unbounded memory growth and OOM.
+   * Default: 10000
+   */
+  maxBufferObjects?: number
+  /**
+   * When true, verify bloom filter negative results by checking R2 directly.
+   * This protects against bloom filter false negatives (which should be rare
+   * but could cause missing object errors). If an object is found in R2 that
+   * the bloom filter reported as absent, it will be added to the bloom filter
+   * for self-healing.
+   * @default false
+   */
+  verifyBloomNegatives?: boolean
 }
 
 /** Buffered object awaiting flush to Parquet */
@@ -155,6 +182,8 @@ export class ParquetStore implements CASBackend {
   private bufferBytes = 0
   private flushThreshold: number
   private flushBytesThreshold: number
+  private maxBufferBytes: number
+  private maxBufferObjects: number
   private codec: 'SNAPPY' | 'LZ4_RAW' | 'UNCOMPRESSED'
   private objectFileKeys: string[] = []
   private tombstones: Set<string> = new Set()
@@ -162,6 +191,7 @@ export class ParquetStore implements CASBackend {
   private initPromise?: Promise<void>
   private onFlush: OnFlushHandler | undefined
   private _compactionNeeded = false
+  private verifyBloomNegatives: boolean
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
@@ -170,8 +200,11 @@ export class ParquetStore implements CASBackend {
     this.bloomCache = new BloomCache(options.sql)
     this.flushThreshold = options.flushThreshold ?? FLUSH_THRESHOLD
     this.flushBytesThreshold = options.flushBytesThreshold ?? FLUSH_BYTES_THRESHOLD
+    this.maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
+    this.maxBufferObjects = options.maxBufferObjects ?? DEFAULT_MAX_BUFFER_OBJECTS
     this.codec = options.codec ?? 'SNAPPY'
     this.onFlush = options.onFlush
+    this.verifyBloomNegatives = options.verifyBloomNegatives ?? false
   }
 
   /**
@@ -304,7 +337,28 @@ export class ParquetStore implements CASBackend {
       await this.flush()
     }
 
+    // Back-pressure: auto-flush if buffer exceeds hard limits to prevent OOM
+    await this.checkBufferPressure()
+
     return sha
+  }
+
+  // ===========================================================================
+  // Back-pressure
+  // ===========================================================================
+
+  /**
+   * Check buffer size and auto-flush if it exceeds back-pressure limits.
+   * This prevents unbounded memory growth that could cause OOM.
+   *
+   * Called after each putObject to enforce hard limits on buffer size.
+   * Unlike the normal flush threshold (which is a target), these are
+   * safety limits that should never be exceeded.
+   */
+  private async checkBufferPressure(): Promise<void> {
+    if (this.bufferBytes >= this.maxBufferBytes || this.buffer.length >= this.maxBufferObjects) {
+      await this.flush()
+    }
   }
 
   async getObject(sha: string): Promise<StoredObjectResult | null> {
@@ -350,15 +404,52 @@ export class ParquetStore implements CASBackend {
 
     // Check bloom filter
     const check = await this.bloomCache.check(sha)
-    if (check === 'absent') return false
     if (check === 'definite') return true
 
     // Check buffer
     if (this.buffer.some(o => o.sha === sha)) return true
 
-    // Full check requires scanning Parquet files
+    // Bloom filter says absent - optionally verify with R2 to catch false negatives
+    if (check === 'absent') {
+      if (this.verifyBloomNegatives) {
+        const result = await this.checkR2Exists(sha)
+        if (result) {
+          // Self-heal: add to bloom filter so future lookups are faster
+          await this.bloomCache.add(sha, result.type, result.content.byteLength)
+          return true
+        }
+      }
+      return false
+    }
+
+    // Bloom says probable - full check requires scanning Parquet files
     const obj = await this.getObject(sha)
     return obj !== null
+  }
+
+  /**
+   * Check if an object exists in R2 by scanning Parquet files.
+   * Used as a fallback when bloom filter says absent but we want to verify.
+   * Returns the object result if found, null otherwise.
+   */
+  private async checkR2Exists(sha: string): Promise<StoredObjectResult | null> {
+    // Check in-memory buffer first
+    const buffered = this.buffer.find(o => o.sha === sha)
+    if (buffered) {
+      return { type: buffered.type, content: buffered.data }
+    }
+
+    // Scan Parquet files in reverse order (newest first)
+    for (let i = this.objectFileKeys.length - 1; i >= 0; i--) {
+      const key = this.objectFileKeys[i]
+      if (!key) continue
+      const result = await this.readObjectFromParquet(key, sha)
+      if (result) {
+        return result
+      }
+    }
+
+    return null
   }
 
   async deleteObject(sha: string): Promise<void> {

@@ -466,6 +466,43 @@ export {
   type PackedObject,
 } from './pack/index'
 
+/**
+ * Pack unpacking operations.
+ *
+ * @description
+ * Functions for extracting objects from Git packfiles:
+ * - Full packfile unpacking with delta resolution
+ * - Memory-efficient streaming iteration
+ * - Support for thin packs with external base resolution
+ *
+ * @example
+ * ```typescript
+ * import { unpackPackfile, iteratePackfile } from 'gitx.do'
+ *
+ * // Unpack entire packfile
+ * const result = await unpackPackfile(packData)
+ * for (const obj of result.objects) {
+ *   console.log(`${obj.sha}: ${obj.type}`)
+ * }
+ *
+ * // Stream objects for large packs
+ * for await (const obj of iteratePackfile(packData)) {
+ *   await store.putObject(obj.type, obj.data)
+ * }
+ * ```
+ */
+export {
+  unpackPackfile,
+  iteratePackfile,
+  computeObjectSha,
+  packTypeToObjectType,
+  bytesToHex,
+  type UnpackedObject,
+  type UnpackResult,
+  type UnpackOptions,
+  type ExternalBaseResolver,
+} from './pack/unpack'
+
 // =============================================================================
 // Git Operations - Core git commands (merge, blame, commit, branch)
 // =============================================================================

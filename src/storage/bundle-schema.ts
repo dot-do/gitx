@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { DurableObjectStorage } from '../do/schema'
+import type { DurableObjectStorage } from './types'
 
 // =============================================================================
 // Schema Version Constants

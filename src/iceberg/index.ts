@@ -4,15 +4,30 @@
  * Targeted exports for Iceberg v2 metadata generation: table metadata,
  * manifests, and the flush handler bridge.
  *
+ * This module integrates with @dotdo/iceberg for comprehensive Iceberg support
+ * while maintaining backward compatibility with the local GitX Iceberg API.
+ *
  * @module iceberg
  *
  * @example
  * ```typescript
+ * // Legacy API (backward compatible)
  * import { createTableMetadata, createManifest } from 'gitx.do/iceberg'
+ *
+ * // Advanced API (full @dotdo/iceberg)
+ * import {
+ *   ManifestGenerator,
+ *   TableMetadataBuilder,
+ *   SnapshotManager,
+ * } from 'gitx.do/iceberg'
  * ```
  */
 
-// Table Metadata
+// ============================================================================
+// Legacy API (Backward Compatible)
+// ============================================================================
+
+// Table Metadata (legacy)
 export {
   createTableMetadata,
   addSnapshot,
@@ -23,31 +38,72 @@ export {
   type IcebergPartitionSpec,
   type IcebergSortOrder,
   type IcebergSnapshot,
-  type SnapshotLogEntry,
+  type LegacySnapshotLogEntry as SnapshotLogEntry,
   type IcebergTableMetadata,
   type CreateTableMetadataOptions,
   type AddSnapshotOptions,
-} from './metadata'
+} from './adapter'
 
-// Manifest
+// Manifest (legacy)
 export {
   createManifestEntry,
   createManifest,
   serializeManifest,
   createManifestList,
   serializeManifestList,
+  FIELD_ID_MAP,
   type ColumnStat,
   type DataFileInput,
-  type IcebergDataFile,
+  type LegacyIcebergDataFile as IcebergDataFile,
   type ManifestEntry,
   type Manifest,
   type ManifestListEntry,
   type ManifestList,
   type CreateManifestOptions,
   type CreateManifestListOptions,
-} from './manifest'
+} from './adapter'
 
 // Flush Handler
 export {
   createIcebergFlushHandler,
 } from './flush-handler'
+
+// ============================================================================
+// Advanced API (Full @dotdo/iceberg)
+// ============================================================================
+
+// Core classes from @dotdo/iceberg
+export {
+  ManifestGenerator,
+  ManifestListGenerator,
+  TableMetadataBuilder,
+  SnapshotBuilder,
+  SnapshotManager,
+  generateUUID,
+} from './adapter'
+
+// Type conversion utilities
+export {
+  toLegacySchema,
+  fromLegacySchema,
+  toLegacyTableMetadata,
+  fromLegacyTableMetadata,
+} from './adapter'
+
+// Re-export full @dotdo/iceberg types for advanced usage
+export type {
+  TableMetadata,
+  Snapshot,
+  ManifestFile,
+  DataFile,
+  PartitionSpec,
+  SortOrder,
+} from './adapter'
+
+// ============================================================================
+// Full @dotdo/iceberg Re-exports
+// ============================================================================
+
+// Re-export everything from @dotdo/iceberg for advanced users
+// This allows: import { SchemaEvolutionBuilder } from 'gitx.do/iceberg'
+export * as iceberg from '@dotdo/iceberg'
