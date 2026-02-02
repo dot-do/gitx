@@ -1292,7 +1292,8 @@ export class SqliteObjectStore implements BasicObjectStore {
       // Commit transaction
       this.storage.sql.exec('COMMIT')
     } catch (error) {
-      // Rollback SQL transaction - cache was not modified, so no cache rollback needed
+      // Rollback SQL transaction - LRU cache and bloom filter are updated only
+      // after successful commit below, so no in-memory state needs rollback.
       this.storage.sql.exec('ROLLBACK')
 
       this.log('error', `Batch write failed, transaction rolled back`, error)

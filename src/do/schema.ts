@@ -169,6 +169,18 @@ CREATE TABLE IF NOT EXISTS exec (
   updated_at INTEGER
 );
 
+-- Branch protection rules
+CREATE TABLE IF NOT EXISTS branch_protection (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pattern TEXT NOT NULL UNIQUE,
+  required_reviews INTEGER NOT NULL DEFAULT 0,
+  prevent_force_push INTEGER NOT NULL DEFAULT 1,
+  prevent_deletion INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type);
 CREATE INDEX IF NOT EXISTS idx_wal_flushed ON wal(flushed);
@@ -181,6 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_git_content_status ON git_content(status);
 CREATE INDEX IF NOT EXISTS idx_git_content_file_id ON git_content(file_id);
 CREATE INDEX IF NOT EXISTS idx_exec_name ON exec(name);
 CREATE INDEX IF NOT EXISTS idx_exec_enabled ON exec(enabled);
+CREATE INDEX IF NOT EXISTS idx_branch_protection_pattern ON branch_protection(pattern);
+CREATE INDEX IF NOT EXISTS idx_branch_protection_enabled ON branch_protection(enabled);
 `
 
 /**
@@ -259,6 +273,20 @@ CREATE TABLE IF NOT EXISTS write_buffer_wal (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_write_buffer_wal_sha ON write_buffer_wal(sha);
+
+-- Branch protection rules
+CREATE TABLE IF NOT EXISTS branch_protection (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pattern TEXT NOT NULL UNIQUE,
+  required_reviews INTEGER NOT NULL DEFAULT 0,
+  prevent_force_push INTEGER NOT NULL DEFAULT 1,
+  prevent_deletion INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_branch_protection_pattern ON branch_protection(pattern);
+CREATE INDEX IF NOT EXISTS idx_branch_protection_enabled ON branch_protection(enabled);
 `
 
 /**

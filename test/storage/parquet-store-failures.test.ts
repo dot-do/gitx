@@ -280,9 +280,13 @@ describe('ParquetStore — R2 failure injection', () => {
       let caught = false
       try {
         await store.getObject(sha)
-      } catch (err: any) {
+      } catch (err: unknown) {
         caught = true
-        expect(err.message).toBe('connection reset')
+        if (err instanceof Error) {
+          expect(err.message).toBe('connection reset')
+        } else {
+          throw new Error('Expected an Error instance')
+        }
       }
       expect(caught).toBe(true)
     })

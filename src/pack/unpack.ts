@@ -245,20 +245,26 @@ export async function* iteratePackfile(
     offsetMap.set(entry.offset, entry)
   }
 
-  for (const entry of entries) {
-    const resolved = await resolveObject(
-      entry,
-      offsetMap,
-      options.resolveExternalBase,
-      maxDeltaDepth,
-      0
-    )
-    yield {
-      sha: resolved.sha,
-      type: resolved.type,
-      data: resolved.data,
-      offset: entry.offset,
+  try {
+    for (const entry of entries) {
+      const resolved = await resolveObject(
+        entry,
+        offsetMap,
+        options.resolveExternalBase,
+        maxDeltaDepth,
+        0
+      )
+      yield {
+        sha: resolved.sha,
+        type: resolved.type,
+        data: resolved.data,
+        offset: entry.offset,
+      }
     }
+  } finally {
+    // Clean up references on early termination (break, return, throw)
+    // to allow garbage collection of potentially large data structures
+    offsetMap.clear()
   }
 }
 

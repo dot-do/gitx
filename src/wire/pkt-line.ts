@@ -358,25 +358,30 @@ export function decodePktLine(input: PktLineInput): DecodedPktLine {
     return { data: null, type: 'delim', bytesRead: PKT_LINE_LENGTH_SIZE }
   }
 
+  if (hexLength === RESPONSE_END_PKT) {
+    return { data: null, type: 'flush', bytesRead: PKT_LINE_LENGTH_SIZE }
+  }
+
   // Validate hex length contains only valid hex characters before parsing
   // This prevents unexpected behavior from parseInt with invalid input
   if (!/^[0-9a-fA-F]{4}$/.test(hexLength)) {
-    return { data: null, type: 'incomplete', bytesRead: 0 }
+    throw new Error(`Invalid pkt-line length prefix: ${JSON.stringify(hexLength)}`)
   }
 
   // Parse the length - early validation of packet size
   const length = parseInt(hexLength, 16)
 
+  // SECURITY: Reject invalid lengths immediately.
+  // Values 1-3 are not valid data packet lengths (0 is flush, 1 is delim, 2 is response-end,
+  // and 3 cannot encode any data since the prefix alone is 4 bytes).
+  if (length > 0 && length < PKT_LINE_LENGTH_SIZE) {
+    throw new Error(`Invalid pkt-line length: ${length} (must be 0 or >= ${PKT_LINE_LENGTH_SIZE})`)
+  }
+
   // SECURITY: Validate packet size immediately after parsing to prevent DoS attacks
   // This check must happen BEFORE any data processing to reject oversized packets early
   if (length > MAX_PKT_LINE_SIZE) {
     throw new Error(`Packet too large: ${length} bytes exceeds maximum ${MAX_PKT_LINE_SIZE}`)
-  }
-
-  // Length must be at least PKT_LINE_LENGTH_SIZE (for just the prefix)
-  // Values 0-3 are reserved for special packets (0000=flush, 0001=delim, 0002=response-end)
-  if (length < PKT_LINE_LENGTH_SIZE) {
-    return { data: null, type: 'incomplete', bytesRead: 0 }
   }
 
   // Check if we have enough data

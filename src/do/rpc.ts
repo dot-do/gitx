@@ -1181,6 +1181,10 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
       cancel() {
         cancelled = true
       },
+      return() {
+        cancelled = true
+        return Promise.resolve({ done: true as const, value: undefined })
+      },
       [Symbol.asyncIterator]() {
         return this
       },

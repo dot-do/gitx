@@ -439,8 +439,6 @@ export class BloomCache {
   async add(sha: string, type: string, size: number): Promise<void> {
     await this.initialize()
 
-    this.filter.add(sha)
-
     if (this.options.enableExactCache) {
       const now = Date.now()
       this.storage.sql.exec(
@@ -463,6 +461,9 @@ export class BloomCache {
         )
       }
     }
+
+    // Update in-memory bloom filter AFTER SQL succeeds to ensure consistency on rollback
+    this.filter.add(sha)
   }
 
   /**
@@ -470,10 +471,6 @@ export class BloomCache {
    */
   async addBatch(items: Array<{ sha: string; type: string; size: number }>): Promise<void> {
     await this.initialize()
-
-    for (const item of items) {
-      this.filter.add(item.sha)
-    }
 
     if (this.options.enableExactCache) {
       const now = Date.now()
@@ -490,6 +487,12 @@ export class BloomCache {
         this.storage.sql.exec('ROLLBACK')
         throw e
       }
+    }
+
+    // Update in-memory bloom filter AFTER SQL transaction succeeds
+    // to ensure bloom state is not polluted on transaction rollback
+    for (const item of items) {
+      this.filter.add(item.sha)
     }
   }
 

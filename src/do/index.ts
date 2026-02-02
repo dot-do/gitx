@@ -334,6 +334,30 @@ export {
 }
 
 // ============================================================================
+// Branch Protection Imports and Exports
+// ============================================================================
+
+import {
+  BranchProtectionManager,
+  checkBranchProtection,
+  matchesProtectionPattern,
+  type BranchProtectionRule,
+  type BranchProtectionInput,
+  type ProtectionCheckResult,
+  type RefUpdateForProtection,
+} from './branch-protection'
+
+export {
+  BranchProtectionManager,
+  checkBranchProtection,
+  matchesProtectionPattern,
+  type BranchProtectionRule,
+  type BranchProtectionInput,
+  type ProtectionCheckResult,
+  type RefUpdateForProtection,
+}
+
+// ============================================================================
 // OAuth.do Integration Imports and Exports
 // ============================================================================
 

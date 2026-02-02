@@ -23,6 +23,8 @@
 import type { ObjectType } from '../types/objects'
 import type { DurableObjectStorage } from './types'
 import type { RefLog, RefLogEntry } from '../delta/ref-log'
+import type { BranchProtectionRule, RefUpdateForProtection } from '../do/branch-protection'
+import { checkBranchProtection } from '../do/branch-protection'
 
 // ============================================================================
 // Types
@@ -87,6 +89,8 @@ export interface PushTransactionOptions {
   orphanCleanup?: OrphanCleanupDelegate
   /** Optional RefLog for atomic logging of ref changes. */
   refLog?: RefLog
+  /** Optional branch protection rules to enforce during ref updates. */
+  branchProtectionRules?: BranchProtectionRule[]
   /**
    * Maximum buffer size in bytes. When the buffer exceeds this limit,
    * bufferObject() will throw a BufferOverflowError.
@@ -149,6 +153,7 @@ export class PushTransaction {
   private objectStore: ObjectStorageDelegate
   private orphanCleanup?: OrphanCleanupDelegate
   private refLog?: RefLog
+  private branchProtectionRules: BranchProtectionRule[]
   private maxBufferBytes: number
   private buffer: BufferedPushObject[] = []
   private flushedShas: string[] = []
@@ -170,6 +175,7 @@ export class PushTransaction {
   ) {
     this.storage = storage
     this.objectStore = objectStore
+    this.branchProtectionRules = []
     this.maxBufferBytes = Infinity
 
     // Support both new options interface and legacy single-argument cleanup delegate
@@ -181,6 +187,7 @@ export class PushTransaction {
         // New: PushTransactionOptions
         this.orphanCleanup = optionsOrCleanup.orphanCleanup
         this.refLog = optionsOrCleanup.refLog
+        this.branchProtectionRules = optionsOrCleanup.branchProtectionRules ?? []
         if (optionsOrCleanup.maxBufferBytes !== undefined) {
           this.maxBufferBytes = optionsOrCleanup.maxBufferBytes
         }
@@ -289,6 +296,35 @@ export class PushTransaction {
     this._phase = 'updating_refs'
     const refResults: RefUpdateResult[] = []
     const failedRefShas: string[] = []
+
+    // Pre-validation: Check branch protection rules before any writes
+    if (this.branchProtectionRules.length > 0) {
+      for (const cmd of commands) {
+        const update: RefUpdateForProtection = {
+          refName: cmd.refName,
+          oldSha: cmd.oldSha,
+          newSha: cmd.newSha,
+          // Force push detection: non-create, non-delete updates where old != new
+          // The caller can provide more accurate force-push info via options in the future
+          isForcePush: false,
+        }
+        const check = checkBranchProtection(update, this.branchProtectionRules)
+        if (!check.allowed) {
+          this._phase = 'failed'
+          return {
+            success: false,
+            refResults: commands.map((c) => ({
+              refName: c.refName,
+              success: false,
+              error: c.refName === cmd.refName
+                ? check.reason ?? 'branch protection check failed'
+                : 'atomic push failed: branch protection violation on another ref',
+            })),
+            orphanedShas: [],
+          }
+        }
+      }
+    }
 
     // Pre-validation: Check that all target objects exist before starting transaction
     for (const cmd of commands) {
