@@ -11,6 +11,9 @@
  * - **Tree Operations**: Build and diff tree objects
  * - **Traversal Operations**: Walk commit graphs, find ancestors
  * - **Merge Base Operations**: Find common ancestors for merging
+ * - **Blame Operations**: Line-by-line file attribution
+ * - **Branch Operations**: Create, delete, rename, checkout branches
+ * - **Tag Operations**: Create and manage tags
  *
  * @module ops
  *
@@ -21,7 +24,10 @@
  *   buildTreeFromIndex,
  *   diffTrees,
  *   walkCommits,
- *   findMergeBase
+ *   findMergeBase,
+ *   blame,
+ *   createBranch,
+ *   createAnnotatedTag
  * } from '@dotdo/gitx/ops'
  * ```
  */
@@ -150,8 +156,10 @@ export {
 // =============================================================================
 
 export {
-  // Traversal
+  // Walker class
   CommitWalker,
+
+  // Generator function
   walkCommits,
 
   // Ancestor functions
@@ -176,6 +184,7 @@ export {
   type TraversalOptions,
   type RevisionRange,
   type TraversalCommit,
+  type ExtendedCommitProvider,
 } from './commit-traversal'
 
 // =============================================================================
@@ -203,3 +212,132 @@ export {
   type ForkPointResult,
   type AncestorCheckResult,
 } from './merge-base'
+
+// =============================================================================
+// Blame Operations
+// =============================================================================
+
+export {
+  // Main blame function
+  blame,
+  blameFile,
+  blameLine,
+  blameRange,
+  getBlameForCommit,
+
+  // Rename tracking
+  trackContentAcrossRenames,
+  detectRenames as detectBlameRenames,
+
+  // History building
+  buildBlameHistory,
+
+  // Formatting
+  formatBlame,
+  parseBlameOutput,
+
+  // Types
+  type BlameStorage,
+  type BlameOptions,
+  type BlameLineInfo,
+  type BlameCommitInfo,
+  type BlameEntry,
+  type BlameResult,
+  type BlameFormatOptions,
+  type PathHistoryEntry,
+  type BlameHistoryEntry,
+  type BlameCommitObject,
+  type BlameTreeObject,
+} from './blame'
+
+// =============================================================================
+// Branch Operations
+// =============================================================================
+
+export {
+  // Constants
+  BRANCH_REF_PREFIX,
+  REMOTE_REF_PREFIX,
+
+  // Validation
+  isValidBranchName,
+  normalizeBranchName,
+
+  // Branch management
+  createBranch,
+  deleteBranch,
+  listBranches,
+  renameBranch,
+  checkoutBranch,
+  getCurrentBranch,
+  getBranchInfo,
+  branchExists,
+
+  // Tracking
+  setBranchTracking,
+  getBranchTracking,
+  removeBranchTracking,
+
+  // Default branch
+  getDefaultBranch,
+  setDefaultBranch,
+
+  // Types
+  type RefStore,
+  type BranchOptions,
+  type BranchCreateResult,
+  type BranchDeleteOptions,
+  type BranchDeleteResult,
+  type BranchListOptions,
+  type BranchInfo,
+  type TrackingInfo,
+  type BranchRenameOptions,
+  type BranchRenameResult,
+  type CheckoutOptions,
+  type CheckoutResult,
+  type SetTrackingResult,
+  type RemoveTrackingResult,
+} from './branch'
+
+// =============================================================================
+// Tag Operations
+// =============================================================================
+
+export {
+  // Tag creation
+  createLightweightTag,
+  createAnnotatedTag,
+  buildTagObject,
+
+  // Tag management
+  deleteTag,
+  listTags,
+  getTag,
+
+  // Tag verification
+  verifyTag,
+  isAnnotatedTag,
+  getTagTarget,
+  getTagTagger,
+  resolveTagToCommit,
+
+  // Parsing and formatting
+  parseTagObject,
+  formatTagMessage,
+
+  // Types
+  type TagOptions,
+  type SigningOptions as TagSigningOptions,
+  type AnnotatedTagOptions,
+  type TagResult,
+  type TagListOptions,
+  type TagListEntry,
+  type TagVerifyOptions,
+  type TagVerifyResult,
+  type TagInfo,
+  type DeleteTagResult,
+  type DeleteTagOptions,
+  type TagObjectStore,
+  type TagObject,
+  type Author as TaggerAuthor,
+} from './tag'
