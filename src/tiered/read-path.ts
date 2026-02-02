@@ -802,8 +802,9 @@ export class TieredReader implements TieredObjectStore {
             latencyMs: performance.now() - startTime
           }
         }
-      } catch {
+      } catch (error) {
         // Hot tier failed, continue to next tier
+        console.debug(`[TieredReader] read: hot tier failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       }
     }
 
@@ -820,8 +821,9 @@ export class TieredReader implements TieredObjectStore {
             latencyMs: performance.now() - startTime
           }
         }
-      } catch {
+      } catch (error) {
         // Warm tier failed, continue to cold tier
+        console.debug(`[TieredReader] read: warm tier failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       }
     }
 
@@ -838,8 +840,9 @@ export class TieredReader implements TieredObjectStore {
             latencyMs: performance.now() - startTime
           }
         }
-      } catch {
+      } catch (error) {
         // Cold tier failed
+        console.debug(`[TieredReader] read: cold tier failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       }
     }
 
@@ -876,7 +879,8 @@ export class TieredReader implements TieredObjectStore {
   async readFromHot(sha: string): Promise<StoredObject | null> {
     try {
       return await this.hotBackend.get(sha)
-    } catch {
+    } catch (error) {
+      console.debug(`[TieredReader] readFromHot failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       return null
     }
   }
@@ -904,7 +908,8 @@ export class TieredReader implements TieredObjectStore {
   async readFromWarm(sha: string): Promise<StoredObject | null> {
     try {
       return await this.warmBackend.get(sha)
-    } catch {
+    } catch (error) {
+      console.debug(`[TieredReader] readFromWarm failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       return null
     }
   }
@@ -931,7 +936,8 @@ export class TieredReader implements TieredObjectStore {
   async readFromCold(sha: string): Promise<StoredObject | null> {
     try {
       return await this.coldBackend.get(sha)
-    } catch {
+    } catch (error) {
+      console.debug(`[TieredReader] readFromCold failed for ${sha}:`, error instanceof Error ? error.message : String(error))
       return null
     }
   }
@@ -1029,8 +1035,9 @@ export class TieredReader implements TieredObjectStore {
     try {
       await this.hotBackend.put(sha, object)
       return true
-    } catch {
-      // Promotion failed, but we still have the object
+    } catch (error) {
+      // Promotion failed, but we still have the object from the original tier
+      console.debug(`[TieredReader] tryPromote: failed to promote ${sha} to hot tier:`, error instanceof Error ? error.message : String(error))
       return false
     }
   }

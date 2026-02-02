@@ -19,6 +19,7 @@ import type {
 } from './types'
 import type { R2DataCatalog } from './catalog'
 import { ParquetSchema, ParquetFieldType } from '../../tiered/parquet-writer'
+import { generateSnapshotId } from '../../iceberg/adapter'
 
 // ============================================================================
 // Types
@@ -159,8 +160,8 @@ export class IcebergTableManager {
   ): Promise<IcebergSnapshot> {
     const metadata = await this.catalog.getTable(namespace, table)
 
-    // Generate new snapshot ID
-    const snapshotId = Date.now()
+    // Generate new snapshot ID using collision-resistant algorithm
+    const snapshotId = generateSnapshotId()
     const sequenceNumber = metadata.last_sequence_number + 1
 
     // Calculate summary statistics

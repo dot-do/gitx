@@ -169,8 +169,12 @@ export class PushTransaction {
    *
    * This method orchestrates the full transaction lifecycle:
    * 1. Flush all buffered objects to storage
-   * 2. Update refs in SQLite with compare-and-swap semantics
-   * 3. On failure, schedule cleanup of orphaned objects
+   * 2. Update refs in SQLite within a SINGLE transaction (atomic)
+   * 3. On failure, the entire transaction is rolled back
+   * 4. On success, schedule cleanup of any orphaned objects
+   *
+   * The key invariant is: **all ref updates succeed or none do**.
+   * This ensures push operations are truly atomic.
    *
    * @param commands - Ref update commands to apply after objects are flushed
    * @returns Transaction result with per-ref outcomes and orphaned SHAs
@@ -196,89 +200,162 @@ export class PushTransaction {
       }
     }
 
-    // Phase 3: Update refs atomically
+    // Handle empty commands case - no transaction needed
+    if (commands.length === 0) {
+      this._phase = 'completed'
+      return {
+        success: true,
+        refResults: [],
+        orphanedShas: [],
+      }
+    }
+
+    // Phase 3: Update refs atomically in a SINGLE transaction
+    // All refs are validated and updated together - if any fail, all are rolled back
     this._phase = 'updating_refs'
     const refResults: RefUpdateResult[] = []
     const failedRefShas: string[] = []
 
+    // Pre-validation: Check that all target objects exist before starting transaction
     for (const cmd of commands) {
-      try {
+      const isDelete = cmd.newSha === ZERO_SHA
+      if (!isDelete) {
+        const exists = await this.objectStore.hasObject(cmd.newSha)
+        if (!exists) {
+          // Object validation failed - fail the entire push
+          this._phase = 'failed'
+          return {
+            success: false,
+            refResults: commands.map((c) => ({
+              refName: c.refName,
+              success: false,
+              error: c.refName === cmd.refName
+                ? `target object ${cmd.newSha} not found`
+                : 'atomic push failed: validation error on another ref',
+            })),
+            orphanedShas: [],
+          }
+        }
+      }
+    }
+
+    // Begin the atomic transaction for ALL ref updates
+    this.storage.sql.exec('BEGIN TRANSACTION')
+    try {
+      // Validate all refs first (within the transaction for consistency)
+      const validationErrors: Map<string, string> = new Map()
+
+      for (const cmd of commands) {
         const isDelete = cmd.newSha === ZERO_SHA
         const isCreate = cmd.oldSha === ZERO_SHA
 
-        // For non-delete operations, verify the target object exists
-        if (!isDelete) {
-          const exists = await this.objectStore.hasObject(cmd.newSha)
-          if (!exists) {
-            refResults.push({
-              refName: cmd.refName,
-              success: false,
-              error: `target object ${cmd.newSha} not found`,
-            })
-            continue
+        const existing = this.storage.sql.exec(
+          'SELECT target FROM refs WHERE name = ?',
+          cmd.refName
+        ).toArray() as { target: string }[]
+        const currentSha =
+          existing.length > 0 ? existing[0]!.target : ZERO_SHA
+
+        // Verify old SHA matches
+        if (currentSha !== cmd.oldSha) {
+          validationErrors.set(
+            cmd.refName,
+            isCreate
+              ? 'lock failed: ref already exists'
+              : 'lock failed: ref has been updated'
+          )
+          if (!isDelete) {
+            failedRefShas.push(cmd.newSha)
           }
         }
+      }
 
-        // Compare-and-swap within a SQLite transaction
-        this.storage.sql.exec('BEGIN TRANSACTION')
-        try {
-          const existing = this.storage.sql.exec(
-            'SELECT target FROM refs WHERE name = ?',
+      // If any validation failed, rollback and report all as failed
+      if (validationErrors.size > 0) {
+        this.storage.sql.exec('ROLLBACK')
+        this._phase = 'failed'
+
+        // Mark all refs as failed (atomic semantics)
+        for (const cmd of commands) {
+          const specificError = validationErrors.get(cmd.refName)
+          refResults.push({
+            refName: cmd.refName,
+            success: false,
+            error: specificError || 'atomic push failed: validation error on another ref',
+          })
+        }
+
+        const orphanedShas = this.identifyOrphanedShas(refResults, commands)
+        if (orphanedShas.length > 0 && this.orphanCleanup) {
+          console.warn(
+            `[PushTransaction] ${orphanedShas.length} potentially orphaned objects after atomic push failure:`,
+            orphanedShas
+          )
+          this.orphanCleanup.scheduleOrphanCleanup(orphanedShas)
+        }
+
+        return {
+          success: false,
+          refResults,
+          orphanedShas,
+        }
+      }
+
+      // All validations passed - apply all updates
+      for (const cmd of commands) {
+        const isDelete = cmd.newSha === ZERO_SHA
+
+        if (isDelete) {
+          this.storage.sql.exec(
+            'DELETE FROM refs WHERE name = ?',
             cmd.refName
-          ).toArray() as { target: string }[]
-          const currentSha =
-            existing.length > 0 ? existing[0]!.target : ZERO_SHA
-
-          // Verify old SHA matches
-          if (currentSha !== cmd.oldSha) {
-            this.storage.sql.exec('ROLLBACK')
-            refResults.push({
-              refName: cmd.refName,
-              success: false,
-              error: isCreate
-                ? 'lock failed: ref already exists'
-                : 'lock failed: ref has been updated',
-            })
-            // Track that the new SHA's objects might be orphaned
-            if (!isDelete) {
-              failedRefShas.push(cmd.newSha)
-            }
-            continue
-          }
-
-          // Apply the update
-          if (isDelete) {
-            this.storage.sql.exec(
-              'DELETE FROM refs WHERE name = ?',
-              cmd.refName
-            )
-          } else {
-            this.storage.sql.exec(
-              'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
-              cmd.refName,
-              cmd.newSha.toLowerCase(),
-              'sha',
-              Date.now()
-            )
-          }
-
-          this.storage.sql.exec('COMMIT')
-          refResults.push({ refName: cmd.refName, success: true })
-        } catch (txError) {
-          try {
-            this.storage.sql.exec('ROLLBACK')
-          } catch {
-            // Rollback may fail if transaction was already rolled back
-          }
-          throw txError
+          )
+        } else {
+          this.storage.sql.exec(
+            'INSERT OR REPLACE INTO refs (name, target, type, updated_at) VALUES (?, ?, ?, ?)',
+            cmd.refName,
+            cmd.newSha.toLowerCase(),
+            'sha',
+            Date.now()
+          )
         }
-      } catch (error) {
-        const msg =
-          error instanceof Error ? error.message : 'ref update failed'
-        refResults.push({ refName: cmd.refName, success: false, error: msg })
-        if (cmd.newSha !== ZERO_SHA) {
-          failedRefShas.push(cmd.newSha)
-        }
+        refResults.push({ refName: cmd.refName, success: true })
+      }
+
+      // Commit the entire transaction
+      this.storage.sql.exec('COMMIT')
+    } catch (txError) {
+      // Transaction error - rollback everything
+      try {
+        this.storage.sql.exec('ROLLBACK')
+      } catch (rollbackError) {
+        // Rollback may fail if transaction was already rolled back
+        console.debug('[PushTransaction] rollback failed (may already be rolled back):', rollbackError instanceof Error ? rollbackError.message : String(rollbackError))
+      }
+
+      this._phase = 'failed'
+      const msg = txError instanceof Error ? txError.message : 'transaction failed'
+
+      // Mark all refs as failed
+      const failedResults = commands.map((cmd) => ({
+        refName: cmd.refName,
+        success: false,
+        error: `atomic push failed: ${msg}`,
+      }))
+      const orphanedShas = this.identifyOrphanedShas(failedResults, commands)
+
+      if (orphanedShas.length > 0 && this.orphanCleanup) {
+        console.warn(
+          `[PushTransaction] ${orphanedShas.length} potentially orphaned objects after transaction error:`,
+          orphanedShas
+        )
+        this.orphanCleanup.scheduleOrphanCleanup(orphanedShas)
+      }
+
+      return {
+        success: false,
+        refResults: failedResults,
+        orphanedShas,
       }
     }
 

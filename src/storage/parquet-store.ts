@@ -265,8 +265,9 @@ export class ParquetStore implements CASBackend {
         for (const key of sourceKeys) {
           try {
             await this.r2.delete(key)
-          } catch {
+          } catch (error) {
             // Best-effort cleanup; the key may already be gone
+            console.warn(`[ParquetStore] compaction cleanup: failed to delete source key ${key}:`, error instanceof Error ? error.message : String(error))
           }
         }
 
@@ -288,8 +289,9 @@ export class ParquetStore implements CASBackend {
         // Roll back by deleting the (possibly partial) target file
         try {
           await this.r2.delete(row.target_key)
-        } catch {
+        } catch (error) {
           // Target may not exist if compaction failed before the R2 put
+          console.warn(`[ParquetStore] compaction recovery: failed to delete partial target ${row.target_key}:`, error instanceof Error ? error.message : String(error))
         }
 
         // Remove journal entry - source files are still valid
@@ -627,8 +629,9 @@ export class ParquetStore implements CASBackend {
             }
           }
         }
-      } catch {
-        // Skip unreadable files
+      } catch (error) {
+        // Skip unreadable files but log for debugging
+        console.warn(`[ParquetStore] compaction: failed to read parquet file ${key}:`, error instanceof Error ? error.message : String(error))
       }
     }
 

@@ -442,6 +442,46 @@ export interface LockFileContent {
 
   /** Worker/process identifier for debugging lock contention */
   holder?: string
+
+  /** Number of times this lock has been stolen from expired holders */
+  stolenCount?: number
+
+  /** Previous holder's lockId (set when lock is stolen) */
+  previousLockId?: string
+}
+
+/**
+ * Options for acquiring a distributed lock.
+ *
+ * @description
+ * Configures lock acquisition behavior including TTL, holder identification,
+ * and lock stealing behavior.
+ */
+export interface DistributedLockOptions {
+  /**
+   * Time-to-live in milliseconds after which the lock expires.
+   * This prevents deadlocks from crashed processes.
+   * @default 30000 (30 seconds)
+   */
+  ttlMs?: number
+
+  /** Worker/process identifier for debugging lock contention */
+  holder?: string
+
+  /**
+   * Whether to allow stealing expired locks.
+   * When true and an existing lock has expired, the new acquirer can steal it.
+   * @default true
+   */
+  allowStealing?: boolean
+
+  /**
+   * Grace period in milliseconds before considering a lock stealable.
+   * Even if a lock is expired, wait this additional time before stealing.
+   * Useful to prevent race conditions in clock skew scenarios.
+   * @default 0
+   */
+  stealingGracePeriodMs?: number
 }
 
 /**
@@ -957,8 +997,9 @@ export class R2PackStorage {
           this._buildKey(`packs/${packId}.idx`),
           manifestKey
         ])
-      } catch {
-        // Ignore cleanup errors
+      } catch (cleanupError) {
+        // Log cleanup errors but don't fail - original error is more important
+        console.warn(`[R2PackStorage] storePackfile cleanup failed for ${packId}:`, cleanupError instanceof Error ? cleanupError.message : String(cleanupError))
       }
       throw error
     }
@@ -995,7 +1036,8 @@ export class R2PackStorage {
     try {
       const text = await manifestObj.text()
       return JSON.parse(text) as PackManifest
-    } catch {
+    } catch (error) {
+      console.warn(`[R2PackStorage] getPackManifest: failed to parse manifest for ${packId}:`, error instanceof Error ? error.message : String(error))
       return null
     }
   }
@@ -1314,8 +1356,9 @@ export class R2PackStorage {
         // Rebuild without this pack
         await this.rebuildMultiPackIndex()
       }
-    } catch {
-      // Ignore errors when updating multi-pack index
+    } catch (error) {
+      // Log but don't fail - multi-pack index update is not critical
+      console.warn(`[R2PackStorage] deletePackfile: failed to update multi-pack index after deleting ${packId}:`, error instanceof Error ? error.message : String(error))
     }
 
     return true
@@ -1477,8 +1520,9 @@ export class R2PackStorage {
         try {
           await this._bucket.delete(filesToDelete)
           cleanedUp.push(packId)
-        } catch {
-          // Ignore errors during cleanup
+        } catch (error) {
+          // Log but continue cleanup of other packs
+          console.warn(`[R2PackStorage] cleanupOrphanedStagingFiles: failed to delete incomplete pack files for ${packId}:`, error instanceof Error ? error.message : String(error))
         }
       } else {
         // Pack is complete - just clean up staging files
@@ -1490,8 +1534,9 @@ export class R2PackStorage {
         try {
           await this._bucket.delete(stagingFiles)
           cleanedUp.push(packId)
-        } catch {
-          // Ignore errors during cleanup
+        } catch (error) {
+          // Log but continue cleanup of other packs
+          console.warn(`[R2PackStorage] cleanupOrphanedStagingFiles: failed to delete staging files for ${packId}:`, error instanceof Error ? error.message : String(error))
         }
       }
     }
@@ -1619,10 +1664,13 @@ export class R2PackStorage {
    * @description
    * Uses R2's conditional write feature (ETags) to implement distributed locking.
    * Locks automatically expire after the TTL to prevent deadlocks.
+   * If an existing lock is expired (and optionally past the grace period),
+   * the new acquirer can "steal" the lock atomically.
    *
    * @param resource - Resource identifier to lock
-   * @param ttlMs - Time-to-live in milliseconds
+   * @param ttlMs - Time-to-live in milliseconds (default: 30000)
    * @param holder - Optional identifier for the lock holder (for debugging)
+   * @param options - Additional options for lock acquisition
    *
    * @returns LockHandle if acquired, null if lock is held by another process
    *
@@ -1639,19 +1687,36 @@ export class R2PackStorage {
    *   console.log('Could not acquire lock - resource is busy');
    * }
    * ```
+   *
+   * @example
+   * ```typescript
+   * // With lock stealing options
+   * const handle = await storage.acquireDistributedLock('my-resource', 30000, 'worker-1', {
+   *   allowStealing: true,
+   *   stealingGracePeriodMs: 1000 // Wait 1 second after expiry before stealing
+   * });
+   * ```
    */
-  async acquireDistributedLock(resource: string, ttlMs: number = 30000, holder?: string): Promise<LockHandle | null> {
+  async acquireDistributedLock(
+    resource: string,
+    ttlMs: number = 30000,
+    holder?: string,
+    options?: { allowStealing?: boolean; stealingGracePeriodMs?: number }
+  ): Promise<LockHandle | null> {
     const lockKey = this._buildKey(`locks/${resource}.lock`)
     const now = Date.now()
     const lockId = generateLockId()
     const expiresAt = now + ttlMs
+    const allowStealing = options?.allowStealing ?? true
+    const stealingGracePeriodMs = options?.stealingGracePeriodMs ?? 0
 
     const lockContent: LockFileContent = {
       lockId,
       resource,
       expiresAt,
       acquiredAt: now,
-      holder
+      holder,
+      stolenCount: 0
     }
 
     const lockData = new TextEncoder().encode(JSON.stringify(lockContent))
@@ -1668,15 +1733,42 @@ export class R2PackStorage {
             new TextDecoder().decode(new Uint8Array(await existingLockObj.arrayBuffer()))
           ) as LockFileContent
 
+          // Check if lock is still valid (not expired)
           if (existingContent.expiresAt > now) {
             // Lock is still valid, cannot acquire
             return null
           }
 
-          // Lock is expired, try to overwrite with conditional write
+          // Lock is expired - check if we can steal it
+          if (!allowStealing) {
+            // Stealing not allowed, cannot acquire
+            return null
+          }
+
+          // Check grace period for stealing
+          const stealableAt = existingContent.expiresAt + stealingGracePeriodMs
+          if (now < stealableAt) {
+            // Still in grace period, cannot steal yet
+            return null
+          }
+
+          // Lock is expired and past grace period, try to steal it
+          // Create new lock content with stolen metadata
+          const stolenLockContent: LockFileContent = {
+            lockId,
+            resource,
+            expiresAt,
+            acquiredAt: now,
+            holder,
+            stolenCount: (existingContent.stolenCount ?? 0) + 1,
+            previousLockId: existingContent.lockId
+          }
+
+          const stolenLockData = new TextEncoder().encode(JSON.stringify(stolenLockContent))
+
           // Use the existing etag to ensure atomicity
           try {
-            await this._bucket.put(lockKey, lockData, {
+            await this._bucket.put(lockKey, stolenLockData, {
               onlyIf: { etagMatches: existingObj.etag }
             })
 
@@ -1692,12 +1784,14 @@ export class R2PackStorage {
               etag: newObj.etag,
               expiresAt
             }
-          } catch {
+          } catch (error) {
             // Conditional write failed - another process got the lock
+            console.debug(`[R2PackStorage] acquireDistributedLock: conditional write failed for expired lock ${resource} (contention):`, error instanceof Error ? error.message : String(error))
             return null
           }
-        } catch {
+        } catch (error) {
           // Failed to parse lock content, try to clean up and acquire
+          console.warn(`[R2PackStorage] acquireDistributedLock: failed to parse lock content for ${resource}:`, error instanceof Error ? error.message : String(error))
           return null
         }
       }
@@ -1736,8 +1830,153 @@ export class R2PackStorage {
         etag: newObj.etag,
         expiresAt
       }
-    } catch {
+    } catch (error) {
       // Failed to create lock - likely another process created it first
+      console.debug(`[R2PackStorage] acquireDistributedLock: failed to create new lock for ${resource} (contention):`, error instanceof Error ? error.message : String(error))
+      return null
+    }
+  }
+
+  /**
+   * Checks if a lock can be stolen (is expired and past grace period).
+   *
+   * @description
+   * Useful for checking lock status without attempting to acquire it.
+   *
+   * @param resource - Resource identifier to check
+   * @param gracePeriodMs - Grace period after expiry before lock is stealable
+   *
+   * @returns Object with lock status information, or null if no lock exists
+   *
+   * @example
+   * ```typescript
+   * const status = await storage.getLockStatus('my-resource');
+   * if (status?.isStealable) {
+   *   console.log('Lock can be stolen');
+   * }
+   * ```
+   */
+  async getLockStatus(resource: string, gracePeriodMs: number = 0): Promise<{
+    exists: boolean
+    isExpired: boolean
+    isStealable: boolean
+    holder?: string
+    expiresAt?: number
+    stolenCount?: number
+  } | null> {
+    const lockKey = this._buildKey(`locks/${resource}.lock`)
+    const lockObj = await this._bucket.get(lockKey)
+
+    if (!lockObj) {
+      return null
+    }
+
+    try {
+      const content = JSON.parse(
+        new TextDecoder().decode(new Uint8Array(await lockObj.arrayBuffer()))
+      ) as LockFileContent
+
+      const now = Date.now()
+      const isExpired = content.expiresAt <= now
+      const isStealable = isExpired && (content.expiresAt + gracePeriodMs) <= now
+
+      return {
+        exists: true,
+        isExpired,
+        isStealable,
+        holder: content.holder,
+        expiresAt: content.expiresAt,
+        stolenCount: content.stolenCount
+      }
+    } catch (error) {
+      console.warn(`[R2PackStorage] getLockStatus: failed to parse lock for ${resource}:`, error instanceof Error ? error.message : String(error))
+      return null
+    }
+  }
+
+  /**
+   * Force-steals an expired lock, ignoring normal acquisition rules.
+   *
+   * @description
+   * This method will steal a lock even if allowStealing would normally be false.
+   * Use with caution - this is intended for administrative recovery scenarios.
+   *
+   * @param resource - Resource identifier to steal lock for
+   * @param ttlMs - Time-to-live for the new lock
+   * @param holder - Optional identifier for the new lock holder
+   *
+   * @returns LockHandle if stolen successfully, null if lock doesn't exist or isn't expired
+   *
+   * @example
+   * ```typescript
+   * // Administrative recovery: force-steal a stuck lock
+   * const handle = await storage.forceStealExpiredLock('stuck-resource', 30000, 'admin');
+   * if (handle) {
+   *   console.log('Lock stolen successfully');
+   * }
+   * ```
+   */
+  async forceStealExpiredLock(resource: string, ttlMs: number = 30000, holder?: string): Promise<LockHandle | null> {
+    const lockKey = this._buildKey(`locks/${resource}.lock`)
+    const now = Date.now()
+    const existingObj = await this._bucket.head(lockKey)
+
+    if (!existingObj) {
+      return null // No lock to steal
+    }
+
+    const existingLockObj = await this._bucket.get(lockKey)
+    if (!existingLockObj) {
+      return null
+    }
+
+    try {
+      const existingContent = JSON.parse(
+        new TextDecoder().decode(new Uint8Array(await existingLockObj.arrayBuffer()))
+      ) as LockFileContent
+
+      // Only steal if expired
+      if (existingContent.expiresAt > now) {
+        return null // Lock is still valid
+      }
+
+      const lockId = generateLockId()
+      const expiresAt = now + ttlMs
+
+      const stolenLockContent: LockFileContent = {
+        lockId,
+        resource,
+        expiresAt,
+        acquiredAt: now,
+        holder,
+        stolenCount: (existingContent.stolenCount ?? 0) + 1,
+        previousLockId: existingContent.lockId
+      }
+
+      const lockData = new TextEncoder().encode(JSON.stringify(stolenLockContent))
+
+      try {
+        await this._bucket.put(lockKey, lockData, {
+          onlyIf: { etagMatches: existingObj.etag }
+        })
+
+        const newObj = await this._bucket.head(lockKey)
+        if (!newObj) {
+          return null
+        }
+
+        return {
+          resource,
+          lockId,
+          etag: newObj.etag,
+          expiresAt
+        }
+      } catch (error) {
+        console.debug(`[R2PackStorage] forceStealExpiredLock: conditional write failed for ${resource} (contention):`, error instanceof Error ? error.message : String(error))
+        return null
+      }
+    } catch (error) {
+      console.warn(`[R2PackStorage] forceStealExpiredLock: failed to parse existing lock for ${resource}:`, error instanceof Error ? error.message : String(error))
       return null
     }
   }
@@ -1778,8 +2017,9 @@ export class R2PackStorage {
         if (content.lockId === handle.lockId) {
           await this._bucket.delete(lockKey)
         }
-      } catch {
+      } catch (error) {
         // Failed to parse, don't delete to avoid corrupting another process's lock
+        console.debug(`[R2PackStorage] releaseDistributedLock: failed to verify lock ownership for ${handle.resource}:`, error instanceof Error ? error.message : String(error))
       }
     }
   }
@@ -1837,6 +2077,12 @@ export class R2PackStorage {
         return false // We don't own this lock
       }
 
+      // Verify lock hasn't expired - can't refresh an expired lock
+      // (someone else could have already stolen it even if they haven't written yet)
+      if (existingContent.expiresAt <= now) {
+        return false // Lock has expired
+      }
+
       // Create updated lock content
       const updatedContent: LockFileContent = {
         ...existingContent,
@@ -1859,11 +2105,13 @@ export class R2PackStorage {
         }
 
         return true
-      } catch {
+      } catch (error) {
         // Conditional write failed - lock was modified
+        console.debug(`[R2PackStorage] refreshDistributedLock: conditional write failed (lock modified):`, error instanceof Error ? error.message : String(error))
         return false
       }
-    } catch {
+    } catch (error) {
+      console.warn(`[R2PackStorage] refreshDistributedLock: failed to parse lock:`, error instanceof Error ? error.message : String(error))
       return false
     }
   }
@@ -1906,8 +2154,9 @@ export class R2PackStorage {
             await this._bucket.delete(obj.key)
             cleanedCount++
           }
-        } catch {
-          // Invalid lock file, delete it
+        } catch (error) {
+          // Invalid lock file, delete it and log the issue
+          console.warn(`[R2PackStorage] cleanupExpiredLocks: invalid lock file ${obj.key}, deleting:`, error instanceof Error ? error.message : String(error))
           await this._bucket.delete(obj.key)
           cleanedCount++
         }
@@ -2486,4 +2735,118 @@ export async function releasePackLock(
   // This is less safe than using the handle-based release, but works for simple cases
   const lockKey = buildKey(options?.prefix ?? '', `locks/${packId}.lock`)
   await bucket.delete(lockKey)
+}
+
+/**
+ * Gets the status of a lock on a packfile.
+ *
+ * @description
+ * Standalone function for checking lock status without attempting acquisition.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to check
+ * @param options - Options including prefix and grace period
+ *
+ * @returns Lock status information, or null if no lock exists
+ *
+ * @example
+ * ```typescript
+ * const status = await getPackLockStatus(bucket, packId);
+ * if (status?.isExpired) {
+ *   console.log('Lock has expired');
+ * }
+ * if (status?.isStealable) {
+ *   console.log('Lock can be stolen');
+ * }
+ * ```
+ */
+export async function getPackLockStatus(
+  bucket: R2Bucket,
+  packId: string,
+  options?: { prefix?: string; gracePeriodMs?: number }
+): Promise<{
+  exists: boolean
+  isExpired: boolean
+  isStealable: boolean
+  holder?: string
+  expiresAt?: number
+  stolenCount?: number
+} | null> {
+  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+  return storage.getLockStatus(packId, options?.gracePeriodMs)
+}
+
+/**
+ * Force-steals an expired lock on a packfile.
+ *
+ * @description
+ * Standalone function for administrative recovery of stuck locks.
+ * Only works on expired locks - will not steal active locks.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to steal lock for
+ * @param options - Options including prefix, TTL, and holder
+ *
+ * @returns PackLock if stolen successfully, throws if lock is active or doesn't exist
+ *
+ * @throws {R2PackError} With code 'LOCKED' if lock is still active
+ * @throws {R2PackError} With code 'NOT_FOUND' if no lock exists
+ *
+ * @example
+ * ```typescript
+ * // Administrative recovery
+ * try {
+ *   const lock = await forceStealPackLock(bucket, packId, {
+ *     ttl: 30000,
+ *     holder: 'admin-recovery'
+ *   });
+ *   console.log('Lock stolen, proceeding with recovery');
+ * } catch (error) {
+ *   if (error.code === 'LOCKED') {
+ *     console.log('Lock is still active');
+ *   }
+ * }
+ * ```
+ */
+export async function forceStealPackLock(
+  bucket: R2Bucket,
+  packId: string,
+  options?: { prefix?: string; ttl?: number; holder?: string }
+): Promise<PackLock> {
+  const storage = new R2PackStorage({ bucket, prefix: options?.prefix })
+
+  // First check if lock exists and is expired
+  const status = await storage.getLockStatus(packId)
+  if (!status) {
+    throw new R2PackError(`No lock exists for packfile: ${packId}`, 'NOT_FOUND', packId)
+  }
+  if (!status.isExpired) {
+    throw new R2PackError(`Lock is still active for packfile: ${packId}`, 'LOCKED', packId)
+  }
+
+  // Try to steal the lock
+  const ttl = options?.ttl ?? 30000
+  const handle = await storage.forceStealExpiredLock(packId, ttl, options?.holder)
+
+  if (!handle) {
+    throw new R2PackError(`Failed to steal lock for packfile: ${packId}`, 'LOCKED', packId)
+  }
+
+  // Create PackLock interface
+  let released = false
+  return {
+    packId,
+    handle,
+    isHeld: () => !released && handle.expiresAt > Date.now(),
+    release: async () => {
+      if (!released && handle) {
+        await storage.releaseDistributedLock(handle)
+        released = true
+      }
+    },
+    refresh: async () => {
+      if (released || !handle) return false
+      return await storage.refreshDistributedLock(handle, ttl)
+    }
+  }
 }

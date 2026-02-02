@@ -7,6 +7,7 @@ import {
   MultiPackIndex,
   MultiPackIndexEntry,
   R2PackError,
+  LockFileContent,
   uploadPackfile,
   downloadPackfile,
   getPackfileMetadata,
@@ -16,7 +17,9 @@ import {
   parseMultiPackIndex,
   lookupObjectInMultiPack,
   acquirePackLock,
-  releasePackLock
+  releasePackLock,
+  getPackLockStatus,
+  forceStealPackLock
 } from '../../src/storage/r2-pack'
 
 // Sample SHA-1 hashes for testing
@@ -893,6 +896,250 @@ describe('R2 Packfile Storage', () => {
         const lock = await storage.acquireLock(packId)
         expect(lock.isHeld()).toBe(true)
       })
+
+      it('should refresh lock TTL', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        const lock = await storage.acquireLock(packId, { ttl: 100 })
+        const originalExpiresAt = lock.handle?.expiresAt
+
+        // Wait a bit
+        await new Promise(resolve => setTimeout(resolve, 30))
+
+        // Refresh the lock
+        const refreshed = await lock.refresh!()
+        expect(refreshed).toBe(true)
+
+        // New expiration should be later
+        expect(lock.handle?.expiresAt).toBeGreaterThan(originalExpiresAt!)
+      })
+
+      it('should fail to refresh expired lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        const lock = await storage.acquireLock(packId, { ttl: 50 })
+
+        // Wait for TTL to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Refresh should fail
+        const refreshed = await lock.refresh!()
+        expect(refreshed).toBe(false)
+      })
+
+      it('should fail to refresh lock stolen by another process', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        const lock1 = await storage.acquireLock(packId, { ttl: 50 })
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Another process steals the lock
+        const lock2 = await storage.acquireLock(packId, { ttl: 5000 })
+
+        // Original lock refresh should fail
+        const refreshed = await lock1.refresh!()
+        expect(refreshed).toBe(false)
+
+        // New lock should still be held
+        expect(lock2.isHeld()).toBe(true)
+      })
+    })
+
+    describe('Lock stealing', () => {
+      it('should steal expired lock automatically', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // First process acquires lock with short TTL
+        await storage.acquireLock(packId, { ttl: 50, holder: 'process-1' })
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Second process should be able to steal it
+        const lock2 = await storage.acquireLock(packId, { ttl: 5000, holder: 'process-2' })
+        expect(lock2.isHeld()).toBe(true)
+      })
+
+      it('should not steal active lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // First process acquires lock with long TTL
+        await storage.acquireLock(packId, { ttl: 60000, holder: 'process-1' })
+
+        // Second process should not be able to acquire
+        await expect(
+          storage.acquireLock(packId, { holder: 'process-2' })
+        ).rejects.toThrow(R2PackError)
+      })
+
+      it('should track stolen count in lock metadata', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire and let expire
+        await storage.acquireLock(packId, { ttl: 30 })
+        await new Promise(resolve => setTimeout(resolve, 50))
+
+        // Steal lock
+        await storage.acquireLock(packId, { ttl: 30 })
+        await new Promise(resolve => setTimeout(resolve, 50))
+
+        // Steal again
+        await storage.acquireLock(packId, { ttl: 5000 })
+
+        // Check lock status
+        const status = await storage.getLockStatus(packId)
+        expect(status?.stolenCount).toBe(2)
+      })
+
+      it('should respect stealing grace period', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire lock with short TTL
+        const handle = await storage.acquireDistributedLock(packId, 50, 'process-1')
+        expect(handle).not.toBeNull()
+
+        // Wait for lock to expire but not past grace period
+        await new Promise(resolve => setTimeout(resolve, 60))
+
+        // Try to acquire with grace period - should fail
+        const handle2 = await storage.acquireDistributedLock(packId, 5000, 'process-2', {
+          allowStealing: true,
+          stealingGracePeriodMs: 1000
+        })
+        expect(handle2).toBeNull()
+
+        // Wait for grace period to pass
+        await new Promise(resolve => setTimeout(resolve, 1000))
+
+        // Now should succeed
+        const handle3 = await storage.acquireDistributedLock(packId, 5000, 'process-3', {
+          allowStealing: true,
+          stealingGracePeriodMs: 1000
+        })
+        expect(handle3).not.toBeNull()
+      })
+
+      it('should not steal when allowStealing is false', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire lock with short TTL
+        await storage.acquireDistributedLock(packId, 50, 'process-1')
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Try to acquire without stealing - should fail
+        const handle = await storage.acquireDistributedLock(packId, 5000, 'process-2', {
+          allowStealing: false
+        })
+        expect(handle).toBeNull()
+      })
+
+      it('should force-steal expired lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire lock with short TTL
+        await storage.acquireDistributedLock(packId, 50, 'process-1')
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Force steal
+        const handle = await storage.forceStealExpiredLock(packId, 5000, 'admin')
+        expect(handle).not.toBeNull()
+        expect(handle?.expiresAt).toBeGreaterThan(Date.now())
+      })
+
+      it('should not force-steal active lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire lock with long TTL
+        await storage.acquireDistributedLock(packId, 60000, 'process-1')
+
+        // Try to force steal - should fail
+        const handle = await storage.forceStealExpiredLock(packId, 5000, 'admin')
+        expect(handle).toBeNull()
+      })
+
+      it('should return null when force-stealing non-existent lock', async () => {
+        const handle = await storage.forceStealExpiredLock('non-existent-resource', 5000)
+        expect(handle).toBeNull()
+      })
+    })
+
+    describe('Lock status', () => {
+      it('should get lock status for active lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        await storage.acquireLock(packId, { ttl: 60000, holder: 'my-worker' })
+
+        const status = await storage.getLockStatus(packId)
+        expect(status).not.toBeNull()
+        expect(status?.exists).toBe(true)
+        expect(status?.isExpired).toBe(false)
+        expect(status?.isStealable).toBe(false)
+        expect(status?.holder).toBe('my-worker')
+      })
+
+      it('should get lock status for expired lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        await storage.acquireLock(packId, { ttl: 50 })
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        const status = await storage.getLockStatus(packId)
+        expect(status?.isExpired).toBe(true)
+        expect(status?.isStealable).toBe(true)
+      })
+
+      it('should show lock as expired but not stealable during grace period', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        await storage.acquireDistributedLock(packId, 50, 'process-1')
+
+        // Wait for lock to expire
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Check with grace period
+        const status = await storage.getLockStatus(packId, 5000)
+        expect(status?.isExpired).toBe(true)
+        expect(status?.isStealable).toBe(false) // Still in grace period
+      })
+
+      it('should return null for non-existent lock', async () => {
+        const status = await storage.getLockStatus('non-existent-resource')
+        expect(status).toBeNull()
+      })
     })
 
     describe('Concurrent reads', () => {
@@ -1153,6 +1400,86 @@ describe('R2 Packfile Storage', () => {
 
         expect(midx).toBeDefined()
         expect(midx.packIds.length).toBeGreaterThan(0)
+      })
+    })
+
+    describe('getPackLockStatus standalone', () => {
+      it('should get lock status using standalone function', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        await acquirePackLock(bucket as unknown as R2Bucket, packId, { ttl: 60000 })
+
+        const status = await getPackLockStatus(bucket as unknown as R2Bucket, packId)
+
+        expect(status).not.toBeNull()
+        expect(status?.exists).toBe(true)
+        expect(status?.isExpired).toBe(false)
+      })
+
+      it('should return null for non-existent lock', async () => {
+        const status = await getPackLockStatus(bucket as unknown as R2Bucket, 'non-existent')
+
+        expect(status).toBeNull()
+      })
+
+      it('should show expired status', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        await acquirePackLock(bucket as unknown as R2Bucket, packId, { ttl: 50 })
+
+        // Wait for expiry
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        const status = await getPackLockStatus(bucket as unknown as R2Bucket, packId)
+
+        expect(status?.isExpired).toBe(true)
+        expect(status?.isStealable).toBe(true)
+      })
+    })
+
+    describe('forceStealPackLock standalone', () => {
+      it('should steal expired lock using standalone function', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire with short TTL
+        await acquirePackLock(bucket as unknown as R2Bucket, packId, { ttl: 50 })
+
+        // Wait for expiry
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Force steal
+        const lock = await forceStealPackLock(bucket as unknown as R2Bucket, packId, {
+          ttl: 5000,
+          holder: 'admin'
+        })
+
+        expect(lock.isHeld()).toBe(true)
+      })
+
+      it('should throw for active lock', async () => {
+        const packData = createTestPackfile()
+        const indexData = createTestIndexData()
+        const { packId } = await storage.uploadPackfile(packData, indexData)
+
+        // Acquire with long TTL
+        await acquirePackLock(bucket as unknown as R2Bucket, packId, { ttl: 60000 })
+
+        // Try to force steal - should throw
+        await expect(
+          forceStealPackLock(bucket as unknown as R2Bucket, packId)
+        ).rejects.toThrow(R2PackError)
+      })
+
+      it('should throw for non-existent lock', async () => {
+        await expect(
+          forceStealPackLock(bucket as unknown as R2Bucket, 'non-existent')
+        ).rejects.toThrow(R2PackError)
       })
     })
   })

@@ -424,8 +424,9 @@ export class BundleSchemaManager {
       )
       const rows = result.toArray() as Array<{ version: number | null }>
       return rows[0]?.version ?? 0
-    } catch {
-      // Table might not exist yet
+    } catch (error) {
+      // Table might not exist yet - this is expected on first run
+      console.debug('[BundleSchemaManager] schema_migrations table not found, returning version 0:', error instanceof Error ? error.message : String(error))
       return 0
     }
   }
@@ -464,7 +465,8 @@ export class BundleSchemaManager {
       const tableNames = tables.map(t => t.name)
 
       return requiredTables.every(table => tableNames.includes(table))
-    } catch {
+    } catch (error) {
+      console.warn('[BundleSchemaManager] validateSchema failed:', error instanceof Error ? error.message : String(error))
       return false
     }
   }
@@ -480,7 +482,8 @@ export class BundleSchemaManager {
         'SELECT version, description, applied_at FROM schema_migrations ORDER BY version'
       )
       return result.toArray() as Array<{ version: number; description: string; applied_at: number }>
-    } catch {
+    } catch (error) {
+      console.debug('[BundleSchemaManager] getAppliedMigrations failed (table may not exist):', error instanceof Error ? error.message : String(error))
       return []
     }
   }
@@ -498,7 +501,8 @@ export class BundleSchemaManager {
         version
       )
       return result.toArray().length > 0
-    } catch {
+    } catch (error) {
+      console.debug('[BundleSchemaManager] hasVersion check failed (table may not exist):', error instanceof Error ? error.message : String(error))
       return false
     }
   }

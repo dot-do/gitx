@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   R2DataCatalog,
   CatalogError,
+  InvalidRefNameError,
+  validateRefName,
   IcebergTableManager,
   createDataFile,
   createManifestBuilder,
@@ -12,7 +14,7 @@ import {
   generateManifestListName,
 } from '../../src/export/iceberg'
 import { COMMITS_SCHEMA, REFS_SCHEMA, FILES_SCHEMA } from '../../src/export/schemas'
-import type { DataFile, ManifestFile } from '../../src/export/iceberg/types'
+import type { DataFile, ManifestFile, TableUpdate } from '../../src/export/iceberg/types'
 
 // =============================================================================
 // Mock R2 Bucket
@@ -550,6 +552,199 @@ describe('R2DataCatalog', () => {
       expect(bucket.has('analytics/catalog/namespaces.json')).toBe(true)
     })
   })
+
+  describe('update validation', () => {
+    it('should reject update with missing action', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { notAction: 'invalid' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject update with unknown action', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'unknown-action' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject add-schema with invalid schema', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      // Missing fields array
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-schema', schema: { type: 'struct', schema_id: 1 } } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      // Missing type
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-schema', schema: { schema_id: 1, fields: [] } } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      // schema is null
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-schema', schema: null } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject set-current-schema with non-number schema_id', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-current-schema', schema_id: '1' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-current-schema' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject add-partition-spec with invalid spec', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      // Missing spec_id
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-partition-spec', spec: { fields: [] } } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      // Missing fields
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-partition-spec', spec: { spec_id: 1 } } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject add-snapshot with invalid snapshot', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      // Missing required fields
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-snapshot', snapshot: { snapshot_id: 1 } } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      // snapshot is null
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'add-snapshot', snapshot: null } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject set-snapshot-ref with invalid type', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-snapshot-ref', ref_name: 'main', type: 'invalid', snapshot_id: 1 } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject set-snapshot-ref with empty ref_name', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-snapshot-ref', ref_name: '', type: 'branch', snapshot_id: 1 } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject remove-snapshots with non-array snapshot_ids', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'remove-snapshots', snapshot_ids: '1,2,3' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'remove-snapshots', snapshot_ids: [1, '2', 3] } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject set-properties with non-object updates', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-properties', updates: 'invalid' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-properties', updates: ['key', 'value'] } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject remove-properties with non-array removals', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'remove-properties', removals: 'key' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should reject set-location with empty location', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-location', location: '' } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+
+      await expect(
+        catalog.updateTable('gitx', 'commits', [
+          { action: 'set-location', location: 123 } as unknown as TableUpdate,
+        ])
+      ).rejects.toThrow(CatalogError)
+    })
+
+    it('should validate update error includes details', async () => {
+      await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+      try {
+        await catalog.updateTable('gitx', 'commits', [
+          { action: 'add-schema', schema: null } as unknown as TableUpdate,
+        ])
+        expect.fail('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(CatalogError)
+        expect((e as CatalogError).code).toBe('INTERNAL')
+        expect((e as CatalogError).details).toBeDefined()
+        expect((e as CatalogError).details?.update).toBeDefined()
+      }
+    })
+  })
 })
 
 // =============================================================================
@@ -574,6 +769,156 @@ describe('CatalogError', () => {
   it('should accept details', () => {
     const error = new CatalogError('Conflict', 'CONFLICT', { table: 'commits' })
     expect(error.details).toEqual({ table: 'commits' })
+  })
+})
+
+// =============================================================================
+// Ref Name Validation
+// =============================================================================
+
+describe('validateRefName', () => {
+  it('should accept valid ref names', () => {
+    expect(() => validateRefName('main')).not.toThrow()
+    expect(() => validateRefName('feature/my-branch')).not.toThrow()
+    expect(() => validateRefName('refs/heads/main')).not.toThrow()
+    expect(() => validateRefName('v1.0.0')).not.toThrow()
+    expect(() => validateRefName('release-2024-01')).not.toThrow()
+    expect(() => validateRefName('a')).not.toThrow()
+  })
+
+  it('should reject empty ref names', () => {
+    expect(() => validateRefName('')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('')).toThrow(/cannot be empty/)
+  })
+
+  it('should reject ref names starting with a dot', () => {
+    expect(() => validateRefName('.hidden')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('.hidden')).toThrow(/cannot start with a dot/)
+  })
+
+  it('should reject ref names ending with .lock', () => {
+    expect(() => validateRefName('main.lock')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main.lock')).toThrow(/cannot end with .lock/)
+    expect(() => validateRefName('feature.lock')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names containing ..', () => {
+    expect(() => validateRefName('main..branch')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main..branch')).toThrow(/cannot contain "\.\."/)
+    expect(() => validateRefName('a..b..c')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with control characters', () => {
+    expect(() => validateRefName('main\x00branch')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main\x00branch')).toThrow(/cannot contain control characters/)
+    expect(() => validateRefName('main\x1Fbranch')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main\tbranch')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with tilde', () => {
+    expect(() => validateRefName('main~1')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main~1')).toThrow(/cannot contain ~ \^ : \\ \? \* or \[/)
+  })
+
+  it('should reject ref names with caret', () => {
+    expect(() => validateRefName('main^1')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with colon', () => {
+    expect(() => validateRefName('local:remote')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with backslash', () => {
+    expect(() => validateRefName('main\\branch')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with question mark', () => {
+    expect(() => validateRefName('feature?')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with asterisk', () => {
+    expect(() => validateRefName('feature*')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names with open bracket', () => {
+    expect(() => validateRefName('feature[1]')).toThrow(InvalidRefNameError)
+  })
+
+  it('should reject ref names containing @{', () => {
+    expect(() => validateRefName('main@{1}')).toThrow(InvalidRefNameError)
+    expect(() => validateRefName('main@{1}')).toThrow(/cannot contain "@{"/)
+  })
+})
+
+describe('InvalidRefNameError', () => {
+  it('should include ref name and reason', () => {
+    const error = new InvalidRefNameError('bad..ref', 'cannot contain ".."')
+    expect(error.refName).toBe('bad..ref')
+    expect(error.reason).toBe('cannot contain ".."')
+    expect(error.message).toBe('Invalid ref name "bad..ref": cannot contain ".."')
+    expect(error.name).toBe('InvalidRefNameError')
+  })
+})
+
+describe('R2DataCatalog ref validation integration', () => {
+  let bucket: MockR2Bucket
+  let catalog: R2DataCatalog
+
+  beforeEach(() => {
+    bucket = new MockR2Bucket()
+    catalog = new R2DataCatalog({
+      bucket: bucket as unknown as R2Bucket,
+      warehouseLocation: 'r2://gitx-analytics',
+    })
+  })
+
+  it('should reject invalid ref name in set-snapshot-ref update', async () => {
+    await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+    const snapshot = {
+      snapshot_id: 12345,
+      sequence_number: 1,
+      timestamp_ms: Date.now(),
+      manifest_list: 'r2://gitx-analytics/commits/metadata/snap-12345.avro',
+      summary: { operation: 'append' as const },
+    }
+
+    await expect(
+      catalog.updateTable('gitx', 'commits', [
+        { action: 'add-snapshot', snapshot },
+        { action: 'set-snapshot-ref', ref_name: 'bad..ref', type: 'branch', snapshot_id: 12345 },
+      ])
+    ).rejects.toThrow(InvalidRefNameError)
+  })
+
+  it('should reject invalid ref name in assert-ref-snapshot-id requirement', async () => {
+    await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+    await expect(
+      catalog.updateTable('gitx', 'commits', [], [
+        { type: 'assert-ref-snapshot-id', ref: '.hidden', snapshot_id: null },
+      ])
+    ).rejects.toThrow(InvalidRefNameError)
+  })
+
+  it('should allow valid ref names in updates', async () => {
+    await catalog.registerTable('gitx', 'commits', 'r2://gitx-analytics/commits')
+
+    const snapshot = {
+      snapshot_id: 12345,
+      sequence_number: 1,
+      timestamp_ms: Date.now(),
+      manifest_list: 'r2://gitx-analytics/commits/metadata/snap-12345.avro',
+      summary: { operation: 'append' as const },
+    }
+
+    const updated = await catalog.updateTable('gitx', 'commits', [
+      { action: 'add-snapshot', snapshot },
+      { action: 'set-snapshot-ref', ref_name: 'feature/my-branch', type: 'branch', snapshot_id: 12345 },
+    ])
+
+    expect(updated.refs?.['feature/my-branch']).toBeDefined()
+    expect(updated.refs?.['feature/my-branch'].snapshot_id).toBe(12345)
   })
 })
 

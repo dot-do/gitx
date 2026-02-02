@@ -6,7 +6,7 @@
  * @module export/iceberg
  */
 
-export { R2DataCatalog, CatalogError, type R2CatalogConfig } from './catalog'
+export { R2DataCatalog, CatalogError, InvalidRefNameError, validateRefName, type R2CatalogConfig } from './catalog'
 
 export {
   IcebergTableManager,

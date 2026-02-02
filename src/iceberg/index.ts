@@ -80,6 +80,7 @@ export {
   SnapshotBuilder,
   SnapshotManager,
   generateUUID,
+  generateSnapshotId,
 } from './adapter'
 
 // Type conversion utilities

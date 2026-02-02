@@ -52,6 +52,44 @@ export {
 } from '@dotdo/iceberg'
 
 // ============================================================================
+// Snapshot ID Generation
+// ============================================================================
+
+/**
+ * Generates a unique snapshot ID that is collision-resistant.
+ *
+ * Uses a combination of:
+ * - Timestamp in milliseconds
+ * - Random component (4 digits of randomness = 10,000 possibilities)
+ *
+ * This ensures uniqueness even when multiple snapshots are created in the same millisecond.
+ * The resulting ID is a positive integer that fits within JavaScript's safe integer range.
+ *
+ * Format: timestamp_ms * 10_000 + random(0-9999)
+ * Max value: ~1.7e17 at year 2100, but currently ~1.7e16 (safe integer limit is 9e15)
+ *
+ * To stay within safe integer range, we use a smaller multiplier.
+ * Current timestamp (~1.7e12) * 1000 + random(0-999) = ~1.7e15 (well within 9e15)
+ *
+ * @returns A unique snapshot ID as a positive integer
+ *
+ * @example
+ * ```typescript
+ * const id1 = generateSnapshotId() // e.g., 1706889600000123
+ * const id2 = generateSnapshotId() // e.g., 1706889600000789
+ * ```
+ */
+export function generateSnapshotId(): number {
+  const timestamp = Date.now()
+  // Use 3 digits of randomness (0-999) for collision resistance
+  // This gives 1000 possible values per millisecond
+  const random = Math.floor(Math.random() * 1000)
+  // Combine: timestamp * 1000 + random gives unique IDs even in same millisecond
+  // Max value: ~1.7e15 (well within Number.MAX_SAFE_INTEGER = 9e15)
+  return timestamp * 1000 + random
+}
+
+// ============================================================================
 // Legacy Type Adapters
 // ============================================================================
 
@@ -419,7 +457,7 @@ export function addSnapshot(
   options: AddSnapshotOptions,
 ): IcebergTableMetadata {
   const now = Date.now()
-  const snapshotId = options.snapshotId ?? now
+  const snapshotId = options.snapshotId ?? generateSnapshotId()
 
   if (metadata.snapshots.some(s => s['snapshot-id'] === snapshotId)) {
     throw new Error(`Duplicate snapshot ID: ${snapshotId}`)

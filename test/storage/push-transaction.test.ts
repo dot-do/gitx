@@ -329,7 +329,7 @@ describe('PushTransaction', () => {
       expect(result.refResults[0]!.error).toContain('ref already exists')
     })
 
-    it('should allow partial success across multiple ref updates', async () => {
+    it('should fail all ref updates atomically when one fails', async () => {
       const sha1 = 'sha1val'.padEnd(40, '0')
       const sha2 = 'sha2val'.padEnd(40, '0')
       const objectStore = createMockObjectStore({
@@ -346,14 +346,16 @@ describe('PushTransaction', () => {
       const result = await tx.execute([
         // This will fail: oldSha doesn't match
         { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha1 },
-        // This should succeed: ref doesn't exist
+        // This would succeed in isolation, but atomic push fails all refs
         { refName: 'refs/heads/feature', oldSha: ZERO_SHA, newSha: sha2 },
       ])
 
-      expect(result.success).toBe(false) // Not all succeeded
+      // With atomic push, both refs should fail
+      expect(result.success).toBe(false)
       expect(result.refResults[0]!.success).toBe(false)
-      expect(result.refResults[1]!.success).toBe(true)
-      expect(refStore.get('refs/heads/feature')).toBe(sha2)
+      expect(result.refResults[1]!.success).toBe(false)
+      // The second ref should NOT have been created due to atomic rollback
+      expect(refStore.get('refs/heads/feature')).toBeUndefined()
     })
   })
 
@@ -382,14 +384,15 @@ describe('PushTransaction', () => {
       expect(result.orphanedShas).toContain(sha)
     })
 
-    it('should not mark SHA as orphaned if another ref update succeeded for it', async () => {
+    it('should mark SHA as orphaned when atomic push fails', async () => {
       const sha = 'sharedsha1'.padEnd(40, '0')
       const objectStore = createMockObjectStore({
         existingShas: new Set([sha]),
       })
       const tx = new PushTransaction(storage, objectStore)
 
-      // refs/heads/main exists (CAS will fail), refs/heads/feature doesn't (CAS will succeed)
+      // refs/heads/main exists (CAS will fail), refs/heads/feature doesn't
+      // With atomic push, if any ref fails, all fail and objects become orphaned
       refStore.set('refs/heads/main', 'currentsha'.padEnd(40, '0'))
 
       tx.bufferObject(sha, 'commit', new Uint8Array([1]))
@@ -397,17 +400,18 @@ describe('PushTransaction', () => {
       const result = await tx.execute([
         // Fails: ref exists
         { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
-        // Succeeds: ref doesn't exist
+        // Would succeed in isolation, but atomic push fails all refs
         { refName: 'refs/heads/feature', oldSha: ZERO_SHA, newSha: sha },
       ])
 
-      // SHA should NOT be orphaned because feature succeeded
-      expect(result.orphanedShas).toHaveLength(0)
+      // With atomic push, both refs fail, so the SHA is orphaned
+      expect(result.success).toBe(false)
+      expect(result.orphanedShas).toContain(sha)
     })
   })
 
   describe('orphan cleanup delegate', () => {
-    it('should call cleanup delegate with orphaned SHAs', async () => {
+    it('should call cleanup delegate with orphaned SHAs when atomic push fails', async () => {
       const sha = 'orphansha2'.padEnd(40, '0')
       const objectStore = createMockObjectStore({
         existingShas: new Set([sha]),
@@ -420,10 +424,13 @@ describe('PushTransaction', () => {
       refStore.set('refs/heads/main', 'currentsha'.padEnd(40, '0'))
       tx.bufferObject(sha, 'commit', new Uint8Array([1]))
 
-      await tx.execute([
+      const result = await tx.execute([
         { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
       ])
 
+      // Verify the push failed and orphan cleanup was scheduled
+      expect(result.success).toBe(false)
+      expect(result.orphanedShas).toContain(sha)
       expect(cleanupDelegate.scheduleOrphanCleanup).toHaveBeenCalledWith([sha])
     })
 
@@ -478,6 +485,135 @@ describe('PushTransaction', () => {
       expect(result.refResults).toHaveLength(0)
       expect(result.orphanedShas).toHaveLength(0)
       expect(tx.phase).toBe('completed')
+    })
+  })
+
+  describe('atomic rollback behavior', () => {
+    it('should rollback all refs when one ref validation fails', async () => {
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'bbbb'.padEnd(40, '0')
+      const sha3 = 'cccc'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1, sha2, sha3]),
+      })
+      const tx = new PushTransaction(storage, objectStore)
+
+      // Set up: refs/heads/conflict exists with a different value
+      refStore.set('refs/heads/conflict', 'existing'.padEnd(40, '0'))
+
+      tx.bufferObject(sha1, 'commit', new Uint8Array([1]))
+      tx.bufferObject(sha2, 'commit', new Uint8Array([2]))
+      tx.bufferObject(sha3, 'commit', new Uint8Array([3]))
+
+      const result = await tx.execute([
+        // First two would succeed in isolation
+        { refName: 'refs/heads/feature1', oldSha: ZERO_SHA, newSha: sha1 },
+        { refName: 'refs/heads/feature2', oldSha: ZERO_SHA, newSha: sha2 },
+        // This one fails: wrong oldSha
+        { refName: 'refs/heads/conflict', oldSha: ZERO_SHA, newSha: sha3 },
+      ])
+
+      // All should fail due to atomic rollback
+      expect(result.success).toBe(false)
+      expect(result.refResults.every((r) => !r.success)).toBe(true)
+
+      // None of the refs should have been created
+      expect(refStore.get('refs/heads/feature1')).toBeUndefined()
+      expect(refStore.get('refs/heads/feature2')).toBeUndefined()
+      expect(refStore.get('refs/heads/conflict')).toBe('existing'.padEnd(40, '0'))
+    })
+
+    it('should succeed atomically when all refs pass validation', async () => {
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'bbbb'.padEnd(40, '0')
+      const sha3 = 'cccc'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1, sha2, sha3]),
+      })
+      const tx = new PushTransaction(storage, objectStore)
+
+      tx.bufferObject(sha1, 'commit', new Uint8Array([1]))
+      tx.bufferObject(sha2, 'commit', new Uint8Array([2]))
+      tx.bufferObject(sha3, 'commit', new Uint8Array([3]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/feature1', oldSha: ZERO_SHA, newSha: sha1 },
+        { refName: 'refs/heads/feature2', oldSha: ZERO_SHA, newSha: sha2 },
+        { refName: 'refs/heads/feature3', oldSha: ZERO_SHA, newSha: sha3 },
+      ])
+
+      // All should succeed
+      expect(result.success).toBe(true)
+      expect(result.refResults.every((r) => r.success)).toBe(true)
+
+      // All refs should be created
+      expect(refStore.get('refs/heads/feature1')).toBe(sha1)
+      expect(refStore.get('refs/heads/feature2')).toBe(sha2)
+      expect(refStore.get('refs/heads/feature3')).toBe(sha3)
+    })
+
+    it('should fail all refs when target object validation fails', async () => {
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'missing'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1]), // sha2 is missing
+      })
+      const tx = new PushTransaction(storage, objectStore)
+
+      tx.bufferObject(sha1, 'commit', new Uint8Array([1]))
+      // sha2 is not buffered and doesn't exist in the store
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/feature1', oldSha: ZERO_SHA, newSha: sha1 },
+        { refName: 'refs/heads/feature2', oldSha: ZERO_SHA, newSha: sha2 },
+      ])
+
+      // All should fail due to atomic rollback
+      expect(result.success).toBe(false)
+      expect(result.refResults.every((r) => !r.success)).toBe(true)
+
+      // Neither ref should be created
+      expect(refStore.get('refs/heads/feature1')).toBeUndefined()
+      expect(refStore.get('refs/heads/feature2')).toBeUndefined()
+    })
+
+    it('should rollback mixed operations (create, update, delete)', async () => {
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'bbbb'.padEnd(40, '0')
+      const sha3 = 'cccc'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1, sha2, sha3]),
+      })
+      const tx = new PushTransaction(storage, objectStore)
+
+      // Set up existing refs
+      refStore.set('refs/heads/to-update', sha1)
+      refStore.set('refs/heads/to-delete', sha2)
+      refStore.set('refs/heads/conflict', sha3)
+
+      tx.bufferObject(sha2, 'commit', new Uint8Array([2]))
+      tx.bufferObject(sha3, 'commit', new Uint8Array([3]))
+
+      const result = await tx.execute([
+        // Create
+        { refName: 'refs/heads/new-branch', oldSha: ZERO_SHA, newSha: sha1 },
+        // Update
+        { refName: 'refs/heads/to-update', oldSha: sha1, newSha: sha2 },
+        // Delete
+        { refName: 'refs/heads/to-delete', oldSha: sha2, newSha: ZERO_SHA },
+        // This one fails: wrong oldSha
+        { refName: 'refs/heads/conflict', oldSha: sha1, newSha: sha2 },
+      ])
+
+      // All should fail
+      expect(result.success).toBe(false)
+      expect(result.refResults.every((r) => !r.success)).toBe(true)
+
+      // Nothing should have changed
+      expect(refStore.get('refs/heads/new-branch')).toBeUndefined()
+      expect(refStore.get('refs/heads/to-update')).toBe(sha1)
+      expect(refStore.get('refs/heads/to-delete')).toBe(sha2)
+      expect(refStore.get('refs/heads/conflict')).toBe(sha3)
     })
   })
 })

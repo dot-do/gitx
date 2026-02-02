@@ -1417,7 +1417,9 @@ export class ParquetWriter {
         default:
           return pako.deflate(data, { level: 6 })
       }
-    } catch {
+    } catch (error) {
+      // Compression failed, return uncompressed data
+      console.warn('[ParquetWriter] compressColumn: compression failed, returning uncompressed data:', error instanceof Error ? error.message : String(error))
       return data
     }
   }
@@ -1665,12 +1667,13 @@ export function getMetadata(bytes: Uint8Array): ParquetMetadata {
   try {
     // Try gzip first
     metadataBytes = pako.ungzip(compressedMetadata)
-  } catch {
+  } catch (gzipError) {
     try {
       // Try inflate (deflate)
       metadataBytes = pako.inflate(compressedMetadata)
-    } catch {
-      // Assume uncompressed
+    } catch (inflateError) {
+      // Assume uncompressed - this is expected for some metadata formats
+      console.debug('[parseParquetMetadata] decompression failed, assuming uncompressed metadata. gzip:', gzipError instanceof Error ? gzipError.message : String(gzipError), 'inflate:', inflateError instanceof Error ? inflateError.message : String(inflateError))
       metadataBytes = compressedMetadata
     }
   }

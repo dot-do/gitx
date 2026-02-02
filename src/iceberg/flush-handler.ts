@@ -22,6 +22,7 @@ import {
   serializeManifest,
   createManifestList,
   serializeManifestList,
+  generateSnapshotId,
 } from './adapter'
 
 // ============================================================================
@@ -54,8 +55,8 @@ export function createIcebergFlushHandler(): OnFlushHandler {
   return async (event: FlushEvent): Promise<void> => {
     const { parquetKey, fileSizeBytes, recordCount, r2, prefix } = event
 
-    // Use a combination of timestamp and random bits to ensure unique snapshot IDs
-    const snapshotId = Date.now() * 1000 + Math.floor(Math.random() * 1000)
+    // Generate a unique snapshot ID using timestamp + random component
+    const snapshotId = generateSnapshotId()
 
     // (a) Create a manifest entry for the new Parquet file
     const entry = createManifestEntry({

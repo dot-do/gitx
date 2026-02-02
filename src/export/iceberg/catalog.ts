@@ -56,6 +56,73 @@ export class CatalogError extends Error {
   }
 }
 
+/**
+ * Error thrown when a ref name fails validation.
+ */
+export class InvalidRefNameError extends Error {
+  constructor(
+    public readonly refName: string,
+    public readonly reason: string
+  ) {
+    super(`Invalid ref name "${refName}": ${reason}`)
+    this.name = 'InvalidRefNameError'
+  }
+}
+
+/**
+ * Validates a Git ref name according to Git ref naming rules.
+ *
+ * Valid Git ref names:
+ * - Cannot be empty
+ * - Cannot start with a dot or end with .lock
+ * - Cannot contain ..
+ * - Cannot contain control characters (ASCII < 32)
+ * - Cannot contain ~ ^ : \ ? * [ or @{
+ *
+ * @param refName - The ref name to validate
+ * @throws InvalidRefNameError if the ref name is invalid
+ */
+export function validateRefName(refName: string): void {
+  // Cannot be empty
+  if (!refName || refName.length === 0) {
+    throw new InvalidRefNameError(refName, 'ref name cannot be empty')
+  }
+
+  // Cannot start with a dot
+  if (refName.startsWith('.')) {
+    throw new InvalidRefNameError(refName, 'ref name cannot start with a dot')
+  }
+
+  // Cannot end with .lock
+  if (refName.endsWith('.lock')) {
+    throw new InvalidRefNameError(refName, 'ref name cannot end with .lock')
+  }
+
+  // Cannot contain ..
+  if (refName.includes('..')) {
+    throw new InvalidRefNameError(refName, 'ref name cannot contain ".."')
+  }
+
+  // Cannot contain control characters (ASCII < 32)
+  for (let i = 0; i < refName.length; i++) {
+    const code = refName.charCodeAt(i)
+    if (code < 32) {
+      throw new InvalidRefNameError(refName, 'ref name cannot contain control characters')
+    }
+  }
+
+  // Cannot contain ~ ^ : \ ? * [ or @{
+  const invalidChars = /[~^:\\?*\[]/
+  if (invalidChars.test(refName)) {
+    throw new InvalidRefNameError(refName, 'ref name cannot contain ~ ^ : \\ ? * or [')
+  }
+
+  // Cannot contain @{
+  if (refName.includes('@{')) {
+    throw new InvalidRefNameError(refName, 'ref name cannot contain "@{"')
+  }
+}
+
 // ============================================================================
 // R2 Data Catalog
 // ============================================================================
@@ -526,6 +593,7 @@ export class R2DataCatalog {
         }
         break
       case 'assert-ref-snapshot-id':
+        validateRefName(req.ref)
         const refSnapshotId = metadata.refs?.[req.ref]?.snapshot_id ?? null
         if (refSnapshotId !== req.snapshot_id) {
           throw new CatalogError(`Ref ${req.ref} snapshot mismatch`, 'CONFLICT')
@@ -535,7 +603,260 @@ export class R2DataCatalog {
     }
   }
 
+  /**
+   * Validates a TableUpdate object has the required structure for its action type.
+   * Throws CatalogError if validation fails.
+   * @internal
+   */
+  private validateUpdate(update: unknown): asserts update is TableUpdate {
+    if (!update || typeof update !== 'object') {
+      throw new CatalogError('Invalid update: expected object', 'INTERNAL', { update })
+    }
+
+    const u = update as Record<string, unknown>
+    const action = u['action']
+    if (typeof action !== 'string') {
+      throw new CatalogError('Invalid update: missing or invalid action', 'INTERNAL', { update })
+    }
+
+    switch (action) {
+      case 'add-schema':
+        if (!this.isValidSchema(u['schema'])) {
+          throw new CatalogError(
+            'Invalid add-schema update: schema must have type "struct" and fields array',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'set-current-schema':
+        if (typeof u['schema_id'] !== 'number') {
+          throw new CatalogError(
+            'Invalid set-current-schema update: schema_id must be a number',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'add-partition-spec':
+        if (!this.isValidPartitionSpec(u['spec'])) {
+          throw new CatalogError(
+            'Invalid add-partition-spec update: spec must have spec_id and fields array',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'set-default-spec':
+        if (typeof u['spec_id'] !== 'number') {
+          throw new CatalogError(
+            'Invalid set-default-spec update: spec_id must be a number',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'add-sort-order':
+        if (!this.isValidSortOrder(u['sort_order'])) {
+          throw new CatalogError(
+            'Invalid add-sort-order update: sort_order must have order_id and fields array',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'set-default-sort-order':
+        if (typeof u['sort_order_id'] !== 'number') {
+          throw new CatalogError(
+            'Invalid set-default-sort-order update: sort_order_id must be a number',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'add-snapshot':
+        if (!this.isValidSnapshot(u['snapshot'])) {
+          throw new CatalogError(
+            'Invalid add-snapshot update: snapshot must have snapshot_id, sequence_number, timestamp_ms, manifest_list, and summary',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+
+      case 'set-snapshot-ref': {
+        const refName = u['ref_name']
+        const type = u['type']
+        const snapshotId = u['snapshot_id']
+        if (typeof refName !== 'string' || !refName) {
+          throw new CatalogError(
+            'Invalid set-snapshot-ref update: ref_name must be a non-empty string',
+            'INTERNAL',
+            { update }
+          )
+        }
+        if (type !== 'branch' && type !== 'tag') {
+          throw new CatalogError(
+            'Invalid set-snapshot-ref update: type must be "branch" or "tag"',
+            'INTERNAL',
+            { update }
+          )
+        }
+        if (typeof snapshotId !== 'number') {
+          throw new CatalogError(
+            'Invalid set-snapshot-ref update: snapshot_id must be a number',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+      }
+
+      case 'remove-snapshots': {
+        const snapshotIds = u['snapshot_ids']
+        if (!Array.isArray(snapshotIds) || !snapshotIds.every(id => typeof id === 'number')) {
+          throw new CatalogError(
+            'Invalid remove-snapshots update: snapshot_ids must be an array of numbers',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+      }
+
+      case 'set-properties': {
+        const updates = u['updates']
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+          throw new CatalogError(
+            'Invalid set-properties update: updates must be an object',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+      }
+
+      case 'remove-properties': {
+        const removals = u['removals']
+        if (!Array.isArray(removals) || !removals.every(k => typeof k === 'string')) {
+          throw new CatalogError(
+            'Invalid remove-properties update: removals must be an array of strings',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+      }
+
+      case 'set-location': {
+        const location = u['location']
+        if (typeof location !== 'string' || !location) {
+          throw new CatalogError(
+            'Invalid set-location update: location must be a non-empty string',
+            'INTERNAL',
+            { update }
+          )
+        }
+        break
+      }
+
+      default:
+        throw new CatalogError(`Unknown update action: ${action}`, 'INTERNAL', { update })
+    }
+  }
+
+  /**
+   * Validates that a value is a valid IcebergSchema.
+   * @internal
+   */
+  private isValidSchema(schema: unknown): boolean {
+    if (!schema || typeof schema !== 'object') return false
+    const s = schema as Record<string, unknown>
+    const fields = s['fields']
+    return (
+      s['type'] === 'struct' &&
+      typeof s['schema_id'] === 'number' &&
+      Array.isArray(fields) &&
+      fields.every((f: unknown) => this.isValidField(f))
+    )
+  }
+
+  /**
+   * Validates that a value is a valid IcebergField.
+   * @internal
+   */
+  private isValidField(field: unknown): boolean {
+    if (!field || typeof field !== 'object') return false
+    const f = field as Record<string, unknown>
+    return (
+      typeof f['id'] === 'number' &&
+      typeof f['name'] === 'string' &&
+      typeof f['required'] === 'boolean' &&
+      f['type'] !== undefined
+    )
+  }
+
+  /**
+   * Validates that a value is a valid PartitionSpec.
+   * @internal
+   */
+  private isValidPartitionSpec(spec: unknown): boolean {
+    if (!spec || typeof spec !== 'object') return false
+    const s = spec as Record<string, unknown>
+    const fields = s['fields']
+    return (
+      typeof s['spec_id'] === 'number' &&
+      Array.isArray(fields) &&
+      fields.every((f: unknown) => {
+        if (!f || typeof f !== 'object') return false
+        const pf = f as Record<string, unknown>
+        return (
+          typeof pf['source_id'] === 'number' &&
+          typeof pf['field_id'] === 'number' &&
+          typeof pf['name'] === 'string' &&
+          pf['transform'] !== undefined
+        )
+      })
+    )
+  }
+
+  /**
+   * Validates that a value is a valid SortOrder.
+   * @internal
+   */
+  private isValidSortOrder(order: unknown): boolean {
+    if (!order || typeof order !== 'object') return false
+    const o = order as Record<string, unknown>
+    return typeof o['order_id'] === 'number' && Array.isArray(o['fields'])
+  }
+
+  /**
+   * Validates that a value is a valid IcebergSnapshot.
+   * @internal
+   */
+  private isValidSnapshot(snapshot: unknown): boolean {
+    if (!snapshot || typeof snapshot !== 'object') return false
+    const s = snapshot as Record<string, unknown>
+    return (
+      typeof s['snapshot_id'] === 'number' &&
+      typeof s['sequence_number'] === 'number' &&
+      typeof s['timestamp_ms'] === 'number' &&
+      typeof s['manifest_list'] === 'string' &&
+      s['summary'] !== undefined &&
+      typeof s['summary'] === 'object'
+    )
+  }
+
   private applyUpdate(metadata: TableMetadata, update: TableUpdate): TableMetadata {
+    // Validate update structure before processing
+    this.validateUpdate(update)
+
     switch (update.action) {
       case 'add-schema':
         return {
@@ -596,6 +917,7 @@ export class R2DataCatalog {
         }
 
       case 'set-snapshot-ref': {
+        validateRefName(update.ref_name)
         const updatedMetadata = {
           ...metadata,
           refs: {
@@ -646,6 +968,7 @@ export class R2DataCatalog {
         }
 
       default:
+        // This should never be reached due to validation, but TypeScript needs it
         return metadata
     }
   }

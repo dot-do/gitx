@@ -519,8 +519,9 @@ export class FSxStorageAdapter implements StorageBackend {
           try {
             const { type, target } = parseRefContent(content)
             refs.push({ name: refName, target, type })
-          } catch {
-            // Not a valid ref file, skip
+          } catch (error) {
+            // Not a valid ref file, skip but log for debugging
+            console.debug(`[FSXAdapter] listRefs: skipping invalid ref file ${refName}:`, error instanceof Error ? error.message : String(error))
           }
         } else {
           // It might be a directory - recurse
@@ -612,8 +613,9 @@ export class FSxStorageAdapter implements StorageBackend {
     const fullPath = this.resolvePath(path)
     try {
       return await this.storage.readdir(fullPath)
-    } catch {
+    } catch (error) {
       // Return empty array if directory doesn't exist
+      console.debug(`[FSXAdapter] readdir: directory ${fullPath} not found or unreadable:`, error instanceof Error ? error.message : String(error))
       return []
     }
   }
