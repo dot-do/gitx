@@ -6,7 +6,7 @@
  * - health-routes.ts: Health check and info endpoints
  * - sync-routes.ts: Repository sync and fork operations
  * - export-routes.ts: Parquet/Iceberg export operations
- * - lfs-routes.ts: Git LFS batch API
+ * - lfs-routes.ts: Git LFS batch API, upload, download, verify
  * - wire-routes.ts: Git Smart HTTP wire protocol
  *
  * @module do/routes
@@ -24,7 +24,7 @@ import type { DORepositoryProvider } from './wire-routes'
 import { handleHealthCheck, handleInfo } from './health-routes'
 import { handleFork, handleSync } from './sync-routes'
 import { handleExport, handleExportStatus } from './export-routes'
-import { handleLfsBatch } from './lfs-routes'
+import { setupLfsRoutes, handleLfsBatch, handleLfsUpload, handleLfsDownload, handleLfsVerify } from './lfs-routes'
 import { setupWireRoutes } from './wire-routes'
 
 // Re-export handlers for backward compatibility
@@ -33,7 +33,7 @@ export { handleFork, handleSync } from './sync-routes'
 export type { SyncRequest } from './sync-routes'
 export { handleExport, handleExportStatus } from './export-routes'
 export type { ExportRequest, ExportJobStatus } from './export-routes'
-export { handleLfsBatch } from './lfs-routes'
+export { setupLfsRoutes, handleLfsBatch, handleLfsUpload, handleLfsDownload, handleLfsVerify } from './lfs-routes'
 
 // ============================================================================
 // Route Handler Types
@@ -116,7 +116,7 @@ import {
  * - /health, /info: Health and metadata (health-routes.ts)
  * - /fork, /sync: Repository operations (sync-routes.ts)
  * - /export, /export/status/:jobId: Parquet/Iceberg export (export-routes.ts)
- * - /objects/batch: Git LFS batch API (lfs-routes.ts)
+ * - /objects/batch, /lfs/objects/:oid, /lfs/verify: Git LFS (lfs-routes.ts)
  * - /:namespace/info/refs, /:namespace/git-*: Wire protocol (wire-routes.ts)
  *
  * @param router - Hono router instance
@@ -153,8 +153,12 @@ export function setupRoutes(
   router.post('/export', (c) => handleExport(c, instance))
   router.get('/export/status/:jobId', (c) => handleExportStatus(c, instance))
 
-  // LFS batch API endpoint (lfs-routes.ts)
-  router.post('/objects/batch', (c) => handleLfsBatch(c, instance))
+  // LFS routes (lfs-routes.ts)
+  // - POST /objects/batch - Batch API for checking object availability
+  // - PUT /lfs/objects/:oid - Upload LFS object
+  // - GET /lfs/objects/:oid - Download LFS object
+  // - POST /lfs/verify - Verify uploaded object
+  setupLfsRoutes(router, instance)
 
   // Git Smart HTTP wire protocol routes (wire-routes.ts)
   // These serve git clone/fetch/push over HTTP:

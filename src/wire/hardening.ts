@@ -157,9 +157,13 @@ export interface NegotiationContext {
 }
 
 /**
- * Validation result.
+ * Validation result for hardening checks.
+ *
+ * Note: This uses 'valid' (boolean) instead of 'isValid' to match the
+ * pattern used throughout the wire protocol module. It also includes
+ * an error code for programmatic handling.
  */
-export interface ValidationResult {
+export interface HardeningValidationResult {
   /** Whether validation passed */
   valid: boolean
   /** Error message if validation failed */
@@ -167,6 +171,9 @@ export interface ValidationResult {
   /** Error code for programmatic handling */
   code?: string
 }
+
+/** @deprecated Use HardeningValidationResult */
+export type ValidationResult = HardeningValidationResult
 
 /**
  * Rate limiter configuration.

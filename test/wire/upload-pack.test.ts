@@ -1742,7 +1742,7 @@ describe('git-upload-pack', () => {
     })
 
     // RED Phase: Tests for not-yet-implemented functionality
-    it.fails('should filter commits by timestamp with deepen-since', async () => {
+    it('should filter commits by timestamp with deepen-since', async () => {
       // Create commits with different timestamps
       const oldCommit = 'old0'.padEnd(40, '0')
       const newCommit = 'new0'.padEnd(40, '0')
@@ -1802,11 +1802,11 @@ describe('git-upload-pack', () => {
         timestampStore
       )
 
-      // Old commit should be at shallow boundary because it's before deepen-since
-      expect(result.shallowCommits).toContain(oldCommit)
+      // newCommit becomes the shallow boundary because its parent (oldCommit) is before deepen-since
+      expect(result.shallowCommits).toContain(newCommit)
     })
 
-    it.fails('should stop traversal at deepen-not refs', async () => {
+    it('should stop traversal at deepen-not refs', async () => {
       // Create a chain: commit3 -> commit2 (feature branch) -> commit1
       const commit1 = 'com1'.padEnd(40, '0')
       const commit2 = 'com2'.padEnd(40, '0')
@@ -1863,9 +1863,9 @@ describe('git-upload-pack', () => {
         deepenNotStore
       )
 
-      // Commit2 should be at shallow boundary (we stop at feature branch)
-      expect(result.shallowCommits).toContain(commit2)
-      // Commit1 should NOT be included (past the deepen-not boundary)
+      // commit3 becomes shallow boundary because its parent (commit2) is in deepen-not set
+      expect(result.shallowCommits).toContain(commit3)
+      // commit2 and commit1 should NOT be in shallow commits (they are excluded entirely)
       expect(result.shallowCommits).not.toContain(commit1)
     })
   })

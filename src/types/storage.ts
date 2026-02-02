@@ -170,26 +170,8 @@ export function validateStoreParams(type: string, data: Uint8Array): ValidationR
   return { isValid: true }
 }
 
-/**
- * Assert that a SHA is valid, throwing if not.
- *
- * @description
- * Throws a descriptive error if the SHA is invalid.
- * Use this for input validation in API boundaries.
- * Supports both SHA-1 (40 chars) and SHA-256 (64 chars) formats.
- *
- * @param sha - The SHA to validate
- * @param context - Optional context for the error message (e.g., 'tree', 'parent')
- * @throws Error if SHA is invalid
- *
- * @example
- * ```typescript
- * assertValidSha(treeSha, 'tree') // Throws: "Invalid tree SHA: ..."
- * ```
- */
-export function assertValidSha(sha: string, context?: string): void {
-  assertValidShaFromObjects(sha, context)
-}
+// Note: assertValidSha is exported from ./objects and re-exported via types/index.ts
+// We use assertValidShaFromObjects internally here to avoid circular dependencies
 
 /**
  * Assert that a ref name is valid, throwing if not.

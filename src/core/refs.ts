@@ -68,13 +68,9 @@ export const REF_PREFIXES = {
 // Legacy Validation
 // ============================================================================
 
-/**
- * Validation result type.
- */
-export interface ValidationResult {
-  isValid: boolean
-  error?: string
-}
+// Import and re-export ValidationResult from the canonical source
+import type { ValidationResult } from '../types/storage'
+export type { ValidationResult }
 
 /**
  * Validate a ref name according to Git rules.

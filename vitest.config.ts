@@ -17,6 +17,7 @@ export default defineWorkersConfig({
       'test/cli/**/*.test.ts',
       'test/mcp/**/*.test.ts',
       'test/do/rpc.test.ts',
+      'test/e2e/**/*.test.ts',
     ],
     // Memory optimization: run test files sequentially to prevent OOM
     fileParallelism: false,

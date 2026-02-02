@@ -209,17 +209,17 @@ export class StorageError extends GitXError {
   /**
    * The SHA of the object that caused the error, if applicable.
    */
-  readonly sha?: string
+  readonly sha?: string | undefined
 
   /**
    * The storage path that caused the error, if applicable.
    */
-  readonly path?: string
+  readonly path?: string | undefined
 
   /**
    * The storage operation that failed.
    */
-  readonly operation?: string
+  readonly operation?: string | undefined
 
   /**
    * Creates a new StorageError.
@@ -317,7 +317,7 @@ export class WireError extends GitXError {
   /**
    * The raw packet data that caused the error, if applicable.
    */
-  readonly packet?: Uint8Array
+  readonly packet?: Uint8Array | undefined
 
   /**
    * Creates a new WireError.
@@ -330,7 +330,7 @@ export class WireError extends GitXError {
     message: string,
     code: WireErrorCode = 'PROTOCOL_ERROR',
     options?: {
-      packet?: Uint8Array
+      packet?: Uint8Array | undefined
       cause?: Error | unknown
     }
   ) {
@@ -401,7 +401,7 @@ export class IcebergError extends GitXError {
   /**
    * Additional details about the error.
    */
-  readonly details?: Record<string, unknown>
+  readonly details?: Record<string, unknown> | undefined
 
   /**
    * Creates a new IcebergError.
@@ -483,12 +483,12 @@ export class RefError extends GitXError {
   /**
    * The reference name that caused the error.
    */
-  readonly refName?: string
+  readonly refName?: string | undefined
 
   /**
    * The SHA that was expected or invalid.
    */
-  readonly sha?: string
+  readonly sha?: string | undefined
 
   /**
    * Creates a new RefError.
@@ -590,17 +590,17 @@ export class ObjectError extends GitXError {
   /**
    * The SHA of the object that caused the error.
    */
-  readonly sha?: string
+  readonly sha?: string | undefined
 
   /**
    * The expected object type.
    */
-  readonly expectedType?: string
+  readonly expectedType?: string | undefined
 
   /**
    * The actual object type.
    */
-  readonly actualType?: string
+  readonly actualType?: string | undefined
 
   /**
    * Creates a new ObjectError.
@@ -709,7 +709,7 @@ export class RPCError extends GitXError {
   /**
    * Additional error data.
    */
-  readonly data?: unknown
+  readonly data?: unknown | undefined
 
   /**
    * Creates a new RPCError.
@@ -806,17 +806,17 @@ export class MigrationError extends GitXError {
   /**
    * The source version/tier.
    */
-  readonly sourceTier?: string
+  readonly sourceTier?: string | undefined
 
   /**
    * The target version/tier.
    */
-  readonly targetTier?: string
+  readonly targetTier?: string | undefined
 
   /**
    * Whether rollback was performed.
    */
-  readonly rolledBack?: boolean
+  readonly rolledBack?: boolean | undefined
 
   /**
    * Creates a new MigrationError.

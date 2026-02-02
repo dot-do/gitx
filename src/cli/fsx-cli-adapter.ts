@@ -30,7 +30,10 @@ import * as path from 'path'
 import * as fs from 'fs/promises'
 import { createFSxAdapter, type FSxFileStorage } from '../storage/fsx-adapter'
 import type { StorageBackend } from '../storage/backend'
-import type { ObjectType } from '../types/objects'
+import type { ObjectType, TreeEntry as CoreTreeEntry } from '../types/objects'
+
+// Re-export canonical types for consumers
+export type { CoreTreeEntry }
 
 // ============================================================================
 // Types (compatible with fs-adapter.ts)
@@ -111,10 +114,14 @@ export interface IndexEntry {
 }
 
 /**
- * Tree entry from a tree object.
+ * Tree entry for CLI operations with numeric mode.
+ *
+ * Note: This differs from the canonical TreeEntry in types/objects which
+ * uses string mode. This format is used for CLI-specific operations where
+ * numeric mode is more convenient.
  */
-export interface TreeEntry {
-  /** File/directory mode */
+export interface CLITreeEntry {
+  /** File/directory mode as number */
   mode: number
   /** Name of the entry */
   name: string
@@ -123,6 +130,9 @@ export interface TreeEntry {
   /** Whether this is a tree (directory) or blob (file) */
   type: 'tree' | 'blob'
 }
+
+/** @deprecated Use CLITreeEntry or CoreTreeEntry from types/objects */
+export type TreeEntry = CLITreeEntry
 
 /**
  * Parsed commit object.

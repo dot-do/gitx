@@ -29,7 +29,10 @@ import {
 } from './rpc-mock'
 
 import type { GitScope, OAuthContext } from './oauth'
-import type { ObjectType } from '../types/objects'
+import type { ObjectType, TreeEntry as CoreTreeEntry, Author } from '../types/objects'
+
+// Re-export canonical types for convenience
+export type { ObjectType, CoreTreeEntry, Author }
 
 // Re-export rpc.do types and functions
 export {
@@ -86,13 +89,20 @@ export interface PushProgress {
 }
 
 /**
- * Git author/committer info
+ * Git author/committer info for RPC calls.
+ *
+ * Note: This is a simplified version of the canonical Author type from types/objects.
+ * The timestamp is optional here because it can be defaulted server-side.
+ * Use Author from types/objects for full Git identity with timezone.
  */
-export interface GitIdentity {
+export interface RPCGitIdentity {
   name: string
   email: string
   timestamp?: number
 }
+
+/** @deprecated Use RPCGitIdentity or Author from types/objects */
+export type GitIdentity = RPCGitIdentity
 
 /**
  * Commit options
@@ -106,14 +116,21 @@ export interface CommitOptions {
 }
 
 /**
- * Tree entry
+ * Tree entry for RPC calls.
+ *
+ * Note: This extends the canonical TreeEntry with a 'type' field for
+ * RPC convenience. Use CoreTreeEntry from types/objects for the
+ * canonical definition that matches Git's internal format.
  */
-export interface TreeEntry {
+export interface RPCTreeEntry {
   name: string
   mode: string
   type: 'blob' | 'tree' | 'commit'
   sha: string
 }
+
+/** @deprecated Use RPCTreeEntry or CoreTreeEntry from types/objects */
+export type TreeEntry = RPCTreeEntry
 
 /**
  * Tag options
@@ -126,14 +143,21 @@ export interface TagOptions {
 }
 
 /**
- * Git object
+ * Git object for RPC calls.
+ *
+ * Note: This includes 'sha' and optional 'size' fields for RPC wire format.
+ * Use GitObject from types/objects for the canonical definition that only
+ * contains 'type' and 'data'.
  */
-export interface GitObject {
+export interface RPCGitObject {
   sha: string
   type: 'blob' | 'tree' | 'commit' | 'tag'
   data: Uint8Array
   size?: number
 }
+
+/** @deprecated Use RPCGitObject */
+export type GitObject = RPCGitObject
 
 /**
  * Git reference
