@@ -27,9 +27,6 @@
 
 import {
   CHUNK_SIZE,
-  calculateChunkCount,
-  splitIntoChunks,
-  reassembleChunks,
 } from './chunk-utils'
 
 // ============================================================================

@@ -369,15 +369,7 @@ export const DEFAULT_LOOSE_PREFIX = 'objects/'
 /** Default bundle prefix */
 export const DEFAULT_BUNDLE_PREFIX = 'bundles/'
 
-/** Key prefix for migration checkpoints */
 const decoder = new TextDecoder()
-const CHECKPOINT_PREFIX = 'migration:checkpoint:'
-
-/** Key prefix for migration locks */
-const LOCK_PREFIX = 'migration:lock:'
-
-/** Key prefix for rollback information */
-const ROLLBACK_PREFIX = 'migration:rollback:'
 
 // =============================================================================
 // Utility Functions
@@ -432,22 +424,7 @@ function extractShaFromKey(key: string, prefix: string): string | null {
 /**
  * Build R2 key for a loose object from SHA.
  */
-function buildLooseObjectKey(sha: string, prefix: string): string {
-  return `${prefix}${sha.slice(0, 2)}/${sha.slice(2)}`
-}
 
-/**
- * Compute SHA-1 hash of data using Web Crypto API.
- */
-async function computeSha1(data: Uint8Array): Promise<string> {
-  const buffer = new ArrayBuffer(data.byteLength)
-  new Uint8Array(buffer).set(data)
-  const hashBuffer = await crypto.subtle.digest('SHA-1', buffer)
-  const hashArray = new Uint8Array(hashBuffer)
-  return Array.from(hashArray)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
 
 // =============================================================================
 // LooseToBundleMigrator Class
@@ -1007,7 +984,6 @@ export class LooseToBundleMigrator {
       config: this.config
     }
 
-    const key = `${CHECKPOINT_PREFIX}${this.migrationId}`
     this.storage.sql.exec(
       'INSERT OR REPLACE INTO migration_checkpoints (id, data, created_at) VALUES (?, ?, ?)',
       this.migrationId,

@@ -21,7 +21,6 @@ import {
   type RPCBatchMessage,
   type RPCHandler,
   type RPCHandlerOptions,
-  type StreamController,
   type CancellableAsyncIterator,
   type Serializer,
   RPCError,
@@ -713,7 +712,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
   }
 
   private rejectPendingCalls(error: Error): void {
-    for (const [id, pending] of this.pendingCalls) {
+    for (const [_id, pending] of this.pendingCalls) {
       clearTimeout(pending.timeout)
       pending.reject(error)
     }
@@ -940,7 +939,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
   private serializeBinary(msg: unknown): ArrayBuffer {
     // Simple binary format: JSON envelope with binary data appended
     // Format: [4 bytes length][JSON string][binary data...]
-    const jsonPart = JSON.stringify(msg, (key, value) => {
+    const jsonPart = JSON.stringify(msg, (_key, value) => {
       if (value instanceof Uint8Array) {
         return { __binary__: true, offset: 0, length: value.length }
       }
@@ -1162,7 +1161,7 @@ export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
     }
   }
 
-  private async cloneStream(options: CloneOptions): Promise<CancellableAsyncIterator<CloneProgress>> {
+  private async cloneStream(_options: CloneOptions): Promise<CancellableAsyncIterator<CloneProgress>> {
     let cancelled = false
     let index = 0
 
@@ -1499,11 +1498,9 @@ export function createRPCGitBackend(options: DOClientOptions | RPCGitConfig): RP
  */
 export function createRPCHandler(
   instance: RPCGitDO,
-  state: DurableObjectState | { storage: unknown },
-  options?: RPCHandlerOptions
+  _state: DurableObjectState | { storage: unknown },
+  _options?: RPCHandlerOptions
 ): RPCHandler {
-  const doState = state as DurableObjectState
-
   return {
     async fetch(request: Request): Promise<Response> {
       // Check for WebSocket upgrade

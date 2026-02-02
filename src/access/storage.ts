@@ -44,7 +44,7 @@ import type {
   RepositoryAccessSettings,
   RepositoryVisibility,
 } from './permissions'
-import { isPermissionExpired, getHighestPermission, isValidPermission } from './permissions'
+import { isPermissionExpired, getHighestPermission } from './permissions'
 import { typedQuery, validateRow } from '../utils/sql-validate'
 
 // ============================================================================

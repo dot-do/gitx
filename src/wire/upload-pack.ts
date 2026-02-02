@@ -1030,7 +1030,7 @@ export async function calculateMissingObjects(
   const visited = new Set<string>()
 
   // Walk from each want to find all reachable objects
-  async function walkObject(sha: string, isFromShallowCommit: boolean = false) {
+  async function walkObject(sha: string, _isFromShallowCommit: boolean = false) {
     const lowerSha = sha.toLowerCase()
     if (visited.has(lowerSha) || havesSet.has(lowerSha)) {
       return

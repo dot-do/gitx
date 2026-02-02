@@ -45,7 +45,7 @@
 
 import * as pako from 'pako'
 import { sha1 } from '../utils/sha1'
-import { encodePktLine, MAX_PKT_LINE_DATA } from './pkt-line'
+import { MAX_PKT_LINE_DATA } from './pkt-line'
 import { PackObjectType, encodeTypeAndSize } from '../pack/format'
 import type { ObjectType } from '../types/objects'
 
@@ -561,7 +561,7 @@ export class StreamingPackWriter {
    * @param dataStream - ReadableStream of object data
    */
   async writeStreamingObject(
-    sha: string,
+    _sha: string,
     type: ObjectType,
     size: number,
     dataStream: ReadableStream<Uint8Array>

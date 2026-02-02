@@ -30,7 +30,7 @@
  */
 
 import type { CommitObject, TreeObject, ObjectType } from './objects'
-import { isValidSha, isValidObjectType, assertValidSha as assertValidShaFromObjects } from './objects'
+import { isValidSha, isValidObjectType } from './objects'
 
 // ============================================================================
 // Validation Helpers

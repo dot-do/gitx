@@ -502,9 +502,9 @@ function canBypass(rule: BranchProtectionRule, context: ProtectionContext): bool
  * Create a rejection result.
  */
 function createRejection(
-  type: ProtectionViolationType,
+  _type: ProtectionViolationType,
   rule: BranchProtectionRule,
-  branch: string,
+  _branch: string,
   reason: string,
   suggestion?: string
 ): ProtectionCheckResult {
@@ -638,7 +638,7 @@ export function createBranchProtectionUpdateHook(
     refName: string,
     oldSha: string,
     newSha: string,
-    env: Record<string, string>
+    _env: Record<string, string>
   ): Promise<HookResult> => {
     // Determine command type
     let type: 'create' | 'update' | 'delete'

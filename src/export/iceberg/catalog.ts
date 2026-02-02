@@ -569,10 +569,7 @@ export class R2DataCatalog {
     return r2PathWithPrefix(location, this.prefix || undefined)
   }
 
-  private getMetadataVersion(metadata: TableMetadata): number {
-    // Extract version from snapshot log or default to 1
-    return (metadata.metadata_log?.length ?? 0) + 1
-  }
+
 
   private validateRequirement(metadata: TableMetadata, req: TableRequirement): void {
     switch (req.type) {

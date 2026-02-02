@@ -275,7 +275,7 @@ export interface TagObject extends GitObject {
 import {
   SHA1_PATTERN,
   SHA256_PATTERN,
-  SHA_PATTERN as SHA_COMBINED_PATTERN,
+  SHA_PATTERN as _SHA_COMBINED_PATTERN,
   ZERO_SHA,
   ZERO_SHA256,
   isValidSha1,

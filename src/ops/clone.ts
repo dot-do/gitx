@@ -204,7 +204,6 @@ export function parseCloneUrl(url: string): ParsedCloneUrl {
 
   // Build base URL without credentials
   const port = parsedUrl.port ? parseInt(parsedUrl.port) : null
-  const portStr = port ? `:${port}` : ''
   const baseUrl = `${protocol}://${parsedUrl.host}${path}`
 
   return {
@@ -335,11 +334,8 @@ function parseRefAdvertisement(body: string): RefAdvertisement {
   const symrefs = new Map<string, string>()
   let head: string | undefined
   let isFirstRef = true
-  let passedServiceAnnouncement = false
-
   for (const packet of packets) {
     if (packet.type === 'flush') {
-      passedServiceAnnouncement = true
       continue
     }
 

@@ -282,7 +282,7 @@ export async function createPullRequest(
   const status: PullRequestStatus = options.draft ? 'draft' : 'open'
   const labels = JSON.stringify(options.labels ?? [])
 
-  const result = storage.sqlExec(
+  storage.sqlExec(
     `INSERT INTO pull_requests (title, description, status, source_branch, target_branch, author_name, author_email, labels, source_sha, target_sha, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     options.title,

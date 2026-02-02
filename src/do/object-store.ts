@@ -71,8 +71,6 @@ export type { CASBackend } from '../storage/backend'
 import type { BasicObjectStore } from '../types/storage'
 import { typedQuery, validateRow } from '../utils/sql-validate'
 import {
-  CHUNK_SIZE,
-  CHUNKED_BLOB_PREFIX,
   shouldChunk,
   getChunkKey,
   splitIntoChunks,
@@ -1956,7 +1954,7 @@ export class SqliteObjectStore implements BasicObjectStore {
    * ```
    */
   async truncateWAL(): Promise<number> {
-    const result = this.storage.sql.exec(
+    this.storage.sql.exec(
       'DELETE FROM wal WHERE flushed = 1'
     )
     // Get the number of rows affected - SQLite returns this via changes

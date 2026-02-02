@@ -10,18 +10,9 @@
  */
 
 import {
-  ManifestGenerator,
-  ManifestListGenerator,
-  TableMetadataBuilder,
-  SnapshotBuilder,
   generateUUID,
   type TableMetadata,
-  type Snapshot,
-  type ManifestFile,
-  type DataFile,
   type IcebergSchema as LibIcebergSchema,
-  type PartitionSpec,
-  type SortOrder,
 } from '@dotdo/iceberg'
 
 // Re-export core types from @dotdo/iceberg for direct usage

@@ -54,8 +54,6 @@ import type {
 import {
   checkAccess,
   hasPermission,
-  getRequiredPermission,
-  isValidPermission,
 } from './permissions'
 import type { PermissionStorage } from './storage'
 import type { GitService } from '../wire/smart-http'

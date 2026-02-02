@@ -765,8 +765,6 @@ export class TierMigrationScheduler {
    * Update state after a successful migration cycle.
    */
   private async updateStateAfterCycle(result: MigrationCycleResult): Promise<void> {
-    const state = await this.getState()
-
     this.storage.sql.exec(
       `UPDATE ${MIGRATION_STATE_TABLE}
        SET consecutive_failures = 0,

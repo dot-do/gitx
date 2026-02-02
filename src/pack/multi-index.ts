@@ -51,7 +51,7 @@
  * ```
  */
 
-import { parsePackIndex, type PackIndex, type PackIndexEntry } from './index'
+import { parsePackIndex, type PackIndexEntry } from './index'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -236,7 +236,6 @@ export class MultiIndexManager {
   private _config: Required<MultiIndexConfig>
   private _shards: Map<string, IndexShard>
   private _registry: PackRegistry
-  private _shardCacheExpiry: Map<string, number>
 
   /**
    * Creates a new MultiIndexManager.
@@ -252,7 +251,6 @@ export class MultiIndexManager {
     }
 
     this._shards = new Map()
-    this._shardCacheExpiry = new Map()
     this._registry = {
       packs: new Map(),
       totalObjects: 0,

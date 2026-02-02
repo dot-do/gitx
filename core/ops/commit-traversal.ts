@@ -1071,7 +1071,7 @@ export async function topologicalSort(
 export async function sortByDate(
   provider: CommitProvider,
   commits: string[],
-  useAuthorDate?: boolean
+  _useAuthorDate?: boolean
 ): Promise<string[]> {
   const commitData: Array<{ sha: string; timestamp: number }> = []
 

@@ -3071,7 +3071,7 @@ export const gitTools: MCPTool[] = [
       required: ['object'],
     },
     handler: async (params) => {
-      const { object: objectRef, type: expectedType, pretty_print, show_size, show_type } = params as {
+      const { object: objectRef, type: expectedType, pretty_print: _pretty_print, show_size, show_type } = params as {
         object: string
         type?: 'blob' | 'tree' | 'commit' | 'tag' | 'auto'
         pretty_print?: boolean
@@ -3617,7 +3617,7 @@ export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding 
   }
 
   return {
-    async status(options?: GitStatusOptions): Promise<GitStatusResult> {
+    async status(_options?: GitStatusOptions): Promise<GitStatusResult> {
       const currentBranch = await getCurrentBranch(ctx.refStore)
       const headSha = await resolveRef()
 

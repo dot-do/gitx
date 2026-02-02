@@ -38,7 +38,7 @@ import {
   type BundleReadStorage,
   type BundleReaderConfig,
 } from '../storage/bundle/reader'
-import { BundleObjectType, objectTypeToBundleType } from '../storage/bundle/format'
+import { BundleObjectType } from '../storage/bundle/format'
 
 // ============================================================================
 // Types and Interfaces

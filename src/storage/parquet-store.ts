@@ -25,7 +25,7 @@
 import { parquetWriteBuffer } from 'hyparquet-writer'
 import { parquetReadObjects } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
-import { assertValidSha, isValidSha, isValidObjectType } from '../types/objects'
+import { isValidSha, isValidObjectType } from '../types/objects'
 import type { CASBackend, StoredObjectResult } from './backend'
 import {
   encodeObjectBatch,
@@ -224,7 +224,6 @@ export class ParquetStore implements CASBackend {
   private codec: 'SNAPPY' | 'LZ4_RAW' | 'UNCOMPRESSED'
   private objectFileKeys: string[] = []
   private tombstones: Set<string> = new Set()
-  private initialized = false
   private initPromise?: Promise<void>
   private onFlush: OnFlushHandler | undefined
   private _compactionNeeded = false
@@ -315,7 +314,7 @@ export class ParquetStore implements CASBackend {
     // Recover any un-flushed WAL entries into the buffer
     await this.recoverWAL()
 
-    this.initialized = true
+    // initialization complete
   }
 
   /**

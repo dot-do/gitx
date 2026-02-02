@@ -104,19 +104,6 @@ function fileIcon(mode: string): string {
   return '&#128196;'
 }
 
-function langFromFilename(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  const map: Record<string, string> = {
-    ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-    py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java',
-    c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-    md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
-    toml: 'toml', html: 'html', css: 'css', scss: 'scss',
-    sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql',
-    xml: 'xml', svg: 'xml', wasm: 'wasm',
-  }
-  return map[ext] ?? ''
-}
 
 function isBinaryContent(data: Uint8Array): boolean {
   const checkLen = Math.min(data.length, 8192)
@@ -131,8 +118,6 @@ function isBinaryContent(data: Uint8Array): boolean {
 // ============================================================================
 
 async function getRefSha(instance: GitRepoDOInstance, ref: string): Promise<string | null> {
-  const store = instance.getObjectStore()
-  const schema = instance.getSchemaManager()
   // Try reading from refs table via SQL
   try {
     const storage = instance.getStorage()
@@ -531,7 +516,7 @@ async function renderFilePage(
   return c.html(layout(filename, body, breadcrumbs))
 }
 
-function renderBlobContent(data: Uint8Array, filename: string): string {
+function renderBlobContent(data: Uint8Array, _filename: string): string {
   if (isBinaryContent(data)) {
     return `<div class="empty">Binary file (${data.length} bytes)</div>`
   }
@@ -613,7 +598,7 @@ async function computeTreeDiff(
     if (!newEntries.has(name)) {
       const path = prefix ? `${prefix}/${name}` : name
       if (oldEntry.mode === '040000') {
-        const sub = await computeTreeDiff(instance, oldEntry.sha, null as unknown as string, path)
+        await computeTreeDiff(instance, oldEntry.sha, null as unknown as string, path)
         // Mark all old subtree entries as deleted
         const oldSubTree = await store.getTreeObject(oldEntry.sha)
         if (oldSubTree) {

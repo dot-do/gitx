@@ -35,7 +35,6 @@ import {
   packObjectTypeToString,
 } from '../pack/format'
 import { applyDelta } from '../pack/delta'
-import { hashObjectStreamingHex } from '../utils/sha1'
 
 // ============================================================================
 // Types
