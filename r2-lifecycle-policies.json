@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GitX R2 Bucket Lifecycle Policies",
+  "description": "Lifecycle policy configuration for GitX R2 buckets. Apply these policies via the Cloudflare dashboard or API (https://developers.cloudflare.com/r2/buckets/object-lifecycles/)",
+  "version": "1.0.0",
+  "lastUpdated": "2026-02-02",
+
+  "buckets": {
+    "gitx-objects": {
+      "binding": "R2",
+      "description": "Large git objects (>1MB) stored as raw content-addressable blobs. Key format: {prefix}/raw/{sha[0:2]}/{sha[2:]}",
+      "usage": [
+        "Binary blobs larger than 1MB (images, compiled assets, large text files)",
+        "Objects with storage mode 'r2' in Parquet metadata",
+        "Git LFS pointer targets"
+      ],
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "orphan-cleanup",
+            "description": "Delete orphaned objects not referenced by any Parquet file after 90 days. Run GarbageCollector first to identify orphans.",
+            "filter": {
+              "prefix": ""
+            },
+            "action": "DeleteObject",
+            "conditions": {
+              "age_days": 90,
+              "note": "Only apply after GC marks objects as tombstoned. Objects may be orphaned due to incomplete pushes, force-pushes, or GC. The 90-day grace period ensures objects from abandoned pushes are eventually cleaned up."
+            }
+          },
+          {
+            "id": "incomplete-multipart-cleanup",
+            "description": "Abort incomplete multipart uploads older than 7 days",
+            "action": "AbortIncompleteMultipartUpload",
+            "conditions": {
+              "days_after_initiation": 7,
+              "note": "Multipart uploads that were started but never completed (client crash, network error) waste storage space."
+            }
+          }
+        ],
+        "recommendations": {
+          "retention": "Permanent for referenced objects. Objects are content-addressable, so the same blob is never duplicated.",
+          "cold_storage": "Not recommended. R2 has no tiering, and these objects are accessed during git fetch/clone operations.",
+          "gc_integration": "Run GarbageCollector.collect() periodically (weekly recommended) to identify unreferenced objects. GC uses a 14-day grace period by default."
+        }
+      }
+    },
+
+    "gitx-packs": {
+      "binding": "PACK_STORAGE",
+      "description": "Git packfiles and indices. Legacy format being phased out in favor of Parquet storage.",
+      "usage": [
+        "Git v2/v3 packfiles (.pack)",
+        "Pack indices (.idx)",
+        "Multi-pack indices (midx)",
+        "Pack manifests (JSON metadata)"
+      ],
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "legacy-pack-cleanup",
+            "description": "Delete legacy packfiles after migration to Parquet is complete. Only enable after verifying all objects are migrated.",
+            "filter": {
+              "suffix": ".pack"
+            },
+            "action": "DeleteObject",
+            "conditions": {
+              "age_days": 180,
+              "note": "Conservative 6-month retention. Only enable this rule AFTER migration to Parquet storage is verified complete for the repository."
+            },
+            "enabled": false
+          },
+          {
+            "id": "legacy-index-cleanup",
+            "description": "Delete legacy pack indices after migration to Parquet is complete",
+            "filter": {
+              "suffix": ".idx"
+            },
+            "action": "DeleteObject",
+            "conditions": {
+              "age_days": 180,
+              "note": "Match pack cleanup timing. Indices are useless without corresponding packfiles."
+            },
+            "enabled": false
+          },
+          {
+            "id": "incomplete-multipart-cleanup",
+            "description": "Abort incomplete multipart uploads older than 7 days",
+            "action": "AbortIncompleteMultipartUpload",
+            "conditions": {
+              "days_after_initiation": 7
+            }
+          },
+          {
+            "id": "orphan-manifest-cleanup",
+            "description": "Clean up orphaned manifests from failed uploads",
+            "filter": {
+              "prefix": "",
+              "suffix": ".manifest.json"
+            },
+            "action": "DeleteObject",
+            "conditions": {
+              "age_days": 30,
+              "note": "Manifests from interrupted atomic uploads that were never completed."
+            }
+          }
+        ],
+        "recommendations": {
+          "retention": "Transition period only. Once Parquet migration is complete, this bucket can be emptied.",
+          "migration_status": "Active migration to gitx-analytics Parquet format. Run storage/migration.ts to migrate.",
+          "deprecation_note": "This bucket will be deprecated once all repositories are migrated to Parquet storage."
+        }
+      }
+    },
+
+    "gitx-analytics": {
+      "binding": "ANALYTICS_BUCKET",
+      "description": "Parquet files for git objects, refs, and analytics. Primary storage for the new architecture.",
+      "usage": [
+        "{owner}/{repo}/objects/*.parquet - Git objects (VARIANT encoded)",
+        "{owner}/{repo}/refs/*.parquet - Git refs (branches, tags)",
+        "{owner}/{repo}/commits/*.parquet - Commit analytics",
+        "{owner}/{repo}/metadata/iceberg/*.json - Iceberg table metadata"
+      ],
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "compaction-cleanup",
+            "description": "Parquet files replaced by compaction are deleted immediately by ParquetStore.compact(). No lifecycle rule needed.",
+            "note": "Compaction is handled atomically with journal-based recovery. Old files are deleted after successful compaction write.",
+            "enabled": false
+          },
+          {
+            "id": "incomplete-multipart-cleanup",
+            "description": "Abort incomplete multipart uploads older than 7 days",
+            "action": "AbortIncompleteMultipartUpload",
+            "conditions": {
+              "days_after_initiation": 7,
+              "note": "Large Parquet files may use multipart upload. Clean up abandoned uploads."
+            }
+          },
+          {
+            "id": "iceberg-snapshot-cleanup",
+            "description": "Clean up old Iceberg snapshots after 30 days (configurable based on time-travel requirements)",
+            "filter": {
+              "prefix": "",
+              "contains": "/metadata/snap-"
+            },
+            "action": "DeleteObject",
+            "conditions": {
+              "age_days": 30,
+              "note": "Iceberg snapshots enable time-travel queries. Adjust retention based on audit requirements."
+            },
+            "enabled": false
+          },
+          {
+            "id": "orphan-parquet-cleanup",
+            "description": "Delete orphaned Parquet files not referenced in Iceberg metadata",
+            "note": "Requires external job to identify orphans via Iceberg metadata comparison",
+            "conditions": {
+              "age_days": 90
+            },
+            "enabled": false
+          }
+        ],
+        "recommendations": {
+          "retention": "Permanent for active data. Parquet files are append-only and compacted periodically.",
+          "cold_storage": "Not applicable. R2 does not support storage tiering. All data is stored at standard R2 rates.",
+          "compaction": "ParquetStore.compact() merges multiple small Parquet files into larger ones. Compaction is triggered automatically or via DO alarm.",
+          "iceberg_integration": "Parquet files can be registered with Iceberg catalogs for SQL analytics (DuckDB, Spark, etc.)."
+        }
+      }
+    }
+  },
+
+  "global_recommendations": {
+    "garbage_collection": {
+      "description": "Use GarbageCollector from src/storage/gc.ts to identify unreferenced objects",
+      "default_grace_period_days": 14,
+      "recommended_schedule": "Weekly",
+      "dry_run_first": true,
+      "example": "const gc = createGCForParquetStore(store, refStore, r2, sql, prefix); await gc.preview();"
+    },
+    "monitoring": {
+      "description": "Monitor R2 bucket metrics via Cloudflare dashboard",
+      "key_metrics": [
+        "Total storage bytes per bucket",
+        "Object count per bucket",
+        "Class A operations (writes, lists)",
+        "Class B operations (reads)",
+        "Data transfer egress"
+      ]
+    },
+    "cost_optimization": {
+      "strategies": [
+        "Run compaction regularly to reduce object count and improve read performance",
+        "Use inline storage (in Parquet VARIANT) for objects < 1MB to avoid separate R2 reads",
+        "Enable GC for repositories with high churn (many force-pushes, abandoned branches)",
+        "Consider archiving inactive repositories to reduce storage costs"
+      ]
+    },
+    "backup_strategy": {
+      "description": "R2 provides 11 9's durability. Additional backups optional but recommended for critical data.",
+      "options": [
+        "Cross-region replication (when available)",
+        "Periodic export to external storage (S3, GCS)",
+        "Git bundle export for critical repositories"
+      ]
+    }
+  },
+
+  "cloudflare_api_example": {
+    "description": "Example API call to set lifecycle rules via Cloudflare API",
+    "endpoint": "PUT /accounts/{account_id}/r2/buckets/{bucket_name}/lifecycle",
+    "documentation": "https://developers.cloudflare.com/r2/buckets/object-lifecycles/",
+    "example_request": {
+      "rules": [
+        {
+          "id": "incomplete-multipart-cleanup",
+          "enabled": true,
+          "abort_incomplete_multipart_upload": {
+            "days_after_initiation": 7
+          }
+        }
+      ]
+    }
+  }
+}

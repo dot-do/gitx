@@ -101,3 +101,25 @@ export {
   type GCResult,
   type GCLogger,
 } from './gc'
+
+// Storage Metrics / Observability
+export {
+  NoopMetrics,
+  ConsoleMetrics,
+  CollectingMetrics,
+  noopMetrics,
+  type StorageMetrics,
+  type StorageTier as MetricsStorageTier,
+  type CacheResult,
+  type StorageOperation,
+  type ConsoleMetricsOptions,
+  type CollectedRead,
+  type CollectedWrite,
+  type CollectedCacheEvent,
+  type CollectedFlush,
+  type CollectedCompaction,
+  type CollectedError,
+  type CollectedTiming,
+  type CollectedCounter,
+  type CollectedGauge,
+} from './metrics'

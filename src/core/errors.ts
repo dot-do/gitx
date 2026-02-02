@@ -4,20 +4,25 @@
  * This module defines error classes for Git operations. All errors
  * are platform-agnostic and can be used in any JavaScript runtime.
  *
+ * These errors extend from GitXError for unified error handling across
+ * the gitx.do library while maintaining backward compatibility.
+ *
  * @module @dotdo/gitx/errors
  */
 
+import { GitXError } from '../errors'
+
 /**
  * Base class for all Git-related errors.
+ *
+ * @description
+ * Extends GitXError to integrate with the unified error hierarchy
+ * while maintaining backward compatibility with existing code.
  */
-export class GitError extends Error {
-  constructor(message: string) {
-    super(message)
+export class GitError extends GitXError {
+  constructor(message: string, code: string = 'GIT_ERROR') {
+    super(message, code)
     this.name = 'GitError'
-    // Maintains proper stack trace for where the error was thrown (V8 only)
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor)
-    }
   }
 }
 
@@ -28,7 +33,7 @@ export class ObjectNotFoundError extends GitError {
   public readonly sha: string
 
   constructor(sha: string) {
-    super(`Object not found: ${sha}`)
+    super(`Object not found: ${sha}`, 'OBJECT_NOT_FOUND')
     this.name = 'ObjectNotFoundError'
     this.sha = sha
   }
@@ -42,7 +47,7 @@ export class CorruptObjectError extends GitError {
   public readonly objectType?: string
 
   constructor(message: string, sha?: string, objectType?: string) {
-    super(message)
+    super(message, 'CORRUPT_OBJECT')
     this.name = 'CorruptObjectError'
     this.sha = sha
     this.objectType = objectType
@@ -56,7 +61,7 @@ export class RefNotFoundError extends GitError {
   public readonly refName: string
 
   constructor(refName: string) {
-    super(`Reference not found: ${refName}`)
+    super(`Reference not found: ${refName}`, 'REF_NOT_FOUND')
     this.name = 'RefNotFoundError'
     this.refName = refName
   }
@@ -73,7 +78,7 @@ export class InvalidRefNameError extends GitError {
     const message = reason
       ? `Invalid reference name "${refName}": ${reason}`
       : `Invalid reference name: ${refName}`
-    super(message)
+    super(message, 'INVALID_REF_NAME')
     this.name = 'InvalidRefNameError'
     this.refName = refName
     this.reason = reason
@@ -87,7 +92,7 @@ export class InvalidShaError extends GitError {
   public readonly sha: string
 
   constructor(sha: string) {
-    super(`Invalid SHA-1 hash: ${sha}`)
+    super(`Invalid SHA-1 hash: ${sha}`, 'INVALID_SHA')
     this.name = 'InvalidShaError'
     this.sha = sha
   }
@@ -100,7 +105,7 @@ export class PackFormatError extends GitError {
   public readonly offset?: number
 
   constructor(message: string, offset?: number) {
-    super(offset !== undefined ? `${message} at offset ${offset}` : message)
+    super(offset !== undefined ? `${message} at offset ${offset}` : message, 'PACK_FORMAT_ERROR')
     this.name = 'PackFormatError'
     this.offset = offset
   }
@@ -115,7 +120,7 @@ export class DeltaError extends GitError {
   public readonly actualSize?: number
 
   constructor(message: string, options?: { baseSize?: number; expectedSize?: number; actualSize?: number }) {
-    super(message)
+    super(message, 'DELTA_ERROR')
     this.name = 'DeltaError'
     this.baseSize = options?.baseSize
     this.expectedSize = options?.expectedSize
@@ -127,12 +132,12 @@ export class DeltaError extends GitError {
  * Error thrown when a wire protocol message is invalid.
  */
 export class ProtocolError extends GitError {
-  public readonly code?: string
+  public readonly protocolCode?: string
 
-  constructor(message: string, code?: string) {
-    super(message)
+  constructor(message: string, protocolCode?: string) {
+    super(message, 'PROTOCOL_ERROR')
     this.name = 'ProtocolError'
-    this.code = code
+    this.protocolCode = protocolCode
   }
 }
 
@@ -143,7 +148,7 @@ export class NotSupportedError extends GitError {
   public readonly operation: string
 
   constructor(operation: string, message?: string) {
-    super(message || `Operation not supported: ${operation}`)
+    super(message || `Operation not supported: ${operation}`, 'NOT_SUPPORTED')
     this.name = 'NotSupportedError'
     this.operation = operation
   }
@@ -157,7 +162,7 @@ export class ConflictError extends GitError {
   public readonly conflictType?: 'merge' | 'rebase' | 'cherry-pick' | 'update'
 
   constructor(message: string, path?: string, conflictType?: 'merge' | 'rebase' | 'cherry-pick' | 'update') {
-    super(message)
+    super(message, 'CONFLICT')
     this.name = 'ConflictError'
     this.path = path
     this.conflictType = conflictType
@@ -167,14 +172,20 @@ export class ConflictError extends GitError {
 /**
  * Error thrown when storage operations fail.
  */
-export class StorageError extends GitError {
+export class CoreStorageError extends GitError {
   public readonly operation?: string
   public readonly path?: string
 
   constructor(message: string, operation?: string, path?: string) {
-    super(message)
-    this.name = 'StorageError'
+    super(message, 'STORAGE_ERROR')
+    this.name = 'CoreStorageError'
     this.operation = operation
     this.path = path
   }
 }
+
+// Backward compatibility alias
+export { CoreStorageError as StorageError }
+
+// Re-export GitXError for convenience
+export { GitXError } from '../errors'

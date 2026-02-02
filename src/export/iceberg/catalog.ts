@@ -13,6 +13,7 @@ import type {
   TableUpdate,
   TableRequirement,
 } from './types'
+import { r2PathWithPrefix } from '../../utils/r2-path'
 
 // ============================================================================
 // Types
@@ -565,12 +566,7 @@ export class R2DataCatalog {
   }
 
   private r2Path(location: string): string {
-    // Convert r2:// URL to bucket path
-    if (location.startsWith('r2://')) {
-      const path = location.replace(/^r2:\/\/[^/]+\//, '')
-      return this.prefix ? `${this.prefix}/${path}` : path
-    }
-    return location
+    return r2PathWithPrefix(location, this.prefix || undefined)
   }
 
   private getMetadataVersion(metadata: TableMetadata): number {

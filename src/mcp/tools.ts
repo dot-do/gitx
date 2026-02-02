@@ -43,7 +43,6 @@
  * })
  */
 
-import { execSync } from 'child_process'
 import {
   walkCommits,
   CommitProvider,
@@ -64,34 +63,6 @@ import {
 import { createCommit, CommitAuthor, CommitOptions } from '../ops/commit'
 import type { CommitObject, TreeObject, ObjectType } from '../types/objects'
 
-/**
- * Execute a git command and return the output.
- *
- * @description Helper function to execute git CLI commands synchronously.
- * Used by bash CLI-based MCP tools.
- *
- * @param args - Array of arguments to pass to git
- * @param cwd - Working directory for the command
- * @returns Object with stdout, stderr, and exitCode
- */
-function execGit(args: string[], cwd?: string): { stdout: string; stderr: string; exitCode: number } {
-  try {
-    const stdout = execSync(['git', ...args].join(' '), {
-      cwd: cwd || process.cwd(),
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      maxBuffer: 10 * 1024 * 1024 // 10MB buffer for large outputs
-    })
-    return { stdout: stdout.toString(), stderr: '', exitCode: 0 }
-  } catch (error: unknown) {
-    const execError = error as { stdout?: Buffer | string; stderr?: Buffer | string; status?: number }
-    return {
-      stdout: execError.stdout?.toString() || '',
-      stderr: execError.stderr?.toString() || '',
-      exitCode: execError.status || 1
-    }
-  }
-}
 
 /**
  * Recursively flatten a tree object into a map of path -> entry.
@@ -2569,41 +2540,15 @@ export const gitTools: MCPTool[] = [
         }
       }
 
-      // Use bash CLI
-      const args = ['show']
-
-      if (format === 'diff') {
-        args.push('--format=')
-      }
-
-      if (context_lines !== undefined) {
-        args.push(`-U${context_lines}`)
-      }
-
-      // Handle revision:path syntax
-      if (filePath) {
-        args.push(`${revision}:${filePath}`)
-      } else {
-        args.push(revision)
-      }
-
-      const result = execGit(args)
-
-      if (result.exitCode !== 0) {
-        return {
-          content: [{ type: 'text', text: result.stderr || `git show failed with exit code ${result.exitCode}` }],
-          isError: true,
-        }
-      }
-
+      // No repository context and no bash CLI fallback (Workers-compatible)
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        isError: false,
+        content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_show.' }],
+        isError: true,
       }
     },
   },
 
-  // git_blame tool - uses bash CLI
+  // git_blame tool
   {
     name: 'git_blame',
     description: 'Git blame - show what revision and author last modified each line of a file',
@@ -2864,42 +2809,15 @@ export const gitTools: MCPTool[] = [
         }
       }
 
-      // Use bash CLI
-      const args = ['blame']
-
-      if (show_email) {
-        args.push('-e')
-      }
-
-      if (start_line !== undefined || end_line !== undefined) {
-        const start = start_line || 1
-        const end = end_line || ''
-        args.push(`-L${start},${end}`)
-      }
-
-      if (revision) {
-        args.push(revision)
-      }
-
-      args.push('--', filePath)
-
-      const result = execGit(args)
-
-      if (result.exitCode !== 0) {
-        return {
-          content: [{ type: 'text', text: result.stderr || `git blame failed with exit code ${result.exitCode}` }],
-          isError: true,
-        }
-      }
-
+      // No repository context and no bash CLI fallback (Workers-compatible)
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        isError: false,
+        content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_blame.' }],
+        isError: true,
       }
     },
   },
 
-  // git_ls_tree tool - uses bash CLI
+  // git_ls_tree tool
   {
     name: 'git_ls_tree',
     description: 'List the contents of a tree object, showing file names, modes, types, and SHA hashes',
@@ -3111,45 +3029,15 @@ export const gitTools: MCPTool[] = [
         }
       }
 
-      // Use bash CLI
-      const args = ['ls-tree']
-
-      if (recursive) {
-        args.push('-r')
-      }
-      if (show_trees) {
-        args.push('-d')
-      }
-      if (show_size) {
-        args.push('-l')
-      }
-      if (name_only) {
-        args.push('--name-only')
-      }
-
-      args.push(tree_ish)
-
-      if (filterPath) {
-        args.push('--', filterPath)
-      }
-
-      const result = execGit(args)
-
-      if (result.exitCode !== 0) {
-        return {
-          content: [{ type: 'text', text: result.stderr || `git ls-tree failed with exit code ${result.exitCode}` }],
-          isError: true,
-        }
-      }
-
+      // No repository context and no bash CLI fallback (Workers-compatible)
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        isError: false,
+        content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_ls_tree.' }],
+        isError: true,
       }
     },
   },
 
-  // git_cat_file tool - uses bash CLI
+  // git_cat_file tool
   {
     name: 'git_cat_file',
     description: 'Show content or type/size information for repository objects',
@@ -3349,35 +3237,10 @@ export const gitTools: MCPTool[] = [
         }
       }
 
-      // Use bash CLI
-      const args = ['cat-file']
-
-      if (show_type) {
-        args.push('-t')
-      } else if (show_size) {
-        args.push('-s')
-      } else if (pretty_print) {
-        args.push('-p')
-      } else if (expectedType && expectedType !== 'auto') {
-        args.push(expectedType)
-      } else {
-        args.push('-p')
-      }
-
-      args.push(objectRef)
-
-      const result = execGit(args)
-
-      if (result.exitCode !== 0) {
-        return {
-          content: [{ type: 'text', text: result.stderr || `git cat-file failed with exit code ${result.exitCode}` }],
-          isError: true,
-        }
-      }
-
+      // No repository context and no bash CLI fallback (Workers-compatible)
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        isError: false,
+        content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_cat_file.' }],
+        isError: true,
       }
     },
   },

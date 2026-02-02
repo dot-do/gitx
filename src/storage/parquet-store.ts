@@ -6,9 +6,18 @@
  * VARIANT-encoded rows in append-only Parquet files on R2.
  *
  * Architecture:
- * - Write path: Objects buffered in memory -> flushed as Parquet row groups to R2
+ * - Write path: Objects buffered in memory -> WAL -> flushed as Parquet row groups to R2
  * - Read path: Bloom filter check -> exact SHA cache -> Parquet file scan
  * - Refs: Stored in a separate refs.parquet file, rewritten on update
+ *
+ * R2 Bucket: gitx-analytics (ANALYTICS_BUCKET binding)
+ * Key format: {owner}/{repo}/objects/{uuid}.parquet
+ *
+ * Lifecycle Management:
+ * - Compaction: ParquetStore.compact() merges small files, deletes old ones atomically
+ * - Large objects (>1MB): Stored in gitx-objects bucket with storage mode 'r2'
+ * - R2 lifecycle policies: See r2-lifecycle-policies.json for cleanup rules
+ * - Orphan cleanup: 90-day retention via R2 lifecycle + GarbageCollector
  *
  * @module storage/parquet-store
  */
@@ -34,6 +43,7 @@ import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
 import { ReadWriteLock } from '../utils/async-mutex'
+import { type StorageMetrics, noopMetrics } from './metrics'
 
 // ============================================================================
 // Write-Ahead Log (WAL)
@@ -90,12 +100,6 @@ const DEFAULT_FLUSH_THRESHOLD = 1000
 
 /** Default maximum buffer size in bytes before flushing */
 const DEFAULT_FLUSH_BYTES_THRESHOLD = 10 * 1024 * 1024 // 10MB
-
-/** Maximum objects to buffer before flushing to Parquet */
-const FLUSH_THRESHOLD = DEFAULT_FLUSH_THRESHOLD
-
-/** Maximum buffer size in bytes before flushing */
-const FLUSH_BYTES_THRESHOLD = DEFAULT_FLUSH_BYTES_THRESHOLD
 
 /** Default maximum buffer bytes before back-pressure triggers auto-flush (50MB) */
 const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024
@@ -170,6 +174,20 @@ export interface ParquetStoreOptions {
    * @default false
    */
   verifyBloomNegatives?: boolean
+  /**
+   * Optional metrics interface for observability.
+   * If not provided, a no-op implementation is used (zero overhead).
+   *
+   * @example
+   * ```typescript
+   * import { ConsoleMetrics } from './metrics'
+   * const store = new ParquetStore({
+   *   r2, sql, prefix,
+   *   metrics: new ConsoleMetrics()
+   * })
+   * ```
+   */
+  metrics?: StorageMetrics
 }
 
 /** Buffered object awaiting flush to Parquet */
@@ -222,19 +240,22 @@ export class ParquetStore implements CASBackend {
    * or delete Parquet files while other operations are reading from them.
    */
   private rwLock: ReadWriteLock = new ReadWriteLock()
+  /** Metrics interface for observability */
+  private metrics: StorageMetrics
 
   constructor(options: ParquetStoreOptions) {
     this.r2 = options.r2
     this.sql = options.sql
     this.prefix = options.prefix
     this.bloomCache = new BloomCache(options.sql)
-    this.flushThreshold = options.flushThreshold ?? FLUSH_THRESHOLD
-    this.flushBytesThreshold = options.flushBytesThreshold ?? FLUSH_BYTES_THRESHOLD
+    this.flushThreshold = options.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD
+    this.flushBytesThreshold = options.flushBytesThreshold ?? DEFAULT_FLUSH_BYTES_THRESHOLD
     this.maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
     this.maxBufferObjects = options.maxBufferObjects ?? DEFAULT_MAX_BUFFER_OBJECTS
     this.codec = options.codec ?? 'SNAPPY'
     this.onFlush = options.onFlush
     this.verifyBloomNegatives = options.verifyBloomNegatives ?? false
+    this.metrics = options.metrics ?? noopMetrics
   }
 
   /**
@@ -420,6 +441,7 @@ export class ParquetStore implements CASBackend {
   // ===========================================================================
 
   async putObject(type: ObjectType, data: Uint8Array, path?: string): Promise<string> {
+    const startTime = performance.now()
     await this.initialize()
 
     // Use read lock - multiple writes can happen concurrently, but not during compaction
@@ -458,6 +480,10 @@ export class ParquetStore implements CASBackend {
       // Register in bloom cache
       await this.bloomCache.add(sha, type, data.length)
 
+      // Record write metric
+      const latencyMs = performance.now() - startTime
+      this.metrics.recordObjectWrite(sha, data.length, 'buffer', latencyMs, type)
+
       // Check if flush is needed - we'll do it outside the lock to avoid deadlock
       const needsFlush = this.buffer.length >= this.flushThreshold || this.bufferBytes >= this.flushBytesThreshold
       const needsBackPressure = this.bufferBytes >= this.maxBufferBytes || this.buffer.length >= this.maxBufferObjects
@@ -478,6 +504,7 @@ export class ParquetStore implements CASBackend {
   // ===========================================================================
 
   async getObject(sha: string): Promise<StoredObjectResult | null> {
+    const startTime = performance.now()
     await this.initialize()
 
     // Use read lock - multiple reads can happen concurrently, but not during compaction
@@ -489,13 +516,24 @@ export class ParquetStore implements CASBackend {
       // This is critical for WAL recovery - recovered objects may not be in bloom cache yet
       const buffered = this.buffer.find(o => o.sha === sha)
       if (buffered) {
+        this.metrics.recordCacheHit(sha, 'buffer')
+        const latencyMs = performance.now() - startTime
+        this.metrics.recordObjectRead(sha, 'buffer', latencyMs, buffered.type, buffered.data.length)
         return { type: buffered.type, content: buffered.data }
       }
 
       // Check bloom filter for persisted objects
       const check = await this.bloomCache.check(sha)
       if (check === 'absent') {
+        this.metrics.recordCacheMiss(sha, 'bloom')
         return null
+      }
+
+      // Record bloom/exact cache result
+      if (check === 'definite') {
+        this.metrics.recordCacheHit(sha, 'exact')
+      } else {
+        this.metrics.recordCacheHit(sha, 'bloom')
       }
 
       // Scan Parquet files in reverse order (newest first)
@@ -508,6 +546,8 @@ export class ParquetStore implements CASBackend {
           if (check === 'probable') {
             await this.bloomCache.add(sha, result.type, result.content.byteLength)
           }
+          const latencyMs = performance.now() - startTime
+          this.metrics.recordObjectRead(sha, 'parquet', latencyMs, result.type, result.content.byteLength)
           return result
         }
       }
@@ -638,6 +678,7 @@ export class ParquetStore implements CASBackend {
   async flush(): Promise<string | null> {
     if (this.buffer.length === 0) return null
 
+    const startTime = performance.now()
     await this.initialize()
 
     // Use read lock - flush can run concurrently with other operations, but not during compaction
@@ -702,6 +743,10 @@ export class ParquetStore implements CASBackend {
       // Persist bloom filter
       await this.bloomCache.persist()
 
+      // Record flush metric
+      const latencyMs = performance.now() - startTime
+      this.metrics.recordFlush(objects.length, buffer.byteLength, latencyMs)
+
       // Invoke post-flush handler (e.g., Iceberg metadata generation)
       if (this.onFlush) {
         try {
@@ -741,11 +786,13 @@ export class ParquetStore implements CASBackend {
    * @returns The key of the new compacted file, or null if no compaction needed
    */
   async compact(): Promise<string | null> {
+    const startTime = performance.now()
     await this.initialize()
 
     // Use write lock - compaction needs exclusive access to prevent races
     return this.rwLock.withWriteLock(async () => {
       if (this.objectFileKeys.length < 2) return null
+      const sourceFileCount = this.objectFileKeys.length
 
       // Generate target key upfront so we can journal it
       const fileId = crypto.randomUUID()
@@ -892,6 +939,10 @@ export class ParquetStore implements CASBackend {
 
       // Persist bloom filter
       await this.bloomCache.persist()
+
+      // Record compaction metric
+      const latencyMs = performance.now() - startTime
+      this.metrics.recordCompaction(sourceFileCount, allObjects.length, buffer.byteLength, latencyMs)
 
       // Compaction fully complete - delete journal entry
       if (journalId != null) {

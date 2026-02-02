@@ -5,6 +5,15 @@
  * Uses content-addressable keys: `{prefix}/{sha[0:2]}/{sha[2:]}`.
  * Deduplicates by checking existence before upload.
  *
+ * R2 Bucket: gitx-objects (R2 binding)
+ * Key format: {prefix}/raw/{sha[0:2]}/{sha[2:]}
+ *
+ * Lifecycle Management:
+ * - Objects are content-addressable (deduplication via SHA)
+ * - Referenced objects: Permanent retention
+ * - Orphaned objects: Cleaned by GarbageCollector with 14-day grace period
+ * - R2 lifecycle: 90-day retention safety net (see r2-lifecycle-policies.json)
+ *
  * @module storage/large-object
  */
 

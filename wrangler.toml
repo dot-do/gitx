@@ -28,15 +28,26 @@ tag = "v2"
 new_sqlite_classes = ["GitRepoDOSQL"]
 
 # R2 buckets for git object storage
+# Lifecycle policies are configured via Cloudflare dashboard or API.
+# See r2-lifecycle-policies.json for recommended configuration.
+
+# gitx-objects: Large git objects (>1MB) stored as raw content-addressable blobs
+# Key format: {prefix}/raw/{sha[0:2]}/{sha[2:]}
+# Lifecycle: Permanent for referenced objects, GC for orphans (90-day retention)
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "gitx-objects"
 
+# gitx-packs: Legacy Git packfiles (being migrated to Parquet)
+# Contains .pack, .idx files and multi-pack indices
+# Lifecycle: Transitional - will be deprecated after Parquet migration
 [[r2_buckets]]
 binding = "PACK_STORAGE"
 bucket_name = "gitx-packs"
 
-# Analytics bucket for Parquet/Iceberg data
+# gitx-analytics: Parquet files for git objects, refs, and analytics (primary storage)
+# Contains: {owner}/{repo}/objects/*.parquet, refs/*.parquet, commits/*.parquet
+# Lifecycle: Compacted by ParquetStore, orphan cleanup after 90 days
 [[r2_buckets]]
 binding = "ANALYTICS_BUCKET"
 bucket_name = "gitx-analytics"

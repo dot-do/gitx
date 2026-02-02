@@ -11,6 +11,12 @@
  * - Respects a grace period to avoid deleting objects being written
  * - Concurrent-safe: marks objects before deletion to handle races
  *
+ * R2 Lifecycle Integration:
+ * - GC works in conjunction with R2 lifecycle policies defined in r2-lifecycle-policies.json
+ * - Objects deleted by GC are removed from bloom cache and marked as tombstones
+ * - R2 lifecycle policies provide a secondary safety net with 90-day retention
+ * - Recommended: Run GC weekly with the default 14-day grace period
+ *
  * @module storage/gc
  *
  * @example

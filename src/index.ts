@@ -1292,3 +1292,79 @@ export {
   // Endpoint classification
   defaultEndpointClassifier,
 } from './middleware/rate-limit'
+
+// =============================================================================
+// Errors - Unified error hierarchy
+// =============================================================================
+
+/**
+ * Unified error hierarchy.
+ *
+ * @description
+ * All GitX errors extend from GitXError, providing:
+ * - Standardized error codes for programmatic handling
+ * - Error cause chaining for debugging
+ * - Consistent serialization via toJSON()
+ * - Type guards for error checking
+ *
+ * Error classes by domain:
+ * - {@link GitXError}: Base error class
+ * - {@link StorageError}: R2, SQLite, Parquet operations
+ * - {@link WireError}: Git protocol, pkt-line, auth
+ * - {@link IcebergError}: Iceberg catalog and metadata
+ * - {@link RefError}: Branches, tags, refs
+ * - {@link ObjectError}: Git objects, parsing, deltas
+ * - {@link RPCError}: RPC/MCP operations
+ * - {@link MigrationError}: Schema and data migrations
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   GitXError,
+ *   StorageError,
+ *   WireError,
+ *   isGitXError,
+ *   hasErrorCode
+ * } from 'gitx.do'
+ *
+ * try {
+ *   await storage.getObject(sha)
+ * } catch (error) {
+ *   if (hasErrorCode(error, 'NOT_FOUND')) {
+ *     // Handle not found
+ *   } else if (error instanceof StorageError) {
+ *     console.log(`Storage error: ${error.code}`)
+ *   }
+ * }
+ * ```
+ */
+export {
+  // Base error class
+  GitXError,
+  type GitXErrorCode,
+  // Domain-specific errors
+  StorageError,
+  type StorageErrorCode,
+  WireError,
+  type WireErrorCode,
+  IcebergError,
+  type IcebergErrorCode,
+  RefError,
+  type RefErrorCode,
+  ObjectError,
+  type ObjectErrorCode,
+  RPCError,
+  type RPCErrorCode,
+  MigrationError,
+  type MigrationErrorCode,
+  // Type guards
+  isGitXError,
+  isStorageError,
+  isWireError,
+  isIcebergError,
+  isRefError,
+  isObjectError,
+  isRPCError,
+  isMigrationError,
+  hasErrorCode,
+} from './errors'

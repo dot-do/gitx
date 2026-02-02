@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ParquetStore } from '../../src/storage/parquet-store'
 import type { DurableObjectStorage } from '../../src/do/schema'
+import { CollectingMetrics } from '../../src/storage/metrics'
 
 /**
  * Mock R2Bucket for testing.
@@ -1189,6 +1190,84 @@ describe('ParquetStore', () => {
 
       const walEntry = Array.from(walStorage.walEntries.values())[0]
       expect(walEntry.path).toBe('/src/main.ts')
+    })
+  })
+
+  describe('metrics integration', () => {
+    let metricsStore: ParquetStore
+    let metrics: CollectingMetrics
+
+    beforeEach(() => {
+      metrics = new CollectingMetrics()
+      metricsStore = new ParquetStore({
+        r2: mockR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+        metrics,
+      })
+    })
+
+    it('should emit write metrics on putObject', async () => {
+      const data = encoder.encode('hello world')
+      const sha = await metricsStore.putObject('blob', data)
+
+      expect(metrics.writes).toHaveLength(1)
+      expect(metrics.writes[0]).toEqual(expect.objectContaining({
+        sha,
+        sizeBytes: data.length,
+        tier: 'buffer',
+        objectType: 'blob',
+      }))
+      expect(metrics.writes[0]?.latencyMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should emit cache hit metrics on getObject from buffer', async () => {
+      const data = encoder.encode('test content')
+      const sha = await metricsStore.putObject('blob', data)
+
+      metrics.clear() // Clear write metrics
+      await metricsStore.getObject(sha)
+
+      // Should have cache hit for buffer
+      expect(metrics.getCacheHits('buffer')).toHaveLength(1)
+      // Should have a read metric
+      expect(metrics.reads).toHaveLength(1)
+      expect(metrics.reads[0]).toEqual(expect.objectContaining({
+        sha,
+        tier: 'buffer',
+        objectType: 'blob',
+        sizeBytes: data.length,
+      }))
+    })
+
+    it('should emit cache miss metrics for unknown objects', async () => {
+      await metricsStore.getObject('0'.repeat(40))
+
+      // Should have cache miss for bloom filter
+      expect(metrics.getCacheMisses('bloom')).toHaveLength(1)
+    })
+
+    it('should emit flush metrics', async () => {
+      // Add some objects
+      await metricsStore.putObject('blob', encoder.encode('content 1'))
+      await metricsStore.putObject('blob', encoder.encode('content 2'))
+      await metricsStore.putObject('blob', encoder.encode('content 3'))
+
+      metrics.clear() // Clear write metrics
+      await metricsStore.flush()
+
+      expect(metrics.flushes).toHaveLength(1)
+      expect(metrics.flushes[0]).toEqual(expect.objectContaining({
+        objectCount: 3,
+      }))
+      expect(metrics.flushes[0]?.sizeBytes).toBeGreaterThan(0)
+      expect(metrics.flushes[0]?.latencyMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should not emit metrics when buffer is empty on flush', async () => {
+      await metricsStore.flush()
+
+      expect(metrics.flushes).toHaveLength(0)
     })
   })
 })

@@ -20,6 +20,7 @@ import type {
 import type { R2DataCatalog } from './catalog'
 import { ParquetSchema, ParquetFieldType } from '../../tiered/parquet-writer'
 import { generateSnapshotId } from '../../iceberg/adapter'
+import { r2PathWithPrefix } from '../../utils/r2-path'
 
 // ============================================================================
 // Types
@@ -354,11 +355,7 @@ export class IcebergTableManager {
   }
 
   private r2Path(location: string): string {
-    if (location.startsWith('r2://')) {
-      const path = location.replace(/^r2:\/\/[^/]+\//, '')
-      return this.prefix ? `${this.prefix}/${path}` : path
-    }
-    return location
+    return r2PathWithPrefix(location, this.prefix || undefined)
   }
 }
 
