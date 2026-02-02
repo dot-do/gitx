@@ -3,10 +3,11 @@ import path from 'path'
 
 export default defineWorkersConfig({
   resolve: {
-    alias: {
-      '@dotdo/gitx': path.resolve(__dirname, './packages/core'),
-      'core': path.resolve(__dirname, './packages/core'),
-    },
+    alias: [
+      { find: /^@dotdo\/gitx\/(.*)$/, replacement: path.resolve(__dirname, './packages/core/$1') },
+      { find: '@dotdo/gitx', replacement: path.resolve(__dirname, './packages/core') },
+      { find: 'core', replacement: path.resolve(__dirname, './packages/core') },
+    ],
   },
   test: {
     globals: true,

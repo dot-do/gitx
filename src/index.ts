@@ -784,7 +784,11 @@ export {
  * ```
  */
 export {
-  // Tool definitions
+  // New search/fetch/do tools
+  createGitBindingFromContext,
+  createGitTools,
+  type GitBinding,
+  // Legacy tool definitions (backward compat)
   gitTools,
   registerTool,
   validateToolInput,

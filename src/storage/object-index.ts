@@ -411,11 +411,23 @@ export class ObjectIndex {
       'SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE sha = ?',
       sha
     )
-    const rows = result.toArray() as ObjectLocation[]
+    const rows = result.toArray() as Array<{
+      sha: string; tier: string; pack_id: string | null; offset: number | null;
+      size: number; type?: string; updated_at?: number
+    }>
     if (rows.length === 0) {
       return null
     }
-    return rows[0]
+    const row = rows[0]
+    return {
+      sha: row.sha,
+      tier: row.tier as StorageTier,
+      packId: row.pack_id,
+      offset: row.offset,
+      size: row.size,
+      type: row.type,
+      updatedAt: row.updated_at,
+    }
   }
 
   /**
@@ -456,11 +468,22 @@ export class ObjectIndex {
       `SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE sha IN (${placeholders})`,
       ...shas
     )
-    const rows = result.toArray() as ObjectLocation[]
+    const rawRows = result.toArray() as Array<{
+      sha: string; tier: string; pack_id: string | null; offset: number | null;
+      size: number; type?: string; updated_at?: number
+    }>
 
     const found = new Map<string, ObjectLocation>()
-    for (const row of rows) {
-      found.set(row.sha, row)
+    for (const row of rawRows) {
+      found.set(row.sha, {
+        sha: row.sha,
+        tier: row.tier as StorageTier,
+        packId: row.pack_id,
+        offset: row.offset,
+        size: row.size,
+        type: row.type,
+        updatedAt: row.updated_at,
+      })
     }
 
     const missing = shas.filter(sha => !found.has(sha))
@@ -643,7 +666,19 @@ export class ObjectIndex {
       'SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE tier = ?',
       tier
     )
-    return result.toArray() as ObjectLocation[]
+    const rawRows = result.toArray() as Array<{
+      sha: string; tier: string; pack_id: string | null; offset: number | null;
+      size: number; type?: string; updated_at?: number
+    }>
+    return rawRows.map(row => ({
+      sha: row.sha,
+      tier: row.tier as StorageTier,
+      packId: row.pack_id,
+      offset: row.offset,
+      size: row.size,
+      type: row.type,
+      updatedAt: row.updated_at,
+    }))
   }
 
   /**
@@ -673,7 +708,19 @@ export class ObjectIndex {
       'SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE pack_id = ?',
       packId
     )
-    const locations = result.toArray() as ObjectLocation[]
+    const rawRows = result.toArray() as Array<{
+      sha: string; tier: string; pack_id: string | null; offset: number | null;
+      size: number; type?: string; updated_at?: number
+    }>
+    const locations = rawRows.map(row => ({
+      sha: row.sha,
+      tier: row.tier as StorageTier,
+      packId: row.pack_id,
+      offset: row.offset,
+      size: row.size,
+      type: row.type,
+      updatedAt: row.updated_at,
+    }))
     // Sort by offset to ensure consistent ordering
     return locations.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0))
   }

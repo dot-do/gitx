@@ -28,7 +28,7 @@
 /**
  * Default command executor (placeholder - actual implementation depends on runtime)
  */
-const defaultExec = async (command, options) => {
+const defaultExec = async (command, _options) => {
     // This is a placeholder implementation
     // The actual implementation would use Node.js child_process, Deno.Command,
     // or make an RPC call to git.do service

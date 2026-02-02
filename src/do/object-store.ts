@@ -1033,10 +1033,10 @@ export class SqliteObjectStore implements BasicObjectStore {
 
     // Fall back to database for non-chunked objects
     const result = this.storage.sql.exec(
-      'SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha = ?',
+      'SELECT sha, type, size, data, created_at FROM objects WHERE sha = ?',
       sha
     )
-    const rows = typedQuery<StoredObject>(result, validateRow(['sha', 'type', 'size', 'data']))
+    const rows = typedQuery<{ sha: string; type: ObjectType; size: number; data: Uint8Array; created_at: number }>(result, validateRow(['sha', 'type', 'size', 'data']))
 
     if (rows.length === 0) {
       this.log('debug', `Object not found: ${sha}`)
@@ -1047,7 +1047,14 @@ export class SqliteObjectStore implements BasicObjectStore {
       return null
     }
 
-    const obj = rows[0]
+    const row = rows[0]
+    const obj: StoredObject = {
+      sha: row.sha,
+      type: row.type,
+      size: row.size,
+      data: row.data,
+      createdAt: row.created_at,
+    }
 
     // Add to cache for subsequent reads
     this.cache.set(sha, obj)
@@ -1461,18 +1468,25 @@ export class SqliteObjectStore implements BasicObjectStore {
       // Build optimized IN query
       const placeholders = uncachedShas.map(() => '?').join(', ')
       const result = this.storage.sql.exec(
-        `SELECT sha, type, size, data, created_at as createdAt FROM objects WHERE sha IN (${placeholders})`,
+        `SELECT sha, type, size, data, created_at FROM objects WHERE sha IN (${placeholders})`,
         ...uncachedShas
       )
-      const rows = typedQuery<StoredObject>(result, validateRow(['sha', 'type', 'size', 'data']))
+      const rows = typedQuery<{ sha: string; type: ObjectType; size: number; data: Uint8Array; created_at: number }>(result, validateRow(['sha', 'type', 'size', 'data']))
 
       // Build lookup map for O(1) access
       const rowMap = new Map<string, StoredObject>()
       for (const row of rows) {
-        rowMap.set(row.sha, row)
+        const obj: StoredObject = {
+          sha: row.sha,
+          type: row.type,
+          size: row.size,
+          data: row.data,
+          createdAt: row.created_at,
+        }
+        rowMap.set(obj.sha, obj)
         // Add to cache for future reads
-        this.cache.set(row.sha, row)
-        totalBytesRead += row.size
+        this.cache.set(obj.sha, obj)
+        totalBytesRead += obj.size
       }
 
       // Fill in results at original indices

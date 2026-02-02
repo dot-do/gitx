@@ -99,8 +99,12 @@ export interface RepositoryProvider {
     /** Update a ref */
     updateRef?(repo: string, ref: string, oldSha: string, newSha: string): Promise<boolean>;
 }
-/** Ref update command for receive-pack */
-export interface RefUpdateCommand {
+/**
+ * Ref update command for receive-pack.
+ * Note: The base `RefUpdateCommand` interface is exported from the `protocol` module.
+ * This extended version adds the `type` discriminator used by Smart HTTP handlers.
+ */
+export interface SmartHTTPRefUpdateCommand {
     oldSha: string;
     newSha: string;
     ref: string;

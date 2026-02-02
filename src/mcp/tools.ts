@@ -3557,3 +3557,257 @@ export function listTools(): Array<Omit<MCPTool, 'handler'>> {
 export function getTool(name: string): MCPTool | undefined {
   return toolRegistry.get(name)
 }
+
+// =============================================================================
+// GitBinding adapter from RepositoryContext
+// =============================================================================
+
+import type {
+  GitBinding,
+  GitStatusOptions,
+  GitStatusResult,
+  GitLogOptions,
+  GitLogResult,
+  GitDiffOptions,
+  GitShowOptions,
+  GitCommitOptions,
+  GitAddOptions,
+  GitCheckoutOptions,
+  GitBranchOptions,
+  GitBranchResult,
+  GitMergeOptions,
+  GitPushOptions,
+  GitPullOptions,
+  GitFetchOptions,
+  GitCloneOptions,
+  GitInitOptions,
+} from './tools/do'
+
+import { createGitTools } from './tools/index'
+
+export type { GitBinding }
+export { createGitTools }
+
+/**
+ * Create a GitBinding from a RepositoryContext.
+ *
+ * This bridges the old per-tool handler pattern to the new search/fetch/do
+ * surface by implementing the GitBinding interface on top of RepositoryContext.
+ * Each GitBinding method delegates to the same underlying operations that the
+ * individual git_* tool handlers use.
+ *
+ * @param ctx - The repository context providing object store, ref store, etc.
+ * @returns A GitBinding suitable for use with createGitTools()
+ */
+export function createGitBindingFromContext(ctx: RepositoryContext): GitBinding {
+  /**
+   * Resolve a ref string to a commit SHA.
+   */
+  async function resolveRef(ref?: string): Promise<string | null> {
+    if (ref && /^[a-f0-9]{40}$/i.test(ref)) return ref
+    if (ref) {
+      let sha = await ctx.refStore.getRef(`refs/heads/${ref}`)
+      if (!sha) sha = await ctx.refStore.getRef(`refs/tags/${ref}`)
+      return sha
+    }
+    const headRef = await ctx.refStore.getSymbolicRef('HEAD')
+    if (headRef) return ctx.refStore.getRef(headRef)
+    return ctx.refStore.getHead()
+  }
+
+  return {
+    async status(options?: GitStatusOptions): Promise<GitStatusResult> {
+      const currentBranch = await getCurrentBranch(ctx.refStore)
+      const headSha = await resolveRef()
+
+      const staged: string[] = []
+      const unstaged: string[] = []
+      const untracked: string[] = []
+
+      if (ctx.index) {
+        const indexEntries = await ctx.index.getEntries()
+        let headEntries = new Map<string, { sha: string; mode: string }>()
+        if (headSha) {
+          const headCommit = await ctx.objectStore.getCommit(headSha)
+          if (headCommit) {
+            headEntries = await flattenTree(ctx.objectStore, headCommit.tree)
+          }
+        }
+        const stagedChanges = compareIndexToHead(headEntries, indexEntries)
+        for (const c of stagedChanges) {
+          if (c.status !== DiffStatus.UNMERGED) staged.push(c.path)
+        }
+
+        if (ctx.workdir) {
+          const workdirFiles = await ctx.workdir.getFiles()
+          const indexMap = new Map(indexEntries.filter(e => e.stage === 0).map(e => [e.path, e]))
+          const workdirMap = new Map(workdirFiles.map(f => [f.path, f]))
+          for (const file of workdirFiles) {
+            const ie = indexMap.get(file.path)
+            if (!ie) untracked.push(file.path)
+            else if (ie.sha !== file.sha || ie.mode !== file.mode) unstaged.push(file.path)
+          }
+          for (const [path] of indexMap) {
+            if (!workdirMap.has(path)) unstaged.push(path)
+          }
+        }
+      }
+
+      return {
+        branch: currentBranch || 'HEAD',
+        staged,
+        unstaged,
+        untracked,
+        clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      }
+    },
+
+    async log(options?: GitLogOptions): Promise<GitLogResult> {
+      const startSha = await resolveRef(options?.ref)
+      if (!startSha) return { commits: [] }
+
+      const commitProvider: CommitProvider = {
+        getCommit: (sha: string) => ctx.objectStore.getCommit(sha),
+      }
+      const traversalOptions: TraversalOptions = {
+        maxCount: options?.maxCount,
+        sort: 'date',
+      }
+
+      const commits: GitLogResult['commits'] = []
+      for await (const tc of walkCommits(commitProvider, startSha, traversalOptions)) {
+        const msg = tc.commit.message
+        if (options?.grep && !msg.toLowerCase().includes(options.grep.toLowerCase())) continue
+        if (options?.author && !tc.commit.author.name.toLowerCase().includes(options.author.toLowerCase())) continue
+        commits.push({
+          sha: tc.sha,
+          message: msg,
+          author: `${tc.commit.author.name} <${tc.commit.author.email}>`,
+          date: new Date(tc.commit.author.timestamp * 1000).toISOString(),
+        })
+      }
+
+      return { commits }
+    },
+
+    async diff(options?: GitDiffOptions): Promise<string | Record<string, unknown>> {
+      const result = await invokeTool('git_diff', {
+        staged: options?.staged,
+        commit1: options?.commit1,
+        commit2: options?.commit2,
+        path: options?.path,
+      })
+      return result.content[0].text
+    },
+
+    async show(revision: string, options?: GitShowOptions): Promise<Record<string, unknown>> {
+      const result = await invokeTool('git_show', {
+        revision,
+        path: options?.path,
+        format: options?.format,
+        context_lines: options?.contextLines,
+      })
+      const text = result.content[0].text
+      // Try to return structured data
+      try { return JSON.parse(text) } catch { /* ignore */ }
+      // For commit show, parse the text output into structured form
+      const commitSha = await resolveRef(revision)
+      if (commitSha) {
+        const commit = await ctx.objectStore.getCommit(commitSha)
+        if (commit) {
+          return {
+            sha: commitSha,
+            message: commit.message,
+            author: `${commit.author.name} <${commit.author.email}>`,
+            date: new Date(commit.author.timestamp * 1000).toISOString(),
+            parents: commit.parents,
+            tree: commit.tree,
+            text,
+          }
+        }
+      }
+      return { text }
+    },
+
+    async commit(options: GitCommitOptions): Promise<{ sha: string }> {
+      const result = await invokeTool('git_commit', {
+        message: options.message,
+        author: options.author,
+        email: options.email,
+        amend: options.amend,
+      })
+      const text = result.content[0].text
+      // Parse "[$branch $sha] $message" format
+      const match = text.match(/\[.+\s+([a-f0-9]{7,})\]/)
+      return { sha: match ? match[1] : 'unknown' }
+    },
+
+    async add(files: string | string[], options?: GitAddOptions): Promise<void> {
+      const fileList = Array.isArray(files) ? files : [files]
+      await invokeTool('git_add', { files: fileList, all: options?.all })
+    },
+
+    async checkout(ref: string, options?: GitCheckoutOptions): Promise<void> {
+      await invokeTool('git_checkout', {
+        ref,
+        createBranch: options?.createBranch,
+        path: options?.path,
+      })
+    },
+
+    async branch(options?: GitBranchOptions): Promise<GitBranchResult> {
+      if (options?.delete && options?.name) {
+        await invokeTool('git_branch', { name: options.name, delete: true })
+        return { branches: [] }
+      }
+      if (options?.name) {
+        await invokeTool('git_branch', { name: options.name })
+        return { branches: [] }
+      }
+      // List branches using the underlying ops
+      const branches = await listBranches(ctx.refStore, {
+        all: options?.all || false,
+        remote: options?.remote || false,
+      })
+      const current = await getCurrentBranch(ctx.refStore)
+      return {
+        current: current || undefined,
+        branches: branches.map(b => ({
+          name: b.name,
+          sha: b.sha,
+          remote: b.remote,
+        })),
+      }
+    },
+
+    async merge(branch: string, options?: GitMergeOptions): Promise<{ merged: boolean; conflicts?: string[] }> {
+      const result = await invokeTool('git_merge', { branch, ...options })
+      return { merged: !result.isError }
+    },
+
+    async push(options?: GitPushOptions): Promise<{ pushed: boolean; remote?: string; branch?: string }> {
+      const result = await invokeTool('git_push', options ?? {})
+      return { pushed: !result.isError, remote: options?.remote, branch: options?.branch }
+    },
+
+    async pull(options?: GitPullOptions): Promise<{ pulled: boolean; commits?: number }> {
+      const result = await invokeTool('git_pull', options ?? {})
+      return { pulled: !result.isError }
+    },
+
+    async fetch(options?: GitFetchOptions): Promise<{ fetched: boolean; refs?: string[] }> {
+      const result = await invokeTool('git_fetch', options ?? {})
+      return { fetched: !result.isError }
+    },
+
+    async clone(url: string, options?: GitCloneOptions): Promise<{ cloned: boolean; path?: string }> {
+      const result = await invokeTool('git_clone', { url, ...options })
+      return { cloned: !result.isError }
+    },
+
+    async init(options?: GitInitOptions): Promise<{ initialized: boolean; path?: string }> {
+      const result = await invokeTool('git_init', options ?? {})
+      return { initialized: !result.isError }
+    },
+  }
+}

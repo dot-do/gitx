@@ -28,6 +28,18 @@
  * ```
  */
 
+import {
+  BundleWriter,
+  type BundleWriteStorage,
+  type BundleWriterConfig,
+} from '../storage/bundle/writer'
+import {
+  R2BundleReader,
+  type BundleReadStorage,
+  type BundleReaderConfig,
+} from '../storage/bundle/reader'
+import { BundleObjectType, objectTypeToBundleType } from '../storage/bundle/format'
+
 // ============================================================================
 // Types and Interfaces
 // ============================================================================
@@ -73,6 +85,33 @@ export interface R2ObjectLike {
 }
 
 /**
+ * Configuration for bundle-based tiered storage.
+ * When provided, warm/cold tier blobs are stored in R2 bundles
+ * instead of individual R2 objects.
+ */
+export interface BundleStorageConfig {
+  /**
+   * R2-compatible write storage for bundles.
+   */
+  writeStorage: BundleWriteStorage
+
+  /**
+   * R2-compatible read storage for bundles.
+   */
+  readStorage: BundleReadStorage
+
+  /**
+   * BundleWriter configuration (max size, key prefix, etc.).
+   */
+  writerConfig?: BundleWriterConfig
+
+  /**
+   * BundleReader configuration (cache size, etc.).
+   */
+  readerConfig?: BundleReaderConfig
+}
+
+/**
  * Configuration options for FsModule.
  */
 export interface FsModuleOptions {
@@ -90,6 +129,13 @@ export interface FsModuleOptions {
    * Optional R2 bucket for cold/archive tier storage.
    */
   archive?: R2BucketLike
+
+  /**
+   * Optional bundle storage for warm/cold tiers.
+   * When provided, blobs demoted to warm/cold are written into
+   * R2 bundles (batched objects) instead of individual R2 objects.
+   */
+  bundleStorage?: BundleStorageConfig
 
   /**
    * Base path prefix for all operations.
@@ -366,10 +412,12 @@ const SCHEMA = `
     size INTEGER NOT NULL,
     checksum TEXT,
     tier TEXT NOT NULL DEFAULT 'hot' CHECK(tier IN ('hot', 'warm', 'cold')),
+    bundle_key TEXT,
     created_at INTEGER NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_blobs_tier ON blobs(tier);
+  CREATE INDEX IF NOT EXISTS idx_blobs_bundle ON blobs(bundle_key);
 `
 
 // ============================================================================
@@ -466,6 +514,8 @@ export class FsModule {
   private readonly sql: SqlStorage
   private readonly r2?: R2BucketLike
   private readonly archive?: R2BucketLike
+  private readonly bundleWriter?: BundleWriter
+  private readonly bundleReader?: R2BundleReader
   private readonly basePath: string
   private readonly hotMaxSize: number
   private readonly defaultMode: number
@@ -494,6 +544,17 @@ export class FsModule {
     this.hotMaxSize = options.hotMaxSize ?? 1024 * 1024 // 1MB
     this.defaultMode = options.defaultMode ?? 0o644
     this.defaultDirMode = options.defaultDirMode ?? 0o755
+
+    if (options.bundleStorage) {
+      this.bundleWriter = new BundleWriter(
+        options.bundleStorage.writeStorage,
+        options.bundleStorage.writerConfig
+      )
+      this.bundleReader = new R2BundleReader(
+        options.bundleStorage.readStorage,
+        options.bundleStorage.readerConfig
+      )
+    }
   }
 
   /**
@@ -538,7 +599,10 @@ export class FsModule {
    * Cleanup hook for capability disposal.
    */
   async dispose(): Promise<void> {
-    // No cleanup needed for SQLite-backed storage
+    // Flush any pending bundle writes on disposal
+    if (this.bundleWriter && !this.bundleWriter.isClosed) {
+      await this.bundleWriter.close()
+    }
   }
 
   // ===========================================================================
@@ -596,8 +660,9 @@ export class FsModule {
 
   private selectTier(size: number): 'hot' | 'warm' | 'cold' {
     if (size <= this.hotMaxSize) return 'hot'
+    if (this.bundleWriter) return 'warm'
     if (this.r2) return 'warm'
-    return 'hot' // Fall back to hot if R2 not configured
+    return 'hot' // Fall back to hot if no warm/cold storage configured
   }
 
   private async storeBlob(id: string, data: Uint8Array, tier: 'hot' | 'warm' | 'cold'): Promise<void> {
@@ -610,6 +675,18 @@ export class FsModule {
         data.buffer,
         data.length,
         tier,
+        now
+      )
+    } else if ((tier === 'warm' || tier === 'cold') && this.bundleWriter) {
+      // Use bundle storage for warm/cold tiers when available
+      await this.bundleWriter.add(id, BundleObjectType.BLOB, data)
+      const bundleKey = this.bundleWriter.activeBundleId
+      this.sql.exec(
+        'INSERT OR REPLACE INTO blobs (id, size, tier, bundle_key, created_at) VALUES (?, ?, ?, ?, ?)',
+        id,
+        data.length,
+        tier,
+        bundleKey,
         now
       )
     } else if (tier === 'warm' && this.r2) {
@@ -638,6 +715,14 @@ export class FsModule {
       const blob = this.sql.exec<{ data: ArrayBuffer }>('SELECT data FROM blobs WHERE id = ?', id).one()
       if (!blob?.data) return null
       return new Uint8Array(blob.data)
+    }
+
+    // Check if blob is stored in a bundle
+    const blobMeta = this.sql.exec<{ bundle_key: string | null }>('SELECT bundle_key FROM blobs WHERE id = ?', id).one()
+    if (blobMeta?.bundle_key && this.bundleReader) {
+      const obj = await this.bundleReader.readObject(blobMeta.bundle_key, id)
+      if (obj) return obj.data
+      // Fall through to direct R2 read if bundle read fails
     }
 
     if (tier === 'warm' && this.r2) {
@@ -1673,7 +1758,7 @@ export class FsModule {
     const data = await this.getBlob(file.blob_id, currentTier)
     if (!data) return
 
-    // Store in new tier
+    // Store in new tier (storeBlob will use bundle writer if available)
     const newBlobId = crypto.randomUUID()
     await this.storeBlob(newBlobId, data, tier)
 
@@ -1682,6 +1767,19 @@ export class FsModule {
 
     // Update file
     this.sql.exec('UPDATE files SET blob_id = ?, tier = ? WHERE id = ?', newBlobId, tier, file.id)
+  }
+
+  /**
+   * Flush pending bundle writes to R2.
+   * Call this periodically or before shutdown to ensure all
+   * warm/cold tier data is persisted to bundle storage.
+   *
+   * @returns Metadata about the sealed bundle, or null if nothing to flush
+   */
+  async flushBundles(): Promise<void> {
+    if (this.bundleWriter && this.bundleWriter.pendingObjectCount > 0) {
+      await this.bundleWriter.flush()
+    }
   }
 }
 

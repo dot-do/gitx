@@ -359,8 +359,22 @@ export class WALManager {
         'SELECT id, operation, payload, transaction_id, created_at, flushed FROM wal WHERE flushed = 0 ORDER BY id ASC'
       )
 
-      const rows = result.toArray() as WALEntry[]
-      return rows.sort((a, b) => a.id - b.id)
+      const rawRows = result.toArray() as Array<{
+        id: number
+        operation: WALOperationType
+        payload: Uint8Array
+        transaction_id: string | null
+        created_at: number
+        flushed: number
+      }>
+      return rawRows.map(row => ({
+        id: row.id,
+        operation: row.operation,
+        payload: row.payload,
+        transactionId: row.transaction_id,
+        createdAt: row.created_at,
+        flushed: row.flushed === 1,
+      })).sort((a, b) => a.id - b.id)
     })
   }
 
@@ -637,8 +651,20 @@ export class WALManager {
       'SELECT id, wal_position, created_at, metadata FROM checkpoints ORDER BY id DESC LIMIT 1'
     )
 
-    const rows = result.toArray() as Checkpoint[]
-    return rows.length > 0 ? rows[0] : null
+    const rawRows = result.toArray() as Array<{
+      id: number
+      wal_position: number
+      created_at: number
+      metadata: string | null
+    }>
+    if (rawRows.length === 0) return null
+    const row = rawRows[0]
+    return {
+      id: row.id,
+      walPosition: row.wal_position,
+      createdAt: row.created_at,
+      metadata: row.metadata,
+    }
   }
 
   /**

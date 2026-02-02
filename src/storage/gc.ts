@@ -604,15 +604,20 @@ export class ParquetStoreGCAdapter implements GCObjectStore {
     try {
       // Query the exact_cache table which stores all known SHAs
       const result = this.sql.sql.exec(
-        `SELECT sha, type, size, added_at as createdAt FROM exact_cache`
+        `SELECT sha, type, size, added_at FROM exact_cache`
       )
-      const rows = result.toArray() as Array<{
+      const rawRows = result.toArray() as Array<{
         sha: string
         type: ObjectType
         size: number
-        createdAt: number
+        added_at: number
       }>
-      return rows
+      return rawRows.map(row => ({
+        sha: row.sha,
+        type: row.type,
+        size: row.size,
+        createdAt: row.added_at,
+      }))
     } catch (err) {
       // If exact_cache doesn't exist, fall back to scanning Parquet files
       return this.listObjectsFromParquet()

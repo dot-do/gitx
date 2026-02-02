@@ -151,7 +151,7 @@ export interface GitXPromise<T = GitResult, Opts extends Record<string, unknown>
 /**
  * Default command executor (placeholder - actual implementation depends on runtime)
  */
-const defaultExec = async (command: string, options: GitOptions): Promise<GitResult> => {
+const defaultExec = async (command: string, _options: GitOptions): Promise<GitResult> => {
   // This is a placeholder implementation
   // The actual implementation would use Node.js child_process, Deno.Command,
   // or make an RPC call to git.do service
