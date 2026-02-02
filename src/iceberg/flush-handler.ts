@@ -67,7 +67,7 @@ export function createIcebergFlushHandler(): OnFlushHandler {
 
     // (b) Create a manifest containing that entry
     const manifestId = crypto.randomUUID()
-    const manifestPath = `${prefix}/iceberg/manifests/${manifestId}.json`
+    const manifestPath = `${prefix}/iceberg/manifests/${manifestId}.avro`
     const manifest = createManifest({
       entries: [entry],
       schemaId: 0,
@@ -79,7 +79,7 @@ export function createIcebergFlushHandler(): OnFlushHandler {
 
     // (d) Create manifest list
     const manifestListId = crypto.randomUUID()
-    const manifestListPath = `${prefix}/iceberg/manifest-lists/${manifestListId}.json`
+    const manifestListPath = `${prefix}/iceberg/manifest-lists/${manifestListId}.avro`
     const manifestList = createManifestList({
       manifests: [manifest],
       snapshotId,

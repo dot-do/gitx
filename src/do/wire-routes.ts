@@ -57,8 +57,11 @@ const DEFAULT_SERVER_CAPABILITIES: ServerCapabilities = {
 /**
  * Adapts the DO's ObjectStore and SQLite storage to the RepositoryProvider
  * interface expected by the Smart HTTP wire protocol handlers.
+ *
+ * This class is cached at the DO instance level to avoid recreation per-request.
+ * @see GitRepoDO.getRepositoryProvider()
  */
-class DORepositoryProvider implements RepositoryProvider {
+export class DORepositoryProvider implements RepositoryProvider {
   private storage: DurableObjectStorage
   private objectStore: SqliteObjectStore
   private schemaManager: SchemaManager
@@ -429,8 +432,8 @@ export function setupWireRoutes(
   router.get('/:namespace/info/refs', async (c) => {
     try {
       const namespace = c.req.param('namespace')
-      const storage = instance.getStorage()
-      const provider = new DORepositoryProvider(storage)
+      // Use cached DORepositoryProvider from DO instance (avoids per-request recreation)
+      const provider = instance.getRepositoryProvider()
 
       const request = await toSmartHTTPRequest(c, '/info/refs', namespace)
       const response = await handleInfoRefs(
@@ -451,8 +454,8 @@ export function setupWireRoutes(
   router.post('/:namespace/git-upload-pack', async (c) => {
     try {
       const namespace = c.req.param('namespace')
-      const storage = instance.getStorage()
-      const provider = new DORepositoryProvider(storage)
+      // Use cached DORepositoryProvider from DO instance (avoids per-request recreation)
+      const provider = instance.getRepositoryProvider()
 
       const request = await toSmartHTTPRequest(
         c,
@@ -473,8 +476,8 @@ export function setupWireRoutes(
   router.post('/:namespace/git-receive-pack', async (c) => {
     try {
       const namespace = c.req.param('namespace')
-      const storage = instance.getStorage()
-      const provider = new DORepositoryProvider(storage)
+      // Use cached DORepositoryProvider from DO instance (avoids per-request recreation)
+      const provider = instance.getRepositoryProvider()
 
       const request = await toSmartHTTPRequest(
         c,

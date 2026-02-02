@@ -277,12 +277,12 @@ function encodeColumnBounds(
  * Generates a unique manifest file name.
  */
 export function generateManifestName(snapshotId: number, index = 0): string {
-  return `snap-${snapshotId}-${index}-manifest.json`
+  return `snap-${snapshotId}-${index}-manifest.avro`
 }
 
 /**
  * Generates a unique manifest list file name.
  */
 export function generateManifestListName(snapshotId: number): string {
-  return `snap-${snapshotId}.json`
+  return `snap-${snapshotId}.avro`
 }

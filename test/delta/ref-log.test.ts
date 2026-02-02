@@ -312,4 +312,118 @@ describe('RefLog', () => {
       await expect(failLog.flush()).rejects.toThrow('R2 write failed')
     })
   })
+
+  describe('rollback', () => {
+    it('should remove entries from the given version onwards', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+      log.append('refs/heads/main', 'aaa', 'ccc', 3000)
+      log.append('refs/heads/develop', '', 'ddd', 4000)
+
+      expect(log.getEntries()).toHaveLength(4)
+      expect(log.version).toBe(4)
+
+      // Rollback from version 3 onwards
+      const removed = log.rollback(3)
+
+      expect(removed).toBe(2) // versions 3 and 4 removed
+      expect(log.getEntries()).toHaveLength(2)
+      expect(log.version).toBe(2)
+
+      // Verify remaining entries
+      const entries = log.getEntries()
+      expect(entries[0]!.version).toBe(1)
+      expect(entries[1]!.version).toBe(2)
+    })
+
+    it('should reset nextVersion correctly after rollback', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+
+      log.rollback(2)
+
+      // nextVersion should be reset so new entries continue from 2
+      const newEntry = log.append('refs/heads/other', '', 'ccc', 3000)
+      expect(newEntry.version).toBe(2)
+    })
+
+    it('should remove all entries when rollback from version 1', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+
+      const removed = log.rollback(1)
+
+      expect(removed).toBe(2)
+      expect(log.getEntries()).toHaveLength(0)
+      expect(log.version).toBe(0)
+
+      // New entries should start at version 1
+      const newEntry = log.append('refs/heads/new', '', 'ccc', 3000)
+      expect(newEntry.version).toBe(1)
+    })
+
+    it('should handle rollback of non-existent version gracefully', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+
+      // Rollback from version 10 (doesn't exist)
+      const removed = log.rollback(10)
+
+      expect(removed).toBe(0)
+      expect(log.getEntries()).toHaveLength(2)
+    })
+
+    it('should invalidate snapshot when rollback reaches snapshot version', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+      log.append('refs/heads/main', 'aaa', 'ccc', 3000)
+
+      // Create a checkpoint at version 3
+      log.checkpoint()
+      expect(log.getSnapshot()).toBeDefined()
+      expect(log.getSnapshot()!.version).toBe(3)
+
+      // Add more entries
+      log.append('refs/heads/develop', '', 'ddd', 4000)
+
+      // Rollback from version 3 - should invalidate snapshot
+      log.rollback(3)
+
+      expect(log.getSnapshot()).toBeUndefined()
+    })
+
+    it('should preserve snapshot when rollback does not reach snapshot version', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+
+      // Create a checkpoint at version 2
+      log.checkpoint()
+      expect(log.getSnapshot()).toBeDefined()
+
+      // Add more entries
+      log.append('refs/heads/develop', '', 'ccc', 3000)
+      log.append('refs/heads/test', '', 'ddd', 4000)
+
+      // Rollback from version 3 - should preserve snapshot at version 2
+      log.rollback(3)
+
+      expect(log.getSnapshot()).toBeDefined()
+      expect(log.getSnapshot()!.version).toBe(2)
+    })
+
+    it('should correctly update state after rollback', () => {
+      log.append('refs/heads/main', '', 'aaa', 1000)
+      log.append('refs/heads/feature', '', 'bbb', 2000)
+      log.append('refs/heads/main', 'aaa', 'ccc', 3000)
+
+      // Rollback from version 3
+      log.rollback(3)
+
+      // State should reflect only the first two entries
+      const state = log.replayState()
+      expect(state.size).toBe(2)
+      expect(state.get('refs/heads/main')!.sha).toBe('aaa')
+      expect(state.get('refs/heads/feature')!.sha).toBe('bbb')
+    })
+  })
 })

@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   PushTransaction,
+  BufferOverflowError,
   type ObjectStorageDelegate,
   type OrphanCleanupDelegate,
   type RefUpdateCommand,
+  type PushTransactionOptions,
 } from '../../src/storage/push-transaction'
 import type { DurableObjectStorage } from '../../src/do/schema'
 import type { ObjectType } from '../../src/types/objects'
+import { RefLog } from '../../src/delta/ref-log'
 
 // ============================================================================
 // Mock Helpers
@@ -614,6 +617,365 @@ describe('PushTransaction', () => {
       expect(refStore.get('refs/heads/to-update')).toBe(sha1)
       expect(refStore.get('refs/heads/to-delete')).toBe(sha2)
       expect(refStore.get('refs/heads/conflict')).toBe(sha3)
+    })
+  })
+
+  describe('buffer size limit (maxBufferBytes)', () => {
+    it('should allow buffering when within limit', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 100 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Buffer 50 bytes - well within limit
+      const data = new Uint8Array(50)
+      tx.bufferObject('abc123'.padEnd(40, '0'), 'blob', data)
+
+      expect(tx.bufferedCount).toBe(1)
+      expect(tx.bufferedBytes).toBe(50)
+    })
+
+    it('should throw BufferOverflowError when limit is exceeded', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 100 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Buffer 60 bytes
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', new Uint8Array(60))
+
+      // Try to buffer another 50 bytes - would exceed 100 byte limit
+      expect(() => {
+        tx.bufferObject('sha2'.padEnd(40, '0'), 'blob', new Uint8Array(50))
+      }).toThrow(BufferOverflowError)
+    })
+
+    it('should provide detailed error information in BufferOverflowError', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 100 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Buffer 60 bytes
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', new Uint8Array(60))
+
+      // Try to buffer 50 more bytes
+      try {
+        tx.bufferObject('sha2'.padEnd(40, '0'), 'blob', new Uint8Array(50))
+        expect.fail('Should have thrown BufferOverflowError')
+      } catch (error) {
+        expect(error).toBeInstanceOf(BufferOverflowError)
+        const overflow = error as BufferOverflowError
+        expect(overflow.currentBytes).toBe(60)
+        expect(overflow.maxBytes).toBe(100)
+        expect(overflow.objectBytes).toBe(50)
+        expect(overflow.message).toContain('60')
+        expect(overflow.message).toContain('100')
+        expect(overflow.message).toContain('50')
+      }
+    })
+
+    it('should allow exact limit usage', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 100 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Buffer exactly 100 bytes
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', new Uint8Array(100))
+
+      expect(tx.bufferedCount).toBe(1)
+      expect(tx.bufferedBytes).toBe(100)
+    })
+
+    it('should reject single object that exceeds limit', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 50 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Try to buffer 100 bytes when limit is 50
+      expect(() => {
+        tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', new Uint8Array(100))
+      }).toThrow(BufferOverflowError)
+
+      expect(tx.bufferedCount).toBe(0)
+      expect(tx.bufferedBytes).toBe(0)
+    })
+
+    it('should have no limit by default (Infinity)', () => {
+      const objectStore = createMockObjectStore()
+      const tx = new PushTransaction(storage, objectStore)
+
+      // Buffer a large amount (10MB)
+      const largeData = new Uint8Array(10 * 1024 * 1024)
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', largeData)
+
+      expect(tx.bufferedCount).toBe(1)
+      expect(tx.bufferedBytes).toBe(10 * 1024 * 1024)
+    })
+
+    it('should not count deduplicated objects against limit', () => {
+      const objectStore = createMockObjectStore()
+      const options: PushTransactionOptions = { maxBufferBytes: 100 }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      const sha = 'abc123'.padEnd(40, '0')
+      const data = new Uint8Array(60)
+
+      // Buffer 60 bytes
+      tx.bufferObject(sha, 'blob', data)
+      expect(tx.bufferedBytes).toBe(60)
+
+      // Try to buffer same SHA again - should be deduplicated, no additional bytes
+      tx.bufferObject(sha, 'blob', data)
+      expect(tx.bufferedBytes).toBe(60)
+      expect(tx.bufferedCount).toBe(1)
+
+      // Now we should still have room for 40 more bytes
+      tx.bufferObject('sha2'.padEnd(40, '0'), 'blob', new Uint8Array(40))
+      expect(tx.bufferedBytes).toBe(100)
+      expect(tx.bufferedCount).toBe(2)
+    })
+
+    it('should work with legacy OrphanCleanupDelegate constructor', () => {
+      const objectStore = createMockObjectStore()
+      const cleanupDelegate: OrphanCleanupDelegate = {
+        scheduleOrphanCleanup: vi.fn(),
+      }
+      // Legacy constructor - should default to Infinity buffer limit
+      const tx = new PushTransaction(storage, objectStore, cleanupDelegate)
+
+      // Should be able to buffer without limit
+      const largeData = new Uint8Array(10 * 1024 * 1024)
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', largeData)
+
+      expect(tx.bufferedBytes).toBe(10 * 1024 * 1024)
+    })
+
+    it('should work with options including both cleanup delegate and buffer limit', () => {
+      const objectStore = createMockObjectStore()
+      const cleanupDelegate: OrphanCleanupDelegate = {
+        scheduleOrphanCleanup: vi.fn(),
+      }
+      const options: PushTransactionOptions = {
+        orphanCleanup: cleanupDelegate,
+        maxBufferBytes: 100,
+      }
+      const tx = new PushTransaction(storage, objectStore, options)
+
+      // Buffer 60 bytes
+      tx.bufferObject('sha1'.padEnd(40, '0'), 'blob', new Uint8Array(60))
+
+      // Should throw when exceeding limit
+      expect(() => {
+        tx.bufferObject('sha2'.padEnd(40, '0'), 'blob', new Uint8Array(50))
+      }).toThrow(BufferOverflowError)
+    })
+  })
+
+  describe('RefLog integration', () => {
+    it('should log ref changes to RefLog on successful push', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      const sha = 'aabbccdd'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({ existingShas: new Set([sha]) })
+      const tx = new PushTransaction(storage, objectStore, { refLog })
+
+      tx.bufferObject(sha, 'commit', new Uint8Array([0xaa, 0xbb]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
+      ])
+
+      expect(result.success).toBe(true)
+
+      // Verify RefLog has the entry
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(1)
+      expect(entries[0]!.ref_name).toBe('refs/heads/main')
+      expect(entries[0]!.old_sha).toBe('') // ZERO_SHA becomes empty string
+      expect(entries[0]!.new_sha).toBe(sha)
+
+      // Verify transaction has the entry
+      expect(tx.refLogEntries).toHaveLength(1)
+    })
+
+    it('should log multiple ref changes atomically', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'bbbb'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1, sha2]),
+      })
+      const tx = new PushTransaction(storage, objectStore, { refLog })
+
+      tx.bufferObject(sha1, 'commit', new Uint8Array([1]))
+      tx.bufferObject(sha2, 'commit', new Uint8Array([2]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha1 },
+        { refName: 'refs/heads/feature', oldSha: ZERO_SHA, newSha: sha2 },
+      ])
+
+      expect(result.success).toBe(true)
+
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(2)
+      expect(entries[0]!.ref_name).toBe('refs/heads/main')
+      expect(entries[1]!.ref_name).toBe('refs/heads/feature')
+
+      // Versions should be sequential
+      expect(entries[0]!.version).toBe(1)
+      expect(entries[1]!.version).toBe(2)
+    })
+
+    it('should log ref deletion with empty new_sha', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      const sha = 'deadbeef'.padEnd(40, '0')
+      refStore.set('refs/heads/to-delete', sha)
+
+      const objectStore = createMockObjectStore()
+      const tx = new PushTransaction(storage, objectStore, { refLog })
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/to-delete', oldSha: sha, newSha: ZERO_SHA },
+      ])
+
+      expect(result.success).toBe(true)
+
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(1)
+      expect(entries[0]!.ref_name).toBe('refs/heads/to-delete')
+      expect(entries[0]!.old_sha).toBe(sha)
+      expect(entries[0]!.new_sha).toBe('') // Deletion
+    })
+
+    it('should NOT log to RefLog when validation fails', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      const sha = 'newsha'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha]),
+      })
+      const tx = new PushTransaction(storage, objectStore, { refLog })
+
+      // Ref already exists, so CAS will fail
+      refStore.set('refs/heads/main', 'existingsha'.padEnd(40, '0'))
+
+      tx.bufferObject(sha, 'commit', new Uint8Array([1]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
+      ])
+
+      expect(result.success).toBe(false)
+
+      // RefLog should have NO entries - validation failed before logging
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(0)
+    })
+
+    it('should rollback RefLog entries when transaction throws', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      // Pre-populate RefLog with an entry to verify rollback doesn't affect it
+      refLog.append('refs/heads/existing', '', 'preexisting'.padEnd(40, '0'), 1000)
+      expect(refLog.getEntries()).toHaveLength(1)
+
+      const sha = 'newsha'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha]),
+      })
+
+      // Create storage that throws during COMMIT
+      const throwingStorage: DurableObjectStorage = {
+        sql: {
+          exec: (query: string, ...params: unknown[]): { toArray(): unknown[] } => {
+            const q = query.trim().toUpperCase()
+            if (q === 'COMMIT') {
+              throw new Error('Simulated commit failure')
+            }
+            // Delegate to normal mock for other operations
+            return storage.sql.exec(query, ...params)
+          },
+        },
+      }
+
+      const tx = new PushTransaction(throwingStorage, objectStore, { refLog })
+      tx.bufferObject(sha, 'commit', new Uint8Array([1]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
+      ])
+
+      expect(result.success).toBe(false)
+      expect(result.refResults[0]!.error).toContain('commit failure')
+
+      // RefLog should still have only the pre-existing entry (new entry rolled back)
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(1)
+      expect(entries[0]!.ref_name).toBe('refs/heads/existing')
+    })
+
+    it('should preserve timestamps from transaction across all RefLog entries', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+
+      const sha1 = 'aaaa'.padEnd(40, '0')
+      const sha2 = 'bbbb'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha1, sha2]),
+      })
+      const tx = new PushTransaction(storage, objectStore, { refLog })
+
+      tx.bufferObject(sha1, 'commit', new Uint8Array([1]))
+      tx.bufferObject(sha2, 'commit', new Uint8Array([2]))
+
+      const beforeTime = Date.now()
+      await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha1 },
+        { refName: 'refs/heads/feature', oldSha: ZERO_SHA, newSha: sha2 },
+      ])
+      const afterTime = Date.now()
+
+      const entries = refLog.getEntries()
+      expect(entries).toHaveLength(2)
+
+      // All entries in the same transaction should have the same timestamp
+      expect(entries[0]!.timestamp).toBe(entries[1]!.timestamp)
+      expect(entries[0]!.timestamp).toBeGreaterThanOrEqual(beforeTime)
+      expect(entries[0]!.timestamp).toBeLessThanOrEqual(afterTime)
+    })
+
+    it('should work with both RefLog and OrphanCleanupDelegate via options', async () => {
+      const refLog = new RefLog(null, 'test-repo')
+      const cleanupDelegate: OrphanCleanupDelegate = {
+        scheduleOrphanCleanup: vi.fn(),
+      }
+
+      const sha = 'orphansha'.padEnd(40, '0')
+      const objectStore = createMockObjectStore({
+        existingShas: new Set([sha]),
+      })
+      const tx = new PushTransaction(storage, objectStore, {
+        refLog,
+        orphanCleanup: cleanupDelegate,
+      })
+
+      // Set up: ref already exists, so CAS will fail
+      refStore.set('refs/heads/main', 'currentsha'.padEnd(40, '0'))
+
+      tx.bufferObject(sha, 'commit', new Uint8Array([1]))
+
+      const result = await tx.execute([
+        { refName: 'refs/heads/main', oldSha: ZERO_SHA, newSha: sha },
+      ])
+
+      expect(result.success).toBe(false)
+      expect(result.orphanedShas).toContain(sha)
+
+      // Cleanup delegate should be called
+      expect(cleanupDelegate.scheduleOrphanCleanup).toHaveBeenCalledWith([sha])
+
+      // RefLog should have no entries (validation failed)
+      expect(refLog.getEntries()).toHaveLength(0)
     })
   })
 })

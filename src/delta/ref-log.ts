@@ -244,4 +244,33 @@ export class RefLog {
   snapshot(atVersion: number): RefLogEntry[] {
     return this.entries.filter(e => e.version <= atVersion)
   }
+
+  /**
+   * Rollback entries from the given version onwards.
+   * Used by PushTransaction to undo RefLog entries when SQLite transaction fails.
+   *
+   * @param fromVersion - The version to rollback from (inclusive). All entries
+   *                      with version >= fromVersion will be removed.
+   * @returns The number of entries removed.
+   */
+  rollback(fromVersion: number): number {
+    const originalLength = this.entries.length
+    this.entries = this.entries.filter(e => e.version < fromVersion)
+    const removed = originalLength - this.entries.length
+
+    // Reset nextVersion to continue from where we rolled back to
+    if (this.entries.length > 0) {
+      const maxVersion = this.entries.reduce((max, e) => Math.max(max, e.version), 0)
+      this.nextVersion = maxVersion + 1
+    } else {
+      this.nextVersion = 1
+    }
+
+    // Invalidate snapshot if it's beyond the rollback point
+    if (this.latestSnapshot && this.latestSnapshot.version >= fromVersion) {
+      this.latestSnapshot = undefined
+    }
+
+    return removed
+  }
 }

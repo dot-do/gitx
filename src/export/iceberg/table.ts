@@ -281,7 +281,7 @@ export class IcebergTableManager {
     snapshotId: number,
     files: DataFile[]
   ): Promise<string> {
-    const manifestPath = `${this.tableLocation(namespace, table)}/metadata/snap-${snapshotId}-manifest.json`
+    const manifestPath = `${this.tableLocation(namespace, table)}/metadata/snap-${snapshotId}-manifest.avro`
 
     const manifestContent = {
       format_version: 2,

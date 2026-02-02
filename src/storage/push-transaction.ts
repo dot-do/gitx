@@ -22,6 +22,7 @@
 
 import type { ObjectType } from '../types/objects'
 import type { DurableObjectStorage } from './types'
+import type { RefLog, RefLogEntry } from '../delta/ref-log'
 
 // ============================================================================
 // Types
@@ -78,6 +79,46 @@ export interface OrphanCleanupDelegate {
   scheduleOrphanCleanup(shas: string[]): void
 }
 
+/**
+ * Options for configuring PushTransaction behavior.
+ */
+export interface PushTransactionOptions {
+  /** Optional delegate for scheduling cleanup of orphaned objects. */
+  orphanCleanup?: OrphanCleanupDelegate
+  /** Optional RefLog for atomic logging of ref changes. */
+  refLog?: RefLog
+  /**
+   * Maximum buffer size in bytes. When the buffer exceeds this limit,
+   * bufferObject() will throw a BufferOverflowError.
+   *
+   * Default: Infinity (no limit)
+   */
+  maxBufferBytes?: number
+}
+
+/**
+ * Error thrown when the buffer size limit is exceeded.
+ */
+export class BufferOverflowError extends Error {
+  /** Current buffer size in bytes */
+  readonly currentBytes: number
+  /** Maximum allowed buffer size in bytes */
+  readonly maxBytes: number
+  /** Size of the object that triggered the overflow */
+  readonly objectBytes: number
+
+  constructor(currentBytes: number, maxBytes: number, objectBytes: number) {
+    super(
+      `Buffer overflow: adding ${objectBytes} bytes would exceed limit ` +
+        `(current: ${currentBytes}, max: ${maxBytes})`
+    )
+    this.name = 'BufferOverflowError'
+    this.currentBytes = currentBytes
+    this.maxBytes = maxBytes
+    this.objectBytes = objectBytes
+  }
+}
+
 /** Transaction phase for tracking progress. */
 export type TransactionPhase =
   | 'idle'
@@ -107,18 +148,44 @@ export class PushTransaction {
   private storage: DurableObjectStorage
   private objectStore: ObjectStorageDelegate
   private orphanCleanup?: OrphanCleanupDelegate
+  private refLog?: RefLog
+  private maxBufferBytes: number
   private buffer: BufferedPushObject[] = []
   private flushedShas: string[] = []
   private _phase: TransactionPhase = 'idle'
+  /** RefLog entries staged during transaction, rolled back on failure */
+  private pendingRefLogEntries: RefLogEntry[] = []
 
+  /**
+   * Create a new PushTransaction.
+   *
+   * @param storage - Durable Object storage for SQLite operations
+   * @param objectStore - Delegate for object storage operations
+   * @param optionsOrCleanup - Either PushTransactionOptions or legacy OrphanCleanupDelegate
+   */
   constructor(
     storage: DurableObjectStorage,
     objectStore: ObjectStorageDelegate,
-    orphanCleanup?: OrphanCleanupDelegate
+    optionsOrCleanup?: PushTransactionOptions | OrphanCleanupDelegate
   ) {
     this.storage = storage
     this.objectStore = objectStore
-    this.orphanCleanup = orphanCleanup
+    this.maxBufferBytes = Infinity
+
+    // Support both new options interface and legacy single-argument cleanup delegate
+    if (optionsOrCleanup) {
+      if ('scheduleOrphanCleanup' in optionsOrCleanup) {
+        // Legacy: direct OrphanCleanupDelegate
+        this.orphanCleanup = optionsOrCleanup
+      } else {
+        // New: PushTransactionOptions
+        this.orphanCleanup = optionsOrCleanup.orphanCleanup
+        this.refLog = optionsOrCleanup.refLog
+        if (optionsOrCleanup.maxBufferBytes !== undefined) {
+          this.maxBufferBytes = optionsOrCleanup.maxBufferBytes
+        }
+      }
+    }
   }
 
   /** Current transaction phase. */
@@ -145,6 +212,8 @@ export class PushTransaction {
    *
    * Objects are held in memory until `execute()` is called.
    * Duplicate SHAs are silently deduplicated.
+   *
+   * @throws {BufferOverflowError} If adding the object would exceed maxBufferBytes
    */
   bufferObject(sha: string, type: ObjectType, data: Uint8Array): void {
     if (this._phase !== 'idle' && this._phase !== 'buffering') {
@@ -156,6 +225,11 @@ export class PushTransaction {
 
     // Deduplicate by SHA (content-addressed, so same SHA = same content)
     if (!this.buffer.some((obj) => obj.sha === sha)) {
+      // Check buffer size limit before adding
+      const currentBytes = this.bufferedBytes
+      if (currentBytes + data.length > this.maxBufferBytes) {
+        throw new BufferOverflowError(currentBytes, this.maxBufferBytes, data.length)
+      }
       this.buffer.push({ sha, type, data })
     }
   }
@@ -302,6 +376,7 @@ export class PushTransaction {
       }
 
       // All validations passed - apply all updates
+      const txTimestamp = Date.now()
       for (const cmd of commands) {
         const isDelete = cmd.newSha === ZERO_SHA
 
@@ -316,10 +391,19 @@ export class PushTransaction {
             cmd.refName,
             cmd.newSha.toLowerCase(),
             'sha',
-            Date.now()
+            txTimestamp
           )
         }
         refResults.push({ refName: cmd.refName, success: true })
+
+        // Stage RefLog entry (committed after SQLite transaction succeeds)
+        if (this.refLog) {
+          // For RefLog, empty string means deletion; for git protocol, ZERO_SHA means deletion
+          const logOldSha = cmd.oldSha === ZERO_SHA ? '' : cmd.oldSha
+          const logNewSha = cmd.newSha === ZERO_SHA ? '' : cmd.newSha
+          const entry = this.refLog.append(cmd.refName, logOldSha, logNewSha, txTimestamp)
+          this.pendingRefLogEntries.push(entry)
+        }
       }
 
       // Commit the entire transaction
@@ -332,6 +416,9 @@ export class PushTransaction {
         // Rollback may fail if transaction was already rolled back
         console.debug('[PushTransaction] rollback failed (may already be rolled back):', rollbackError instanceof Error ? rollbackError.message : String(rollbackError))
       }
+
+      // Rollback any RefLog entries that were staged
+      this.rollbackRefLogEntries()
 
       this._phase = 'failed'
       const msg = txError instanceof Error ? txError.message : 'transaction failed'
@@ -442,5 +529,44 @@ export class PushTransaction {
 
     // Only include SHAs that we actually flushed in this transaction
     return [...orphaned].filter((sha) => this.flushedShas.includes(sha))
+  }
+
+  // ==========================================================================
+  // Internal: RefLog Rollback
+  // ==========================================================================
+
+  /**
+   * Roll back RefLog entries that were staged during this transaction.
+   * Called when the SQLite transaction fails to ensure RefLog stays consistent.
+   */
+  private rollbackRefLogEntries(): void {
+    if (!this.refLog || this.pendingRefLogEntries.length === 0) {
+      return
+    }
+
+    // Find the minimum version among pending entries and roll back from there
+    const minVersion = Math.min(...this.pendingRefLogEntries.map(e => e.version))
+    const removed = this.refLog.rollback(minVersion)
+
+    if (removed > 0) {
+      console.debug(
+        `[PushTransaction] Rolled back ${removed} RefLog entries from version ${minVersion}`
+      )
+    }
+
+    // Clear pending entries
+    this.pendingRefLogEntries = []
+  }
+
+  // ==========================================================================
+  // Public: RefLog Entries (for testing/inspection)
+  // ==========================================================================
+
+  /**
+   * Get the RefLog entries that were committed as part of this transaction.
+   * Only populated after a successful execute() call.
+   */
+  get refLogEntries(): ReadonlyArray<RefLogEntry> {
+    return this.pendingRefLogEntries
   }
 }

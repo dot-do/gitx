@@ -1261,18 +1261,18 @@ describe('serializeManifestList', () => {
 describe('generateManifestName', () => {
   it('should generate a manifest filename', () => {
     const name = generateManifestName(12345)
-    expect(name).toBe('snap-12345-0-manifest.json')
+    expect(name).toBe('snap-12345-0-manifest.avro')
   })
 
   it('should include index for multiple manifests', () => {
     const name = generateManifestName(12345, 3)
-    expect(name).toBe('snap-12345-3-manifest.json')
+    expect(name).toBe('snap-12345-3-manifest.avro')
   })
 })
 
 describe('generateManifestListName', () => {
   it('should generate a manifest list filename', () => {
     const name = generateManifestListName(12345)
-    expect(name).toBe('snap-12345.json')
+    expect(name).toBe('snap-12345.avro')
   })
 })

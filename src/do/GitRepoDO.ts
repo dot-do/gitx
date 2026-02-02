@@ -43,10 +43,14 @@ import type {
 import { GitRepoDOError, GitRepoDOErrorCode } from './types'
 import { createLogger } from './logger'
 import { setupRoutes, type GitRepoDOInstance, type RouteSetupOptions } from './routes'
-import { ThinSchemaManager } from './schema'
+import { ThinSchemaManager, SchemaManager } from './schema'
 import { ParquetStore } from '../storage/parquet-store'
+import { createIcebergFlushHandler } from '../iceberg/flush-handler'
 import { RefLog } from '../delta/ref-log'
 import { MemoryRateLimitStore, DORateLimitStore, DEFAULT_LIMITS } from '../middleware/rate-limit'
+import { SqliteObjectStore } from './object-store'
+import { DORepositoryProvider } from './wire-routes'
+import { GitBackendAdapter } from './git-backend-adapter'
 
 // ============================================================================
 // Compaction Retry Constants
@@ -271,6 +275,15 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
   private _thinSchema?: ThinSchemaManager
   private _refLog?: RefLog
 
+  /**
+   * Cached instances for reuse across requests.
+   * These are lazily created on first access and reused thereafter.
+   */
+  private _cachedSchemaManager?: SchemaManager
+  private _cachedObjectStore?: SqliteObjectStore
+  private _cachedRepositoryProvider?: DORepositoryProvider
+  private _cachedGitBackendAdapter?: GitBackendAdapter
+
   /** Start time for uptime tracking */
   readonly _startTime: number = Date.now()
 
@@ -304,9 +317,12 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
         r2: env.ANALYTICS_BUCKET,
         sql: { sql: state.storage.sql },
         prefix: `repos/${state.id.toString()}`,
+        // Wire Iceberg metadata generation on every flush
+        onFlush: createIcebergFlushHandler(),
       })
       this._capabilities.add('parquet')
-      this._logger.debug('ParquetStore initialized with R2 backend')
+      this._capabilities.add('iceberg')
+      this._logger.debug('ParquetStore initialized with R2 backend and Iceberg metadata generation')
 
       // Initialize RefLog for delta tracking
       this._refLog = new RefLog(env.ANALYTICS_BUCKET, `repos/${state.id.toString()}/delta`)
@@ -441,6 +457,73 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    */
   getRefLog(): RefLog | undefined {
     return this._refLog
+  }
+
+  /**
+   * Get the cached SchemaManager instance.
+   * Creates and caches on first access, reuses on subsequent calls.
+   */
+  getSchemaManager(): SchemaManager {
+    if (!this._cachedSchemaManager) {
+      this._cachedSchemaManager = new SchemaManager(this.state.storage)
+      this._logger.debug('SchemaManager created and cached')
+    }
+    return this._cachedSchemaManager
+  }
+
+  /**
+   * Get the cached ObjectStore instance.
+   * Creates and caches on first access, reuses on subsequent calls.
+   * Automatically wired to ParquetStore if available.
+   */
+  getObjectStore(): SqliteObjectStore {
+    if (!this._cachedObjectStore) {
+      this._cachedObjectStore = new SqliteObjectStore(this.state.storage, {
+        backend: this._parquetStore,
+      })
+      this._logger.debug('ObjectStore created and cached')
+    }
+    return this._cachedObjectStore
+  }
+
+  /**
+   * Get the cached DORepositoryProvider instance.
+   * Creates and caches on first access, reuses on subsequent calls.
+   * Used by wire protocol routes for git clone/fetch/push operations.
+   */
+  getRepositoryProvider(): DORepositoryProvider {
+    if (!this._cachedRepositoryProvider) {
+      this._cachedRepositoryProvider = new DORepositoryProvider(this.state.storage)
+      this._logger.debug('DORepositoryProvider created and cached')
+    }
+    return this._cachedRepositoryProvider
+  }
+
+  /**
+   * Get the cached GitBackendAdapter instance.
+   * Creates and caches on first access, reuses on subsequent calls.
+   * Used by sync operations for clone/fetch from remote repositories.
+   */
+  getGitBackendAdapter(): GitBackendAdapter {
+    if (!this._cachedGitBackendAdapter) {
+      this._cachedGitBackendAdapter = new GitBackendAdapter(this.state.storage, this._parquetStore)
+      this._logger.debug('GitBackendAdapter created and cached')
+    }
+    return this._cachedGitBackendAdapter
+  }
+
+  /**
+   * Invalidate all cached instances.
+   * Call this when the underlying storage may have changed externally,
+   * or when resetting the DO state (e.g., on alarm for maintenance).
+   */
+  invalidateCaches(): void {
+    // Use delete to clear optional properties (required with exactOptionalPropertyTypes)
+    delete this._cachedSchemaManager
+    delete this._cachedObjectStore
+    delete this._cachedRepositoryProvider
+    delete this._cachedGitBackendAdapter
+    this._logger.debug('All cached instances invalidated')
   }
 
   /**
