@@ -11,6 +11,9 @@ export default defineWorkersConfig({
   test: {
     globals: true,
     include: ['test/**/*.test.ts'],
+    // Limit parallelism to prevent memory issues
+    maxConcurrency: 5,
+    fileParallelism: false,
     // Exclude tests that require Node.js APIs (vm, child_process, os, etc.)
     // These run in vitest.node.config.ts instead
     exclude: [
@@ -18,10 +21,17 @@ export default defineWorkersConfig({
       'test/mcp/**/*.test.ts',
       'test/do/rpc.test.ts',
     ],
+    // Memory optimization: run test files sequentially to prevent OOM
+    fileParallelism: false,
+    maxConcurrency: 1,
     poolOptions: {
       workers: {
         wrangler: { configPath: './wrangler.test.toml' },
         singleWorker: true,
+        // Limit memory per worker
+        miniflare: {
+          compatibilityFlags: ['nodejs_compat'],
+        },
       },
     },
     coverage: {
