@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { GitRepoDO } from '../../src/do/GitRepoDO'
+import { GitRepoDO } from '../../src/do/git-repo-do'
 
 // ============================================================================
 // Mock Helpers

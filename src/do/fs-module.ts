@@ -33,11 +33,16 @@
 // ============================================================================
 
 /**
+ * SQL parameter types that can be passed to exec().
+ */
+export type SqlParam = string | number | boolean | null | Uint8Array
+
+/**
  * SQL storage interface for FsModule.
  * Matches Cloudflare Durable Object SQLite API.
  */
 export interface SqlStorage {
-  exec<T = unknown>(sql: string, ...params: unknown[]): SqlResult<T>
+  exec<T = Record<string, unknown>>(sql: string, ...params: SqlParam[]): SqlResult<T>
 }
 
 /**

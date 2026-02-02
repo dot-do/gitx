@@ -2048,6 +2048,249 @@ describe('Constants', () => {
 })
 
 // =============================================================================
+// Runtime Type Guards Tests
+// =============================================================================
+
+describe('Runtime Type Guards', () => {
+  const SAMPLE_SHA = 'a'.repeat(40)
+  const validIdentity = {
+    name: 'Test User',
+    email: 'test@example.com',
+    timestamp: 1234567890,
+    timezone: '+0000',
+  }
+
+  describe('isValidIdentity', () => {
+    it('should return true for valid identity', () => {
+      expect(isValidIdentity(validIdentity)).toBe(true)
+    })
+
+    it('should return true for identity with negative timezone', () => {
+      expect(isValidIdentity({ ...validIdentity, timezone: '-0530' })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isValidIdentity(null)).toBe(false)
+    })
+
+    it('should return false for non-object', () => {
+      expect(isValidIdentity('string')).toBe(false)
+      expect(isValidIdentity(123)).toBe(false)
+    })
+
+    it('should return false for missing name', () => {
+      expect(isValidIdentity({ email: 'test@example.com', timestamp: 123, timezone: '+0000' })).toBe(false)
+    })
+
+    it('should return false for missing email', () => {
+      expect(isValidIdentity({ name: 'Test', timestamp: 123, timezone: '+0000' })).toBe(false)
+    })
+
+    it('should return false for non-integer timestamp', () => {
+      expect(isValidIdentity({ ...validIdentity, timestamp: 123.45 })).toBe(false)
+    })
+
+    it('should return false for invalid timezone format', () => {
+      expect(isValidIdentity({ ...validIdentity, timezone: 'UTC' })).toBe(false)
+      expect(isValidIdentity({ ...validIdentity, timezone: '+530' })).toBe(false)
+      expect(isValidIdentity({ ...validIdentity, timezone: '0000' })).toBe(false)
+    })
+  })
+
+  describe('isValidTreeEntry', () => {
+    it('should return true for valid tree entry', () => {
+      expect(isValidTreeEntry({ mode: '100644', name: 'file.txt', sha: SAMPLE_SHA })).toBe(true)
+    })
+
+    it('should return true for directory entry', () => {
+      expect(isValidTreeEntry({ mode: '040000', name: 'dir', sha: SAMPLE_SHA })).toBe(true)
+    })
+
+    it('should return true for executable file', () => {
+      expect(isValidTreeEntry({ mode: '100755', name: 'script.sh', sha: SAMPLE_SHA })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isValidTreeEntry(null)).toBe(false)
+    })
+
+    it('should return false for invalid mode', () => {
+      expect(isValidTreeEntry({ mode: '777', name: 'file.txt', sha: SAMPLE_SHA })).toBe(false)
+    })
+
+    it('should return false for empty name', () => {
+      expect(isValidTreeEntry({ mode: '100644', name: '', sha: SAMPLE_SHA })).toBe(false)
+    })
+
+    it('should return false for name with slash', () => {
+      expect(isValidTreeEntry({ mode: '100644', name: 'path/file.txt', sha: SAMPLE_SHA })).toBe(false)
+    })
+
+    it('should return false for name with null char', () => {
+      expect(isValidTreeEntry({ mode: '100644', name: 'file\0.txt', sha: SAMPLE_SHA })).toBe(false)
+    })
+
+    it('should return false for invalid sha', () => {
+      expect(isValidTreeEntry({ mode: '100644', name: 'file.txt', sha: 'invalid' })).toBe(false)
+    })
+  })
+
+  describe('isBlobData', () => {
+    it('should return true for valid blob data', () => {
+      expect(isBlobData({ content: new Uint8Array([1, 2, 3]) })).toBe(true)
+    })
+
+    it('should return true for empty blob data', () => {
+      expect(isBlobData({ content: new Uint8Array(0) })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isBlobData(null)).toBe(false)
+    })
+
+    it('should return false for missing content', () => {
+      expect(isBlobData({})).toBe(false)
+    })
+
+    it('should return false for non-Uint8Array content', () => {
+      expect(isBlobData({ content: [1, 2, 3] })).toBe(false)
+      expect(isBlobData({ content: 'string' })).toBe(false)
+    })
+  })
+
+  describe('isTreeData', () => {
+    it('should return true for valid tree data with entries', () => {
+      expect(isTreeData({
+        entries: [{ mode: '100644', name: 'file.txt', sha: SAMPLE_SHA }]
+      })).toBe(true)
+    })
+
+    it('should return true for empty entries array', () => {
+      expect(isTreeData({ entries: [] })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isTreeData(null)).toBe(false)
+    })
+
+    it('should return false for non-array entries', () => {
+      expect(isTreeData({ entries: 'not an array' })).toBe(false)
+    })
+
+    it('should return false if any entry is invalid', () => {
+      expect(isTreeData({
+        entries: [
+          { mode: '100644', name: 'valid.txt', sha: SAMPLE_SHA },
+          { mode: 'invalid', name: 'invalid.txt', sha: SAMPLE_SHA }
+        ]
+      })).toBe(false)
+    })
+  })
+
+  describe('isCommitData', () => {
+    const validCommit = {
+      tree: SAMPLE_SHA,
+      author: validIdentity,
+      committer: validIdentity,
+      message: 'test commit',
+    }
+
+    it('should return true for valid commit data', () => {
+      expect(isCommitData(validCommit)).toBe(true)
+    })
+
+    it('should return true for commit with parents', () => {
+      expect(isCommitData({ ...validCommit, parents: [SAMPLE_SHA] })).toBe(true)
+    })
+
+    it('should return true for commit with multiple parents', () => {
+      expect(isCommitData({ ...validCommit, parents: [SAMPLE_SHA, 'b'.repeat(40)] })).toBe(true)
+    })
+
+    it('should return true for commit with gpgSignature', () => {
+      expect(isCommitData({ ...validCommit, gpgSignature: '-----BEGIN PGP SIGNATURE-----' })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isCommitData(null)).toBe(false)
+    })
+
+    it('should return false for invalid tree sha', () => {
+      expect(isCommitData({ ...validCommit, tree: 'invalid' })).toBe(false)
+    })
+
+    it('should return false for invalid author', () => {
+      expect(isCommitData({ ...validCommit, author: { name: 'Test' } })).toBe(false)
+    })
+
+    it('should return false for invalid committer', () => {
+      expect(isCommitData({ ...validCommit, committer: null })).toBe(false)
+    })
+
+    it('should return false for non-string message', () => {
+      expect(isCommitData({ ...validCommit, message: 123 })).toBe(false)
+    })
+
+    it('should return false for non-array parents', () => {
+      expect(isCommitData({ ...validCommit, parents: 'not an array' })).toBe(false)
+    })
+
+    it('should return false for invalid parent sha', () => {
+      expect(isCommitData({ ...validCommit, parents: ['invalid'] })).toBe(false)
+    })
+
+    it('should return false for non-string gpgSignature', () => {
+      expect(isCommitData({ ...validCommit, gpgSignature: 123 })).toBe(false)
+    })
+  })
+
+  describe('isTagData', () => {
+    const validTag = {
+      object: SAMPLE_SHA,
+      objectType: 'commit' as const,
+      name: 'v1.0.0',
+      message: 'Release v1.0.0',
+    }
+
+    it('should return true for valid tag data', () => {
+      expect(isTagData(validTag)).toBe(true)
+    })
+
+    it('should return true for tag with tagger', () => {
+      expect(isTagData({ ...validTag, tagger: validIdentity })).toBe(true)
+    })
+
+    it('should return true for tag pointing to tree', () => {
+      expect(isTagData({ ...validTag, objectType: 'tree' })).toBe(true)
+    })
+
+    it('should return false for null', () => {
+      expect(isTagData(null)).toBe(false)
+    })
+
+    it('should return false for invalid object sha', () => {
+      expect(isTagData({ ...validTag, object: 'invalid' })).toBe(false)
+    })
+
+    it('should return false for invalid objectType', () => {
+      expect(isTagData({ ...validTag, objectType: 'invalid' })).toBe(false)
+    })
+
+    it('should return false for empty name', () => {
+      expect(isTagData({ ...validTag, name: '' })).toBe(false)
+    })
+
+    it('should return false for non-string message', () => {
+      expect(isTagData({ ...validTag, message: null })).toBe(false)
+    })
+
+    it('should return false for invalid tagger', () => {
+      expect(isTagData({ ...validTag, tagger: { name: 'Test' } })).toBe(false)
+    })
+  })
+})
+
+// =============================================================================
 // Edge Cases and Error Handling
 // =============================================================================
 

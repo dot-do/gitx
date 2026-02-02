@@ -12,7 +12,7 @@ import {
   type WithGitOptions,
   type Constructor,
 } from '../../src/do/index'
-import { GitModule } from '../../src/do/GitModule'
+import { GitModule } from '../../src/do/git-module'
 
 // ============================================================================
 // Mock Base Classes

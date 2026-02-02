@@ -43,7 +43,7 @@ import { BloomCache } from './bloom-cache'
 import type { SQLStorage } from './types'
 import { hashObject } from '../utils/hash'
 import { AsyncMutex, ReadWriteLock } from '../utils/async-mutex'
-import { type StorageMetrics, noopMetrics } from './metrics'
+import { type StorageMetrics, NOOP_METRICS } from './metrics'
 
 // ============================================================================
 // Write-Ahead Log (WAL)
@@ -266,7 +266,7 @@ export class ParquetStore implements CASBackend {
     this.codec = options.codec ?? 'SNAPPY'
     this.onFlush = options.onFlush
     this.verifyBloomNegatives = options.verifyBloomNegatives ?? false
-    this.metrics = options.metrics ?? noopMetrics
+    this.metrics = options.metrics ?? NOOP_METRICS
   }
 
   /**

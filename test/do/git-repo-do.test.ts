@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-import { GitRepoDO, isGitRepoDO } from '../../src/do/GitRepoDO'
+import { GitRepoDO, isGitRepoDO } from '../../src/do/git-repo-do'
 
 // ============================================================================
 // Mock DO Base Class Types (for testing hierarchy)

@@ -187,15 +187,19 @@ export interface RPCPongMessage {
 }
 
 /**
- * Magic proxy type for RPC calls
- * @template T - The interface being proxied
+ * Magic proxy type for RPC calls.
+ * Provides typed method invocation when T is known, falls back to RPCArg for dynamic access.
+ * @template T - The interface being proxied (defaults to Record<string, RPCMethodValue>)
  */
-export type MagicProxy<T = Record<string, unknown>> = {
+export type MagicProxy<T = Record<string, RPCMethodValue>> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R
     ? (...args: A) => Promise<Awaited<R>>
-    : MagicProxy<T[K]>
+    : T[K] extends object
+      ? MagicProxy<T[K]>
+      : T[K]
 } & {
-  [key: string]: MagicProxy<Record<string, unknown>> & ((...args: RPCArg[]) => Promise<unknown>)
+  // Dynamic access returns a callable proxy with RPCArg types
+  [key: string]: MagicProxy & ((...args: RPCArg[]) => Promise<RPCArg | void>)
 }
 
 /**
@@ -262,10 +266,19 @@ export interface RPCHandler {
 }
 
 /**
- * Durable Object instance type for RPC handler.
+ * Valid RPC method types that can be exposed on a DO instance.
  */
-export interface RPCDOInstance {
-  [key: string]: unknown
+export type RPCMethodValue =
+  | ((...args: RPCArg[]) => Promise<RPCArg | void> | RPCArg | void)
+  | RPCArg
+  | { [key: string]: RPCMethodValue }
+
+/**
+ * Durable Object instance type for RPC handler.
+ * @template T - The methods/properties exposed by this DO (defaults to Record<string, RPCMethodValue>)
+ */
+export interface RPCDOInstance<T extends Record<string, RPCMethodValue> = Record<string, RPCMethodValue>> {
+  [key: string]: RPCMethodValue
 }
 
 /**
@@ -297,7 +310,7 @@ export function createRPCHandler<TInstance extends RPCDOInstance>(
 /**
  * RPC decorator for methods (placeholder)
  */
-export function rpc(target: unknown, propertyKey: string, descriptor: PropertyDescriptor): PropertyDescriptor {
+export function rpc<T>(target: T, propertyKey: string, descriptor: PropertyDescriptor): PropertyDescriptor {
   return descriptor
 }
 
@@ -338,7 +351,8 @@ function createMagicProxy(path: string[]): MagicProxy {
       return Promise.resolve({ path, args })
     },
   })
-  return proxy as MagicProxy
+  // Cast through unknown since Proxy doesn't preserve type information
+  return proxy as unknown as MagicProxy
 }
 
 /**

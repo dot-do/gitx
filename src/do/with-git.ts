@@ -66,12 +66,17 @@ export interface WithGitCapability {
 }
 
 /**
+ * Valid context property types for WithGitContext.
+ */
+export type GitContextValue = GitModule | ((...args: unknown[]) => unknown) | string | number | boolean | object | undefined
+
+/**
  * Interface for the extended WorkflowContext with git capability.
  * Used when contextMode is enabled.
  */
 export interface WithGitContext {
   git: GitModule
-  [key: string]: unknown
+  [key: string]: GitContextValue
 }
 
 /**
@@ -298,15 +303,15 @@ export function withGit<TBase extends Constructor>(
         const original$ = dollarContext
 
         // Create a proxy that adds git to the $ context
-        ;(this as Record<string, unknown>).$ = new Proxy(original$ as WithGitContext, {
+        ;(this as Record<string, GitContextValue>).$ = new Proxy(original$ as WithGitContext, {
           get(target, prop: string | symbol) {
             if (prop === 'git') {
               return self.git
             }
             // Forward to original context
-            const value = (target as unknown as Record<string | symbol, unknown>)[prop]
+            const value = (target as Record<string | symbol, GitContextValue>)[prop]
             if (typeof value === 'function') {
-              return (value as (...args: unknown[]) => unknown).bind(target)
+              return value.bind(target)
             }
             return value
           },

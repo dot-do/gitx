@@ -25,8 +25,8 @@ import {
   type GitRow,
   type GitBranchRow,
   type GitContentRow,
-} from '../../src/do/GitModule'
-import { withGit, hasGitCapability, type WithGitCapability } from '../../src/do/withGit'
+} from '../../src/do/git-module'
+import { withGit, hasGitCapability, type WithGitCapability } from '../../src/do/with-git'
 
 // ============================================================================
 // Mock Implementations

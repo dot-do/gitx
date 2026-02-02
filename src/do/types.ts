@@ -41,6 +41,28 @@ export interface DOStorage<T = unknown> {
  */
 export type SqlParam = string | number | boolean | null | Uint8Array
 
+/**
+ * SQL execution result interface.
+ */
+export interface SqlExecResult<T = Record<string, unknown>> {
+  toArray(): T[]
+}
+
+/**
+ * SQL interface for database operations.
+ */
+export interface SqlInterface {
+  exec<T = Record<string, unknown>>(query: string, ...params: SqlParam[]): SqlExecResult<T>
+}
+
+/**
+ * Database accessor interface for GitRepoDO.
+ * Wraps the SQL interface for type-safe database access.
+ */
+export interface DatabaseAccessor {
+  sql: SqlInterface
+}
+
 // ============================================================================
 // Service Binding Types
 // ============================================================================
@@ -265,14 +287,22 @@ export interface WorkflowContext {
   /** Merge a branch into current */
   merge(branch: string): Promise<void>
   /** Allow extension with typed access */
-  [key: string]: WorkflowContextValue
+  [key: string]: WorkflowContextValue<JsonValue[], JsonValue | void | Promise<JsonValue | void>>
 }
 
 /**
- * Valid types for workflow context extension values.
+ * JSON-serializable value type for workflow context data.
  */
-export type WorkflowContextValue =
-  | ((...args: unknown[]) => unknown)
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+/**
+ * Valid types for workflow context extension values.
+ * Uses bounded generics instead of unknown for better type inference.
+ * @template TArgs - The argument types for function values (defaults to JsonValue[])
+ * @template TReturn - The return type for function values (defaults to JsonValue | void | Promise<JsonValue | void>)
+ */
+export type WorkflowContextValue<TArgs extends JsonValue[] = JsonValue[], TReturn = JsonValue | void | Promise<JsonValue | void>> =
+  | ((...args: TArgs) => TReturn)
   | string
   | number
   | boolean

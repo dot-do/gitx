@@ -190,13 +190,18 @@ export interface ObjectStoreOptions {
 }
 
 /**
+ * Log argument types for structured logging.
+ */
+export type LogArg = string | number | boolean | null | undefined | Record<string, unknown> | Error
+
+/**
  * Logger interface for ObjectStore operations.
  */
 export interface ObjectStoreLogger {
-  debug?(message: string, ...args: unknown[]): void
-  info?(message: string, ...args: unknown[]): void
-  warn?(message: string, ...args: unknown[]): void
-  error?(message: string, ...args: unknown[]): void
+  debug?(message: string, ...args: LogArg[]): void
+  info?(message: string, ...args: LogArg[]): void
+  warn?(message: string, ...args: LogArg[]): void
+  error?(message: string, ...args: LogArg[]): void
 }
 
 /**
@@ -395,7 +400,7 @@ export class SqliteObjectStore implements BasicObjectStore {
    * Log a message if logger is configured.
    * @internal
    */
-  private log(level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: unknown[]): void {
+  private log(level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: LogArg[]): void {
     if (!this.logger) return
     const logFn = this.logger[level]
     if (logFn) {

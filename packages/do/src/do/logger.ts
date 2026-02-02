@@ -160,12 +160,17 @@ export function createChildLogger(
  * No-op logger that discards all messages.
  * Useful for testing or when logging is disabled.
  */
-export const noopLogger: Logger = {
+export const NOOP_LOGGER: Logger = {
   debug: () => {},
   info: () => {},
   warn: () => {},
   error: () => {},
 }
+
+/**
+ * @deprecated Use NOOP_LOGGER instead. This alias is provided for backward compatibility.
+ */
+export const noopLogger = NOOP_LOGGER
 
 // Re-export types
 export type { Logger, LogEntry }

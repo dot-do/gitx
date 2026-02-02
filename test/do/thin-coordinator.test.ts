@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GitRepoDO, GitRepoDOSQL } from '../../src/do/GitRepoDO'
+import { GitRepoDO, GitRepoDOSQL } from '../../src/do/git-repo-do'
 
 /**
  * Create a minimal mock environment for GitRepoDO construction tests.

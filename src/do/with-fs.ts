@@ -167,12 +167,17 @@ export interface WithFsOptions {
 }
 
 /**
+ * Valid context property types for WithFsContext.
+ */
+export type FsContextValue = FsModule | ((...args: unknown[]) => unknown) | string | number | boolean | object | undefined
+
+/**
  * Interface for the extended WorkflowContext with fs capability.
  * Used when contextMode is enabled.
  */
 export interface WithFsContext {
   fs: FsModule
-  [key: string]: unknown
+  [key: string]: FsContextValue
 }
 
 // ============================================================================
@@ -312,15 +317,15 @@ export function withFs<TBase extends Constructor>(
           const self = this
 
           // Create a proxy that adds fs to the $ context
-          ;(this as Record<string, unknown>).$ = new Proxy(dollarContext as WithFsContext, {
+          ;(this as Record<string, FsContextValue>).$ = new Proxy(dollarContext as WithFsContext, {
             get(target, prop: string | symbol) {
               if (prop === 'fs') {
                 return self.fs
               }
               // Forward to original context
-              const value = (target as unknown as Record<string | symbol, unknown>)[prop]
+              const value = (target as Record<string | symbol, FsContextValue>)[prop]
               if (typeof value === 'function') {
-                return (value as (...args: unknown[]) => unknown).bind(target)
+                return value.bind(target)
               }
               return value
             },
@@ -462,15 +467,20 @@ export function withFs<TBase extends Constructor>(
 // ============================================================================
 
 /**
+ * SQL parameter types for mock storage.
+ */
+type MockSqlParam = string | number | boolean | null | Uint8Array
+
+/**
  * Creates a simple in-memory mock SQL storage for testing.
  * This allows withFs to work even without a real Durable Object context.
  */
 function createMockSqlStorage(): SqlStorage {
-  const tables: Map<string, unknown[]> = new Map()
+  const tables: Map<string, Record<string, MockSqlParam>[]> = new Map()
   let idCounter = 1
 
   return {
-    exec<T = unknown>(sql: string, ..._params: unknown[]): SqlResult<T> {
+    exec<T = Record<string, unknown>>(sql: string, ..._params: MockSqlParam[]): SqlResult<T> {
       // Simple parsing for basic operations
       const sqlLower = sql.toLowerCase().trim()
 

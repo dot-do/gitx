@@ -6,7 +6,7 @@ import {
   type WithFsOptions,
   type SqlStorage,
   type R2BucketLike,
-} from '../../src/do/withFs'
+} from '../../src/do/with-fs'
 
 // ============================================================================
 // Test Helpers

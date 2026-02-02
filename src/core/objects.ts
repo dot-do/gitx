@@ -44,6 +44,17 @@ export {
   isValidMode,
   isValidObjectType,
 
+  // Runtime type guards
+  isValidIdentity,
+  isValidTreeEntry,
+  isBlobData,
+  isTreeData,
+  isCommitData,
+  isTagData,
+
+  // Errors
+  InvalidGitObjectDataError,
+
   // Hash utilities
   calculateSha1,
   calculateObjectHash,

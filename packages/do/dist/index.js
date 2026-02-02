@@ -40,7 +40,7 @@ LogLevel, } from './do/types';
 // =============================================================================
 // Logger utilities
 // =============================================================================
-export { createLogger, createChildLogger, noopLogger, } from './do/logger';
+export { createLogger, createChildLogger, NOOP_LOGGER, noopLogger, } from './do/logger';
 // =============================================================================
 // MCP Server
 // =============================================================================

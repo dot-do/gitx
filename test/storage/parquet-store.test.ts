@@ -470,6 +470,99 @@ describe('ParquetStore', () => {
         expect(result!.type).toBe('blob')
       }
     })
+
+    it('concurrent flush calls should be serialized by mutex (no overlapping flushes)', async () => {
+      // Add some objects to the buffer
+      for (let i = 0; i < 5; i++) {
+        await store.putObject('blob', encoder.encode(`flush mutex test ${i}`))
+      }
+
+      // Track the order of flush execution
+      const flushOrder: number[] = []
+      let flushCounter = 0
+      const originalPut = mockR2.put as ReturnType<typeof vi.fn>
+      const putMock = vi.fn(async (key: string, value: ArrayBuffer | Uint8Array | ReadableStream | string) => {
+        // Only track Parquet file writes (not raw R2 writes for large objects)
+        if (key.includes('/objects/') && key.endsWith('.parquet')) {
+          const myOrder = ++flushCounter
+          flushOrder.push(myOrder)
+          // Simulate some async work to increase chance of race
+          await new Promise(resolve => setTimeout(resolve, 10))
+          // Record when this flush completes
+          flushOrder.push(-myOrder)
+        }
+        return originalPut(key, value)
+      })
+      ;(mockR2 as { put: typeof putMock }).put = putMock
+
+      // Launch multiple concurrent flushes
+      const flushPromises = [
+        store.flush(),
+        store.flush(),
+        store.flush(),
+      ]
+
+      const results = await Promise.all(flushPromises)
+
+      // Only one flush should have actually written (the others see empty buffer)
+      const nonNullResults = results.filter(r => r !== null)
+      expect(nonNullResults.length).toBe(1)
+
+      // The flush order should show no interleaving (if there were any concurrent writes)
+      // Pattern should be: [1, -1] or [1, -1, 2, -2] etc., never [1, 2, -1, -2]
+      for (let i = 0; i < flushOrder.length - 1; i += 2) {
+        const start = flushOrder[i]
+        const end = flushOrder[i + 1]
+        expect(end).toBe(-start!) // Each start should be immediately followed by its end
+      }
+    })
+
+    it('concurrent flush calls should wait for previous flush to complete', async () => {
+      // Create a store that we can control timing on
+      const slowR2 = createMockR2()
+      const flushStarted: number[] = []
+      const flushCompleted: number[] = []
+      let flushId = 0
+
+      const originalPut = slowR2.put as ReturnType<typeof vi.fn>
+      ;(slowR2 as { put: typeof slowR2.put }).put = vi.fn(async (key: string, value: ArrayBuffer | Uint8Array | ReadableStream | string) => {
+        if (key.includes('/objects/') && key.endsWith('.parquet')) {
+          const myId = ++flushId
+          flushStarted.push(myId)
+          // Simulate slow R2 write
+          await new Promise(resolve => setTimeout(resolve, 50))
+          flushCompleted.push(myId)
+        }
+        return originalPut(key, value)
+      })
+
+      const slowStore = new ParquetStore({
+        r2: slowR2,
+        sql: mockStorage,
+        prefix: 'test-repo',
+      })
+
+      // Add objects for first flush
+      await slowStore.putObject('blob', encoder.encode('slow test 1'))
+
+      // Start first flush (don't await yet)
+      const flush1Promise = slowStore.flush()
+
+      // Immediately add more objects and start second flush
+      await slowStore.putObject('blob', encoder.encode('slow test 2'))
+      const flush2Promise = slowStore.flush()
+
+      // Wait for both
+      await Promise.all([flush1Promise, flush2Promise])
+
+      // Both flushes should have written (they had different buffer contents)
+      expect(flushStarted.length).toBe(2)
+      expect(flushCompleted.length).toBe(2)
+
+      // The second flush should not start until the first completes
+      // So completed[0] should be for started[0], meaning no interleaving
+      expect(flushCompleted[0]).toBe(flushStarted[0])
+    })
   })
 
   describe('iceberg integration', () => {

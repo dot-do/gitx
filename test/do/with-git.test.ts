@@ -21,8 +21,8 @@ import {
   type WithGitCapability,
   type WithGitOptions,
   type WithGitContext,
-} from '../../src/do/withGit'
-import { GitModule, type R2BucketLike } from '../../src/do/GitModule'
+} from '../../src/do/with-git'
+import { GitModule, type R2BucketLike } from '../../src/do/git-module'
 
 // ============================================================================
 // Mock Classes and Fixtures

@@ -107,7 +107,7 @@ export {
   NoopMetrics,
   ConsoleMetrics,
   CollectingMetrics,
-  noopMetrics,
+  NOOP_METRICS,
   type StorageMetrics,
   type StorageTier as MetricsStorageTier,
   type CacheResult,

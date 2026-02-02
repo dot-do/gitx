@@ -734,6 +734,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
   private createProxy(path: string[]): MagicProxy {
     const self = this
 
+    // Cast through unknown since Proxy doesn't preserve type information
     return new Proxy(() => {}, {
       get(_target, prop) {
         if (typeof prop === 'string') {
@@ -744,7 +745,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
       apply(_target, _thisArg, args) {
         return self.call(path, args)
       },
-    }) as MagicProxy
+    }) as unknown as MagicProxy
   }
 
   private async call(path: string[], args: unknown[]): Promise<unknown> {
@@ -964,18 +965,27 @@ export class RPCGitBackend extends SimpleEventEmitter {
 // ============================================================================
 
 /**
- * RPC Git Durable Object for server-side git operations
+ * Environment type for RPCGitDO.
+ * Can be extended with specific bindings.
  */
-export class RPCGitDO {
+export interface RPCGitDOEnv {
+  [key: string]: unknown
+}
+
+/**
+ * RPC Git Durable Object for server-side git operations
+ * @template TEnv - The environment type with bindings
+ */
+export class RPCGitDO<TEnv extends RPCGitDOEnv = RPCGitDOEnv> {
   private state: DurableObjectState
-  private env: unknown
+  protected env: TEnv
   private objects: Map<string, Uint8Array> = new Map()
   private refs: Map<string, string> = new Map()
   private partialClones: Map<string, CloneResumeToken> = new Map()
 
   readonly git: GitRPCMethods
 
-  constructor(state: DurableObjectState, env: unknown) {
+  constructor(state: DurableObjectState, env: TEnv) {
     this.state = state
     this.env = env
 
@@ -1655,7 +1665,7 @@ declare class DurableObjectState {
 
 declare class DurableObjectStorage {
   get<T>(key: string): Promise<T | undefined>
-  put(key: string, value: unknown): Promise<void>
+  put<T>(key: string, value: T): Promise<void>
   delete(key: string): Promise<boolean>
   list<T>(options?: { prefix?: string }): Promise<Map<string, T>>
 }

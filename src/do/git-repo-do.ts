@@ -40,7 +40,16 @@ import type {
   FsCapability,
   Logger,
 } from './types'
-import { GitRepoDOError, GitRepoDOErrorCode } from './types'
+import {
+  GitRepoDOError,
+  GitRepoDOErrorCode,
+  type DatabaseAccessor,
+  type WorkflowEventProxy,
+  type WorkflowScheduleProxy,
+  type EventHandler,
+  type ScheduledHandler,
+  type JsonValue,
+} from './types'
 import { createLogger } from './logger'
 import { setupRoutes, type GitRepoDOInstance, type RouteSetupOptions } from './routes'
 import { ThinSchemaManager, SchemaManager } from './schema'
@@ -264,7 +273,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
 
   private _router: Hono<{ Bindings: Record<string, unknown> }>
   private _$: WorkflowContext
-  private _db: unknown
+  private _db: DatabaseAccessor
   private _things: StoreAccessor
   private _rels: StoreAccessor
   private _actions: StoreAccessor
@@ -373,7 +382,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
   /**
    * Database accessor (Drizzle instance).
    */
-  get db(): unknown {
+  get db(): DatabaseAccessor {
     return this._db
   }
 
@@ -943,7 +952,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     // Create the $ proxy with all required methods
     const context: WorkflowContext = {
       // Fire-and-forget
-      send(event: string, data?: unknown): void {
+      send<T = unknown>(event: string, data?: T): void {
         // Queue event for async processing
         self.state.waitUntil(
           self.state.storage.put(`pending:${Date.now()}`, { event, data })
@@ -951,30 +960,30 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       },
 
       // Quick attempt (blocking, non-durable)
-      async try(action: string, data?: unknown): Promise<ActionResult> {
+      async try<T = unknown>(action: string, data?: T): Promise<ActionResult<T>> {
         // Execute action directly
         return { action, data, success: true }
       },
 
       // Durable execution with retries
-      async do(action: string, data?: unknown): Promise<ActionResult> {
+      async do<T = unknown>(action: string, data?: T): Promise<ActionResult<T>> {
         // Store action for durability
         const actionId = `action:${Date.now()}`
         await self.state.storage.put(actionId, { action, data, status: 'pending' })
 
         // Execute and update status
-        const result: ActionResult = { action, data, success: true }
+        const result: ActionResult<T> = { action, data, success: true }
         await self.state.storage.put(actionId, { action, data, status: 'completed', result })
 
         return result
       },
 
       // Event handler proxy
-      on: new Proxy({} as Record<string, Record<string, (handler: unknown) => void>>, {
+      on: new Proxy({} as WorkflowEventProxy, {
         get(_target, noun: string) {
           return new Proxy({}, {
             get(_t, verb: string) {
-              return (handler: unknown) => {
+              return <T = unknown>(handler: EventHandler<T>) => {
                 // Register event handler
                 self.state.waitUntil(
                   self.state.storage.put(`handler:${noun}:${verb}`, { handler: String(handler) })
@@ -986,10 +995,10 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       }),
 
       // Scheduling proxy
-      every: new Proxy({} as Record<string, { at: (time: string) => (handler: unknown) => void }>, {
+      every: new Proxy({} as WorkflowScheduleProxy, {
         get(_target, schedule: string) {
           return {
-            at: (time: string) => (handler: unknown) => {
+            at: (time: string) => (handler: ScheduledHandler) => {
               // Register scheduled handler
               self.state.waitUntil(
                 self.state.storage.put(`schedule:${schedule}:${time}`, { handler: String(handler) })
@@ -1034,7 +1043,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
             // Return a proxy that represents the domain entity
             return new Proxy({}, {
               get(_t, method: string) {
-                return async (...args: unknown[]) => {
+                return async (...args: JsonValue[]) => {
                   // This would resolve and call the method on the target DO
                   return { domain: prop, id, method, args }
                 }

@@ -74,6 +74,14 @@ export {
   isValidMode,
   isValidObjectType,
 
+  // Runtime type guards
+  isValidIdentity,
+  isValidTreeEntry,
+  isBlobData,
+  isTreeData,
+  isCommitData,
+  isTagData,
+
   // Hash utilities
   calculateSha1,
   calculateObjectHash,
@@ -92,6 +100,9 @@ export {
   detectObjectType,
   parseGitObject,
   createGitObject,
+
+  // Errors
+  InvalidGitObjectDataError,
 } from './objects'
 
 // =============================================================================

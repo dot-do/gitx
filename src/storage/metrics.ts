@@ -769,4 +769,9 @@ export class CollectingMetrics implements StorageMetrics {
  *
  * Use this when you don't need metrics collection.
  */
-export const noopMetrics: StorageMetrics = new NoopMetrics()
+export const NOOP_METRICS: StorageMetrics = new NoopMetrics()
+
+/**
+ * @deprecated Use NOOP_METRICS instead. This alias is provided for backward compatibility.
+ */
+export const noopMetrics = NOOP_METRICS

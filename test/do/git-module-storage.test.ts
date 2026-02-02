@@ -23,7 +23,7 @@ import {
   type R2BucketLike,
   type R2ObjectLike,
   type R2ObjectsLike,
-} from '../../src/do/GitModule'
+} from '../../src/do/git-module'
 
 // ============================================================================
 // Mock Storage Implementation

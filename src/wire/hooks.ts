@@ -1122,4 +1122,9 @@ export function createWebhook(
  * Default global hook registry.
  * Can be used for simple cases where a single registry is sufficient.
  */
-export const defaultRegistry = new HookRegistry()
+export const DEFAULT_REGISTRY = new HookRegistry()
+
+/**
+ * @deprecated Use DEFAULT_REGISTRY instead. This alias is provided for backward compatibility.
+ */
+export const defaultRegistry = DEFAULT_REGISTRY

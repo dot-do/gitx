@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { GitModule, createGitModule, isGitModule } from '../../src/do/GitModule'
-import type { FsCapability, R2BucketLike, R2ObjectLike, R2ObjectsLike } from '../../src/do/GitModule'
+import { GitModule, createGitModule, isGitModule } from '../../src/do/git-module'
+import type { FsCapability, R2BucketLike, R2ObjectLike, R2ObjectsLike } from '../../src/do/git-module'
 
 // Mock R2 Bucket
 function createMockR2Bucket(): R2BucketLike {

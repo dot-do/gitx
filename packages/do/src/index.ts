@@ -93,6 +93,7 @@ export {
 export {
   createLogger,
   createChildLogger,
+  NOOP_LOGGER,
   noopLogger,
   type LoggerOptions,
 } from './do/logger'

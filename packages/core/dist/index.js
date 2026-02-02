@@ -46,12 +46,16 @@ parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature,
 OBJECT_TYPES, VALID_MODES, 
 // Validation
 isValidSha, isValidMode, isValidObjectType, 
+// Runtime type guards
+isValidIdentity, isValidTreeEntry, isBlobData, isTreeData, isCommitData, isTagData, 
 // Hash utilities
 calculateSha1, calculateObjectHash, createObjectHeader, parseObjectHeader, bytesToHex, hexToBytes, 
 // Loose object format
 compressObject, decompressObject, writeLooseObject, readLooseObject, 
 // Object type detection
-detectObjectType, parseGitObject, createGitObject, } from './objects';
+detectObjectType, parseGitObject, createGitObject, 
+// Errors
+InvalidGitObjectDataError, } from './objects';
 // =============================================================================
 // Pack File Format
 // =============================================================================

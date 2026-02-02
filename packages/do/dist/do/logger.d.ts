@@ -44,6 +44,10 @@ export declare function createChildLogger(parent: Logger, context: Record<string
  * No-op logger that discards all messages.
  * Useful for testing or when logging is disabled.
  */
+export declare const NOOP_LOGGER: Logger;
+/**
+ * @deprecated Use NOOP_LOGGER instead. This alias is provided for backward compatibility.
+ */
 export declare const noopLogger: Logger;
 export type { Logger, LogEntry };
 export { LogLevel };
