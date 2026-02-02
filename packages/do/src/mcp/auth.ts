@@ -166,27 +166,41 @@ async function introspectToken(
  * Create GitAuthContext from introspection response
  */
 function createAuthContext(response: IntrospectionResponse): GitAuthContext {
-  const scopes = parseScopes(response.scope)
+  const scopeStr = response['scope'] as string | undefined
+  const scopes = parseScopes(scopeStr)
   const readonly = isReadonlyScope(scopes)
   const isAdmin = hasAdminScope(scopes)
 
-  const id = response.sub ?? response.client_id ?? 'unknown'
+  const sub = response['sub'] as string | undefined
+  const clientId = response['client_id'] as string | undefined
+  const id = sub ?? clientId ?? 'unknown'
 
   const metadata: Record<string, unknown> = {}
-  if (response.scope) metadata.scope = response.scope
-  if (response.exp) metadata.exp = response.exp
-  if (response.iat) metadata.iat = response.iat
-  if (response.client_id) metadata.client_id = response.client_id
-  if (response.iss) metadata.iss = response.iss
+  if (scopeStr) metadata['scope'] = scopeStr
+  const exp = response['exp']
+  if (exp) metadata['exp'] = exp
+  const iat = response['iat']
+  if (iat) metadata['iat'] = iat
+  if (clientId) metadata['client_id'] = clientId
+  const iss = response['iss']
+  if (iss) metadata['iss'] = iss
 
-  return {
+  const context: GitAuthContext = {
     type: 'oauth',
     id,
     readonly,
-    isAdmin: isAdmin || undefined,
     scopes,
-    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   }
+
+  if (isAdmin) {
+    context.isAdmin = true
+  }
+
+  if (Object.keys(metadata).length > 0) {
+    context.metadata = metadata
+  }
+
+  return context
 }
 
 /**
@@ -197,11 +211,11 @@ function extractBearerToken(request: Request): string | null {
   if (!authHeader) return null
 
   const parts = authHeader.split(' ')
-  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+  if (parts.length !== 2 || parts[0]?.toLowerCase() !== 'bearer') {
     return null
   }
 
-  return parts[1]
+  return parts[1] ?? null
 }
 
 /**
@@ -273,7 +287,7 @@ export function requireGitAuth(): MiddlewareHandler {
       )
     }
 
-    await next()
+    return next()
   }
 }
 
@@ -291,7 +305,7 @@ export function requireGitWrite(): MiddlewareHandler {
       )
     }
 
-    await next()
+    return next()
   }
 }
 
@@ -316,7 +330,7 @@ export function requireGitAdmin(): MiddlewareHandler {
       )
     }
 
-    await next()
+    return next()
   }
 }
 

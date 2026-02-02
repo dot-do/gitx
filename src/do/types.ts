@@ -138,12 +138,19 @@ export interface KVBinding {
 }
 
 /**
- * Pipeline event type.
+ * JSON-serializable value type for data payloads.
+ * Used across pipeline events, logging, errors, and workflow context.
  */
-export interface PipelineEvent {
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+/**
+ * Pipeline event type.
+ * @template TData - The type of the event data payload (defaults to Record<string, JsonValue>)
+ */
+export interface PipelineEvent<TData = Record<string, JsonValue>> {
   type: string
   timestamp?: number
-  data?: Record<string, unknown>
+  data?: TData
 }
 
 /**
@@ -291,11 +298,6 @@ export interface WorkflowContext {
 }
 
 /**
- * JSON-serializable value type for workflow context data.
- */
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
-
-/**
  * Valid types for workflow context extension values.
  * Uses bounded generics instead of unknown for better type inference.
  * @template TArgs - The argument types for function values (defaults to JsonValue[])
@@ -377,16 +379,22 @@ export enum GitRepoDOErrorCode {
 }
 
 /**
- * Custom error class for GitRepoDO operations.
+ * Error context type - values must be JSON-serializable.
  */
-export class GitRepoDOError extends Error {
+export type ErrorContext = Record<string, JsonValue>
+
+/**
+ * Custom error class for GitRepoDO operations.
+ * @template TContext - The type of the context object (defaults to ErrorContext)
+ */
+export class GitRepoDOError<TContext extends ErrorContext = ErrorContext> extends Error {
   readonly code: GitRepoDOErrorCode
-  readonly context?: Record<string, unknown>
+  readonly context: TContext | undefined
 
   constructor(
     message: string,
     code: GitRepoDOErrorCode,
-    context?: Record<string, unknown>
+    context?: TContext
   ) {
     super(message)
     this.name = 'GitRepoDOError'
@@ -398,13 +406,16 @@ export class GitRepoDOError extends Error {
     }
   }
 
-  toJSON(): Record<string, unknown> {
-    return {
+  toJSON(): { name: string; message: string; code: GitRepoDOErrorCode; context?: TContext | undefined } {
+    const result: { name: string; message: string; code: GitRepoDOErrorCode; context?: TContext | undefined } = {
       name: this.name,
       message: this.message,
       code: this.code,
-      context: this.context,
     }
+    if (this.context !== undefined) {
+      result.context = this.context
+    }
+    return result
   }
 }
 
@@ -423,23 +434,30 @@ export enum LogLevel {
 }
 
 /**
- * Log entry interface.
+ * Log context type - values must be JSON-serializable.
  */
-export interface LogEntry {
+export type LogContext = Record<string, JsonValue>
+
+/**
+ * Log entry interface.
+ * @template TContext - The type of the context object (defaults to LogContext)
+ */
+export interface LogEntry<TContext extends LogContext = LogContext> {
   level: LogLevel
   message: string
   timestamp: number
-  context?: Record<string, unknown>
+  context?: TContext
 }
 
 /**
  * Logger interface for GitRepoDO.
+ * @template TContext - The type of the context object (defaults to LogContext)
  */
-export interface Logger {
-  debug(message: string, context?: Record<string, unknown>): void
-  info(message: string, context?: Record<string, unknown>): void
-  warn(message: string, context?: Record<string, unknown>): void
-  error(message: string, context?: Record<string, unknown>): void
+export interface Logger<TContext extends LogContext = LogContext> {
+  debug(message: string, context?: TContext): void
+  info(message: string, context?: TContext): void
+  warn(message: string, context?: TContext): void
+  error(message: string, context?: TContext): void
 }
 
 // ============================================================================

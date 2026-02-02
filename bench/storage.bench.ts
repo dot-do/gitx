@@ -48,7 +48,12 @@ function randomSha(): string {
 /** Generate test blob data of specified size */
 function generateBlob(sizeBytes: number): Uint8Array {
   const data = new Uint8Array(sizeBytes)
-  crypto.getRandomValues(data)
+  // crypto.getRandomValues has a 65536 byte limit, so we fill in chunks
+  const chunkSize = 65536
+  for (let offset = 0; offset < sizeBytes; offset += chunkSize) {
+    const end = Math.min(offset + chunkSize, sizeBytes)
+    crypto.getRandomValues(data.subarray(offset, end))
+  }
   return data
 }
 

@@ -75,6 +75,7 @@ export interface GitRepoDOInstance {
 
 /**
  * Route context with typed bindings.
+ * Uses Record<string, unknown> for bindings to maintain flexibility.
  */
 export type RouteContext = Context<{ Bindings: Record<string, unknown> }>
 

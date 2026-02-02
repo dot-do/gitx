@@ -51,12 +51,12 @@ export function isValidIdentity(identity) {
         return false;
     }
     const obj = identity;
-    return (typeof obj.name === 'string' &&
-        typeof obj.email === 'string' &&
-        typeof obj.timestamp === 'number' &&
-        Number.isInteger(obj.timestamp) &&
-        typeof obj.timezone === 'string' &&
-        /^[+-]\d{4}$/.test(obj.timezone));
+    return (typeof obj['name'] === 'string' &&
+        typeof obj['email'] === 'string' &&
+        typeof obj['timestamp'] === 'number' &&
+        Number.isInteger(obj['timestamp']) &&
+        typeof obj['timezone'] === 'string' &&
+        /^[+-]\d{4}$/.test(obj['timezone']));
 }
 /**
  * Validates a TreeEntry object at runtime
@@ -66,14 +66,17 @@ export function isValidTreeEntry(entry) {
         return false;
     }
     const obj = entry;
-    return (typeof obj.mode === 'string' &&
-        isValidMode(obj.mode) &&
-        typeof obj.name === 'string' &&
-        obj.name.length > 0 &&
-        !obj.name.includes('/') &&
-        !obj.name.includes('\0') &&
-        typeof obj.sha === 'string' &&
-        isValidSha(obj.sha));
+    const mode = obj['mode'];
+    const name = obj['name'];
+    const sha = obj['sha'];
+    return (typeof mode === 'string' &&
+        isValidMode(mode) &&
+        typeof name === 'string' &&
+        name.length > 0 &&
+        !name.includes('/') &&
+        !name.includes('\0') &&
+        typeof sha === 'string' &&
+        isValidSha(sha));
 }
 /**
  * Validates BlobData at runtime
@@ -83,7 +86,7 @@ export function isBlobData(data) {
         return false;
     }
     const obj = data;
-    return obj.content instanceof Uint8Array;
+    return obj['content'] instanceof Uint8Array;
 }
 /**
  * Validates TreeData at runtime
@@ -93,10 +96,11 @@ export function isTreeData(data) {
         return false;
     }
     const obj = data;
-    if (!Array.isArray(obj.entries)) {
+    const entries = obj['entries'];
+    if (!Array.isArray(entries)) {
         return false;
     }
-    return obj.entries.every(isValidTreeEntry);
+    return entries.every(isValidTreeEntry);
 }
 /**
  * Validates CommitData at runtime
@@ -106,30 +110,36 @@ export function isCommitData(data) {
         return false;
     }
     const obj = data;
+    const tree = obj['tree'];
+    const author = obj['author'];
+    const committer = obj['committer'];
+    const message = obj['message'];
+    const parents = obj['parents'];
+    const gpgSignature = obj['gpgSignature'];
     // Required fields
-    if (typeof obj.tree !== 'string' || !isValidSha(obj.tree)) {
+    if (typeof tree !== 'string' || !isValidSha(tree)) {
         return false;
     }
-    if (!isValidIdentity(obj.author)) {
+    if (!isValidIdentity(author)) {
         return false;
     }
-    if (!isValidIdentity(obj.committer)) {
+    if (!isValidIdentity(committer)) {
         return false;
     }
-    if (typeof obj.message !== 'string') {
+    if (typeof message !== 'string') {
         return false;
     }
     // Optional parents array
-    if (obj.parents !== undefined) {
-        if (!Array.isArray(obj.parents)) {
+    if (parents !== undefined) {
+        if (!Array.isArray(parents)) {
             return false;
         }
-        if (!obj.parents.every((p) => typeof p === 'string' && isValidSha(p))) {
+        if (!parents.every((p) => typeof p === 'string' && isValidSha(p))) {
             return false;
         }
     }
     // Optional gpgSignature
-    if (obj.gpgSignature !== undefined && typeof obj.gpgSignature !== 'string') {
+    if (gpgSignature !== undefined && typeof gpgSignature !== 'string') {
         return false;
     }
     return true;
@@ -142,21 +152,26 @@ export function isTagData(data) {
         return false;
     }
     const obj = data;
+    const objectSha = obj['object'];
+    const objectType = obj['objectType'];
+    const name = obj['name'];
+    const message = obj['message'];
+    const tagger = obj['tagger'];
     // Required fields
-    if (typeof obj.object !== 'string' || !isValidSha(obj.object)) {
+    if (typeof objectSha !== 'string' || !isValidSha(objectSha)) {
         return false;
     }
-    if (typeof obj.objectType !== 'string' || !isValidObjectType(obj.objectType)) {
+    if (typeof objectType !== 'string' || !isValidObjectType(objectType)) {
         return false;
     }
-    if (typeof obj.name !== 'string' || obj.name.length === 0) {
+    if (typeof name !== 'string' || name.length === 0) {
         return false;
     }
-    if (typeof obj.message !== 'string') {
+    if (typeof message !== 'string') {
         return false;
     }
     // Optional tagger
-    if (obj.tagger !== undefined && !isValidIdentity(obj.tagger)) {
+    if (tagger !== undefined && !isValidIdentity(tagger)) {
         return false;
     }
     return true;

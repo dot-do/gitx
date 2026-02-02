@@ -37,10 +37,9 @@
  */
 
 import { Hono } from 'hono'
-import type { Context } from 'hono'
-import { gitAuthMiddleware, requireGitAuth, requireGitWrite, type GitAuthConfig, type GitAuthContext } from './auth'
+import { gitAuthMiddleware, requireGitWrite, type GitAuthConfig, type GitAuthContext } from './auth'
 import { getToolRegistry, invokeTool, type McpToolResult } from './tool-registry'
-import { gitTools, requiresWriteAccess } from './tools'
+import { requiresWriteAccess } from './tools'
 
 /**
  * Options for creating a Git MCP server
@@ -85,24 +84,24 @@ export interface GitRepositoryContext {
 }
 
 // Result types (simplified - actual implementation would have full types)
-interface StatusOptions { short?: boolean; branch?: boolean }
-interface StatusResult { staged: string[]; modified: string[]; untracked: string[]; branch?: string }
-interface LogOptions { maxCount?: number; oneline?: boolean; ref?: string; author?: string }
+interface StatusOptions { short?: boolean | undefined; branch?: boolean | undefined }
+interface StatusResult { staged: string[]; modified: string[]; untracked: string[]; branch?: string | undefined }
+interface LogOptions { maxCount?: number | undefined; oneline?: boolean | undefined; ref?: string | undefined; author?: string | undefined }
 interface LogResult { commits: Array<{ hash: string; author: string; date: Date; message: string }> }
-interface DiffOptions { staged?: boolean; commit1?: string; commit2?: string; path?: string }
+interface DiffOptions { staged?: boolean | undefined; commit1?: string | undefined; commit2?: string | undefined; path?: string | undefined }
 interface DiffResult { files: Array<{ path: string; status: string; additions: number; deletions: number }> }
-interface ShowOptions { format?: string; path?: string }
-interface ShowResult { content: string; metadata?: Record<string, unknown> }
-interface CommitOptions { author?: string; email?: string; amend?: boolean }
+interface ShowOptions { format?: string | undefined; path?: string | undefined }
+interface ShowResult { content: string; metadata?: Record<string, unknown> | undefined }
+interface CommitOptions { author?: string | undefined; email?: string | undefined; amend?: boolean | undefined }
 interface CommitResult { hash: string; message: string }
-interface BranchOptions { name?: string; delete?: boolean; list?: boolean; all?: boolean }
-interface BranchResult { branches?: string[]; current?: string; created?: boolean; deleted?: boolean }
-interface CheckoutOptions { createBranch?: boolean }
-interface AddOptions { files?: string[]; all?: boolean }
-interface ResetOptions { mode?: 'soft' | 'mixed' | 'hard'; commit?: string }
-interface MergeOptions { noFf?: boolean; squash?: boolean }
-interface MergeResult { success: boolean; conflicts?: string[] }
-interface BlameOptions { startLine?: number; endLine?: number }
+interface BranchOptions { name?: string | undefined; delete?: boolean | undefined; list?: boolean | undefined; all?: boolean | undefined }
+interface BranchResult { branches?: string[] | undefined; current?: string | undefined; created?: boolean | undefined; deleted?: boolean | undefined }
+interface CheckoutOptions { createBranch?: boolean | undefined }
+interface AddOptions { files?: string[] | undefined; all?: boolean | undefined }
+interface ResetOptions { mode?: 'soft' | 'mixed' | 'hard' | undefined; commit?: string | undefined }
+interface MergeOptions { noFf?: boolean | undefined; squash?: boolean | undefined }
+interface MergeResult { success: boolean; conflicts?: string[] | undefined }
+interface BlameOptions { startLine?: number | undefined; endLine?: number | undefined }
 interface BlameResult { lines: Array<{ line: number; commit: string; author: string; content: string }> }
 
 /**

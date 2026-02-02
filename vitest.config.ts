@@ -11,9 +11,6 @@ export default defineWorkersConfig({
   test: {
     globals: true,
     include: ['test/**/*.test.ts'],
-    // Limit parallelism to prevent memory issues
-    maxConcurrency: 5,
-    fileParallelism: false,
     // Exclude tests that require Node.js APIs (vm, child_process, os, etc.)
     // These run in vitest.node.config.ts instead
     exclude: [

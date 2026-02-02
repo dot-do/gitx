@@ -84,8 +84,8 @@ export interface GitAuthConfig {
 export interface ToolContext {
     toolName: string;
     timestamp: number;
-    metadata?: Record<string, unknown>;
-    auth?: GitAuthContext;
+    metadata?: Record<string, unknown> | undefined;
+    auth?: GitAuthContext | undefined;
 }
 /**
  * Tool handler function type.
@@ -118,7 +118,7 @@ export interface ToolRegistry {
  */
 export interface InvokeToolOptions {
     strictValidation?: boolean;
-    metadata?: Record<string, unknown>;
-    auth?: GitAuthContext;
+    metadata?: Record<string, unknown> | undefined;
+    auth?: GitAuthContext | undefined;
 }
 //# sourceMappingURL=types.d.ts.map

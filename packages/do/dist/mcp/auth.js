@@ -127,26 +127,31 @@ function createAuthContext(response) {
     const scopes = parseScopes(response.scope);
     const readonly = isReadonlyScope(scopes);
     const isAdmin = hasAdminScope(scopes);
-    const id = response.sub ?? response.client_id ?? 'unknown';
+    const id = response.sub ?? response['client_id'] ?? 'unknown';
     const metadata = {};
-    if (response.scope)
-        metadata.scope = response.scope;
-    if (response.exp)
-        metadata.exp = response.exp;
-    if (response.iat)
-        metadata.iat = response.iat;
-    if (response.client_id)
-        metadata.client_id = response.client_id;
-    if (response.iss)
-        metadata.iss = response.iss;
-    return {
+    if (response['scope'])
+        metadata.scope = response['scope'];
+    if (response['exp'])
+        metadata.exp = response['exp'];
+    if (response['iat'])
+        metadata.iat = response['iat'];
+    if (response['client_id'])
+        metadata.client_id = response['client_id'];
+    if (response['iss'])
+        metadata.iss = response['iss'];
+    const context = {
         type: 'oauth',
         id,
         readonly,
-        isAdmin: isAdmin || undefined,
         scopes,
-        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     };
+    if (isAdmin) {
+        context.isAdmin = true;
+    }
+    if (Object.keys(metadata).length > 0) {
+        context.metadata = metadata;
+    }
+    return context;
 }
 /**
  * Extract Bearer token from Authorization header
@@ -156,10 +161,10 @@ function extractBearerToken(request) {
     if (!authHeader)
         return null;
     const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+    if (parts.length !== 2 || parts[0]?.toLowerCase() !== 'bearer') {
         return null;
     }
-    return parts[1];
+    return parts[1] ?? null;
 }
 /**
  * Create authentication middleware for Hono
@@ -212,7 +217,7 @@ export function requireGitAuth() {
         if (!auth || auth.type === 'anon') {
             return c.json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } }, { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
         }
-        await next();
+        return next();
     };
 }
 /**
@@ -224,7 +229,7 @@ export function requireGitWrite() {
         if (!auth || auth.readonly) {
             return c.json({ error: { code: 'FORBIDDEN', message: 'Write access required' } }, { status: 403 });
         }
-        await next();
+        return next();
     };
 }
 /**

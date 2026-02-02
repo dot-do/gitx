@@ -231,7 +231,11 @@ export interface GitRPCMethods {
 // Event Emitter Helper
 // ============================================================================
 
-type EventListener = (...args: unknown[]) => void
+/**
+ * Event listener function type.
+ * @template TArgs - The argument types for the listener (defaults to unknown[] for flexibility)
+ */
+type EventListener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void
 
 class SimpleEventEmitter {
   private listeners: Map<string, EventListener[]> = new Map()
@@ -965,11 +969,26 @@ export class RPCGitBackend extends SimpleEventEmitter {
 // ============================================================================
 
 /**
+ * Base binding types that can appear in an RPCGitDO environment.
+ * Allows R2 buckets, KV namespaces, service bindings, DO namespaces, and primitives.
+ */
+export type RPCEnvBinding =
+  | R2Bucket
+  | KVNamespace
+  | Fetcher
+  | DurableObjectNamespace
+  | string
+  | number
+  | boolean
+  | undefined
+
+/**
  * Environment type for RPCGitDO.
  * Can be extended with specific bindings.
+ * @template TBindings - Additional binding types (defaults to RPCEnvBinding)
  */
-export interface RPCGitDOEnv {
-  [key: string]: unknown
+export interface RPCGitDOEnv<TBindings = RPCEnvBinding> {
+  [key: string]: TBindings
 }
 
 /**
@@ -1679,4 +1698,55 @@ interface ResponseInit {
   status?: number
   headers?: Record<string, string> | Headers
   webSocket?: WebSocket
+}
+
+// Cloudflare binding types for RPCGitDOEnv
+declare class R2Bucket {
+  put(key: string, value: ReadableStream | ArrayBuffer | string): Promise<R2Object | null>
+  get(key: string): Promise<R2ObjectBody | null>
+  delete(key: string): Promise<void>
+  list(options?: { prefix?: string }): Promise<R2Objects>
+}
+
+interface R2Object {
+  key: string
+  size: number
+  etag: string
+}
+
+interface R2ObjectBody extends R2Object {
+  body: ReadableStream
+  arrayBuffer(): Promise<ArrayBuffer>
+  text(): Promise<string>
+}
+
+interface R2Objects {
+  objects: R2Object[]
+  truncated: boolean
+}
+
+declare class KVNamespace {
+  get(key: string, options?: { type?: 'text' | 'json' | 'arrayBuffer' | 'stream' }): Promise<string | null>
+  put(key: string, value: string | ArrayBuffer | ReadableStream): Promise<void>
+  delete(key: string): Promise<void>
+  list(options?: { prefix?: string }): Promise<{ keys: { name: string }[] }>
+}
+
+interface Fetcher {
+  fetch(input: RequestInfo, init?: RequestInit): Promise<Response>
+}
+
+declare class DurableObjectNamespace {
+  idFromName(name: string): DurableObjectId
+  idFromString(id: string): DurableObjectId
+  newUniqueId(): DurableObjectId
+  get(id: DurableObjectId): DurableObjectStub
+}
+
+interface DurableObjectId {
+  toString(): string
+}
+
+interface DurableObjectStub {
+  fetch(input: RequestInfo, init?: RequestInit): Promise<Response>
 }

@@ -38,12 +38,15 @@ export class GitRepoDOError extends Error {
         }
     }
     toJSON() {
-        return {
+        const result = {
             name: this.name,
             message: this.message,
             code: this.code,
-            context: this.context,
         };
+        if (this.context !== undefined) {
+            result.context = this.context;
+        }
+        return result;
     }
 }
 // ============================================================================

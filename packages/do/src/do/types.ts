@@ -253,17 +253,19 @@ export enum GitRepoDOErrorCode {
  */
 export class GitRepoDOError extends Error {
   readonly code: GitRepoDOErrorCode
-  readonly context?: Record<string, unknown>
+  readonly context?: Record<string, unknown> | undefined
 
   constructor(
     message: string,
     code: GitRepoDOErrorCode,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown> | undefined
   ) {
     super(message)
     this.name = 'GitRepoDOError'
     this.code = code
-    this.context = context
+    if (context !== undefined) {
+      this.context = context
+    }
     // Maintains proper stack trace for where our error was thrown (only available on V8)
     const ErrorWithCapture = Error as typeof Error & { captureStackTrace?: (err: Error, ctor: Function) => void }
     if (ErrorWithCapture.captureStackTrace) {
@@ -272,12 +274,15 @@ export class GitRepoDOError extends Error {
   }
 
   toJSON(): Record<string, unknown> {
-    return {
+    const result: Record<string, unknown> = {
       name: this.name,
       message: this.message,
       code: this.code,
-      context: this.context,
     }
+    if (this.context !== undefined) {
+      result['context'] = this.context
+    }
+    return result
   }
 }
 
