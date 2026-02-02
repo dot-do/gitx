@@ -17,6 +17,10 @@ parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature,
 OBJECT_TYPES, VALID_MODES, 
 // Validation
 isValidSha, isValidMode, isValidObjectType, 
+// Runtime type guards
+isValidIdentity, isValidTreeEntry, isBlobData, isTreeData, isCommitData, isTagData, 
+// Errors
+InvalidGitObjectDataError, 
 // Hash utilities
 calculateSha1, calculateObjectHash, createObjectHeader, parseObjectHeader, bytesToHex, hexToBytes, 
 // Loose object format
@@ -75,8 +79,8 @@ export function serializeTag(tag) {
         object: tag.object,
         objectType: tag.objectType,
         name: tag.name,
-        tagger: tag.tagger,
         message: tag.message,
+        ...(tag.tagger !== undefined ? { tagger: tag.tagger } : {}),
     });
     return gitTag.serialize();
 }
@@ -134,22 +138,26 @@ export function parseTag(data) {
         object: tag.object,
         objectType: tag.objectType,
         name: tag.name,
-        tagger: tag.tagger,
         message: tag.message,
+        ...(tag.tagger !== undefined ? { tagger: tag.tagger } : {}),
     };
 }
 // ============================================================================
 // Type Guards
 // ============================================================================
+/** Type guard that checks whether a GitObject is a blob. */
 export function isBlob(obj) {
     return obj.type === 'blob';
 }
+/** Type guard that checks whether a GitObject is a tree. */
 export function isTree(obj) {
     return obj.type === 'tree';
 }
+/** Type guard that checks whether a GitObject is a commit. */
 export function isCommit(obj) {
     return obj.type === 'commit';
 }
+/** Type guard that checks whether a GitObject is an annotated tag. */
 export function isTag(obj) {
     return obj.type === 'tag';
 }
@@ -200,8 +208,9 @@ export function validateCommit(commit) {
         return { isValid: false, error: `Invalid tree SHA: ${commit.tree}` };
     }
     for (let i = 0; i < commit.parents.length; i++) {
-        if (!isValidSha(commit.parents[i])) {
-            return { isValid: false, error: `Invalid parent SHA at index ${i}: ${commit.parents[i]}` };
+        const parent = commit.parents[i];
+        if (parent === undefined || !isValidSha(parent)) {
+            return { isValid: false, error: `Invalid parent SHA at index ${i}: ${parent}` };
         }
     }
     const authorResult = validateAuthor(commit.author);

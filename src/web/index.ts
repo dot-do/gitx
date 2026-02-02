@@ -8,9 +8,12 @@
  * @module web
  */
 
-import type { Hono } from 'hono'
+import type { Hono, Context } from 'hono'
 import type { GitRepoDOInstance } from '../do/routes'
 import type { CommitObject, TreeObject, TreeEntry } from '../types/objects'
+
+/** Minimal context interface for HTML rendering */
+type HtmlContext = Pick<Context, 'html'>
 
 const decoder = new TextDecoder()
 
@@ -123,7 +126,8 @@ async function getRefSha(instance: GitRepoDOInstance, ref: string): Promise<stri
     const storage = instance.getStorage()
     const result = storage.sql.exec('SELECT sha FROM refs WHERE name = ?', ref)
     const rows = result.toArray() as Array<{ sha: string }>
-    if (rows.length > 0) return rows[0].sha
+    const firstRow = rows[0]
+    if (rows.length > 0 && firstRow) return firstRow.sha
   } catch {
     // table may not exist
   }
@@ -276,7 +280,7 @@ export function setupWebRoutes(
 
     body += `<table><thead><tr><th>Message</th><th>Author</th><th>SHA</th><th>Date</th></tr></thead><tbody>`
     for (const { sha, commit } of commits) {
-      const firstLine = commit.message.split('\n')[0]
+      const firstLine = commit.message.split('\n')[0] ?? ''
       body += `<tr>
         <td class="commit-msg"><a href="/web/commit/${sha}">${escapeHtml(firstLine)}</a></td>
         <td>${escapeHtml(commit.author.name)}</td>
@@ -302,7 +306,7 @@ export function setupWebRoutes(
     const breadcrumbs = `<a href="/web">repo</a> <span>/</span> commit <span>/</span> ${sha.slice(0, 7)}`
 
     let body = `<div style="margin-bottom:16px">
-      <div class="commit-msg" style="font-size:18px;margin-bottom:8px">${escapeHtml(commit.message.split('\n')[0])}</div>
+      <div class="commit-msg" style="font-size:18px;margin-bottom:8px">${escapeHtml(commit.message.split('\n')[0] ?? '')}</div>
       <div class="commit-meta">
         <strong>${escapeHtml(commit.author.name)}</strong> &lt;${escapeHtml(commit.author.email)}&gt;
         committed ${timeAgo(commit.author.timestamp)}
@@ -320,7 +324,7 @@ export function setupWebRoutes(
     }
 
     // Show diff if parent exists
-    if (commit.parents.length > 0) {
+    if (commit.parents.length > 0 && commit.parents[0]) {
       const parentCommit = await store.getCommitObject(commit.parents[0])
       if (parentCommit) {
         const diff = await computeTreeDiff(instance, parentCommit.tree, commit.tree, '')
@@ -356,12 +360,12 @@ export function setupWebRoutes(
       return c.html(layout('Not Found', `<div class="empty">Commit not found.</div>`), 404)
     }
 
-    return renderTreePage(c, instance, commit.tree, ref, [])
+    return renderTreePage(c, instance, commit.tree, ref ?? '', [])
   })
 
   // Tree viewer by branch + path
   router.get('/web/tree/:ref/*', async (c) => {
-    const ref = c.req.param('ref')
+    const ref = c.req.param('ref') ?? ''
     const pathStr = c.req.path.replace(`/web/tree/${encodeURIComponent(ref)}/`, '')
     const pathParts = decodeURIComponent(pathStr).split('/').filter(Boolean)
 
@@ -392,7 +396,7 @@ export function setupWebRoutes(
 
   // Raw tree by SHA
   router.get('/web/tree-sha/:sha', async (c) => {
-    const sha = c.req.param('sha')
+    const sha = c.req.param('sha') ?? ''
     return renderTreePage(c, instance, sha, sha.slice(0, 7), [])
   })
 
@@ -416,7 +420,7 @@ export function setupWebRoutes(
 // ============================================================================
 
 async function renderTreePage(
-  c: { html: (body: string, status?: number) => Response },
+  c: HtmlContext,
   instance: GitRepoDOInstance,
   treeSha: string,
   ref: string,
@@ -434,8 +438,9 @@ async function renderTreePage(
   let breadcrumbs = `<a href="/web">repo</a> <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}">${escapeHtml(ref)}</a>`
   let currentPath = ''
   for (let i = 0; i < pathParts.length; i++) {
-    currentPath += (currentPath ? '/' : '') + pathParts[i]
-    breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(pathParts[i])}</a>`
+    const part = pathParts[i] ?? ''
+    currentPath += (currentPath ? '/' : '') + part
+    breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(part)}</a>`
   }
 
   // Sort entries: directories first, then files
@@ -480,7 +485,7 @@ async function renderTreePage(
 }
 
 async function renderFilePage(
-  c: { html: (body: string, status?: number) => Response },
+  c: HtmlContext,
   instance: GitRepoDOInstance,
   entry: TreeEntry,
   ref: string,
@@ -495,11 +500,12 @@ async function renderFilePage(
   let breadcrumbs = `<a href="/web">repo</a> <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}">${escapeHtml(ref)}</a>`
   let currentPath = ''
   for (let i = 0; i < pathParts.length; i++) {
-    currentPath += (currentPath ? '/' : '') + pathParts[i]
+    const part = pathParts[i] ?? ''
+    currentPath += (currentPath ? '/' : '') + part
     if (i === pathParts.length - 1) {
-      breadcrumbs += ` <span>/</span> ${escapeHtml(pathParts[i])}`
+      breadcrumbs += ` <span>/</span> ${escapeHtml(part)}`
     } else {
-      breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(pathParts[i])}</a>`
+      breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(part)}</a>`
     }
   }
 
@@ -530,7 +536,7 @@ function renderBlobContent(data: Uint8Array, _filename: string): string {
 
   let body = `<div class="code-block"><table>`
   for (let i = 0; i < lines.length; i++) {
-    body += `<tr><td class="line-num">${i + 1}</td><td>${escapeHtml(lines[i])}</td></tr>`
+    body += `<tr><td class="line-num">${i + 1}</td><td>${escapeHtml(lines[i] ?? '')}</td></tr>`
   }
   body += `</table></div>`
   return body

@@ -26,9 +26,13 @@
  * const obj = await backend.readObject(sha)
  * ```
  */
+import { isValidObjectType } from '../types/objects';
 // ============================================================================
 // SHA-1 Computation
 // ============================================================================
+// Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 /**
  * Compute SHA-1 hash of data using Git's object format.
  *
@@ -40,7 +44,7 @@
  * @returns 40-character lowercase hex SHA-1 hash
  */
 async function computeGitSha(type, data) {
-    const header = new TextEncoder().encode(`${type} ${data.length}\0`);
+    const header = encoder.encode(`${type} ${data.length}\0`);
     const fullData = new Uint8Array(header.length + data.length);
     fullData.set(header);
     fullData.set(data, header.length);
@@ -93,7 +97,7 @@ async function parsePackfile(pack) {
     if (pack.length < 12) {
         return objects; // Too short, return empty
     }
-    const signature = new TextDecoder().decode(pack.slice(0, 4));
+    const signature = decoder.decode(pack.slice(0, 4));
     if (signature !== 'PACK') {
         return objects; // Invalid signature
     }
@@ -111,6 +115,8 @@ async function parsePackfile(pack) {
         // Read object header (variable-length encoded)
         // First byte: bit 7 = MSB/continuation, bits 4-6 = type, bits 0-3 = size low bits
         const firstByte = pack[offset];
+        if (firstByte === undefined)
+            break;
         const typeNum = (firstByte >> 4) & 0x07;
         let size = firstByte & 0x0f;
         let shift = 4;
@@ -128,7 +134,10 @@ async function parsePackfile(pack) {
             // Skip unknown types or delta objects (6, 7)
             // Skip remaining size bytes
             while (hasContinuation && offset < pack.length) {
-                hasContinuation = (pack[offset] & 0x80) !== 0;
+                const nextByte = pack[offset];
+                if (nextByte === undefined)
+                    break;
+                hasContinuation = (nextByte & 0x80) !== 0;
                 offset++;
             }
             continue;
@@ -139,6 +148,8 @@ async function parsePackfile(pack) {
         // We detect extra bytes by checking if the NEXT byte has MSB set or looks like a size byte
         while (offset < pack.length - 20) {
             const byte = pack[offset];
+            if (byte === undefined)
+                break;
             // If first byte indicated continuation, we must read
             // If first byte didn't indicate continuation but this byte has MSB set,
             // it's a continuation byte from the test's format
@@ -208,6 +219,8 @@ export function createMemoryBackend() {
     const objects = new Map();
     const refs = new Map();
     const packedRefs = { refs: new Map() };
+    const packs = new Map();
+    const symbolicRefs = new Map();
     return {
         // =========================================================================
         // Object Operations
@@ -229,6 +242,10 @@ export function createMemoryBackend() {
             };
         },
         async writeObject(obj) {
+            // Validate object type
+            if (!isValidObjectType(obj.type)) {
+                throw new Error(`Invalid object type: ${obj.type}`);
+            }
             const sha = await computeGitSha(obj.type, obj.data);
             // Store a copy to prevent mutation
             objects.set(sha, {
@@ -268,10 +285,13 @@ export function createMemoryBackend() {
         // Packed Refs Operations
         // =========================================================================
         async readPackedRefs() {
-            return {
+            const result = {
                 refs: new Map(packedRefs.refs),
-                peeled: packedRefs.peeled ? new Map(packedRefs.peeled) : undefined,
             };
+            if (packedRefs.peeled) {
+                result.peeled = new Map(packedRefs.peeled);
+            }
+            return result;
         },
         async writePackfile(pack) {
             const parsedObjects = await parsePackfile(pack);
@@ -281,6 +301,57 @@ export function createMemoryBackend() {
                     type: obj.type,
                     data: new Uint8Array(obj.data),
                 });
+            }
+            // Store the pack data itself
+            const packName = `pack-default`;
+            packs.set(packName, new Uint8Array(pack));
+        },
+        // =========================================================================
+        // Extended Pack Operations
+        // =========================================================================
+        async readPack(name) {
+            const pack = packs.get(name);
+            return pack ? new Uint8Array(pack) : null;
+        },
+        async listPacks() {
+            return Array.from(packs.keys());
+        },
+        // =========================================================================
+        // Symbolic Ref Operations
+        // =========================================================================
+        async writeSymbolicRef(name, target) {
+            symbolicRefs.set(name, target);
+        },
+        async readSymbolicRef(name) {
+            return symbolicRefs.get(name) ?? null;
+        },
+        // =========================================================================
+        // Atomic Ref Operations
+        // =========================================================================
+        async compareAndSwapRef(name, expectedSha, newSha) {
+            const currentSha = refs.get(name) ?? null;
+            // If expected is null, we're trying to create a new ref
+            if (expectedSha === null) {
+                if (currentSha !== null) {
+                    // Ref already exists, fail
+                    return false;
+                }
+                refs.set(name, normalizeSha(newSha));
+                return true;
+            }
+            // Check if current matches expected
+            if (currentSha !== normalizeSha(expectedSha)) {
+                return false;
+            }
+            refs.set(name, normalizeSha(newSha));
+            return true;
+        },
+        // =========================================================================
+        // Object Deletion
+        // =========================================================================
+        async deleteObject(sha) {
+            if (isValidSha(sha)) {
+                objects.delete(normalizeSha(sha));
             }
         },
         // =========================================================================
@@ -293,6 +364,8 @@ export function createMemoryBackend() {
             if (packedRefs.peeled) {
                 packedRefs.peeled.clear();
             }
+            packs.clear();
+            symbolicRefs.clear();
         },
     };
 }

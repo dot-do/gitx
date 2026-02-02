@@ -150,7 +150,6 @@ export interface LineRange {
  *
  * @param ctx - Command context containing cwd, args, options, and output functions
  * @returns Promise that resolves when output is complete
- * @throws {Error} Always throws "Not implemented" - command not yet implemented
  *
  * @example
  * // CLI usage
@@ -158,7 +157,7 @@ export interface LineRange {
  * // gitx blame -L 10,20 src/index.ts
  * // gitx blame -C src/renamed-file.ts
  */
-export declare function blameCommand(_ctx: CommandContext): Promise<void>;
+export declare function blameCommand(ctx: CommandContext): Promise<void>;
 /**
  * Get blame annotations for a file.
  *

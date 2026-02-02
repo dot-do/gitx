@@ -27,12 +27,18 @@
 // ============================================================================
 // Validation Helpers
 // ============================================================================
+// Import SHA validation utilities from the centralized module
+import { SHA1_PATTERN, SHA256_PATTERN, ZERO_SHA, ZERO_SHA256, isValidSha1, isValidSha256, isValidSha as isValidShaCombined, validateSha, assertValidSha, assertValidSha1, assertValidSha256, isZeroSha, getShaType, normalizeSha, validateAndNormalizeSha, } from '../utils/sha-validation';
+// Re-export SHA validation utilities for backward compatibility and convenience
+export { SHA1_PATTERN, SHA256_PATTERN, ZERO_SHA, ZERO_SHA256, isValidSha1, isValidSha256, validateSha, assertValidSha, assertValidSha1, assertValidSha256, isZeroSha, getShaType, normalizeSha, validateAndNormalizeSha, };
 /**
  * Valid SHA-1 hash pattern (40 lowercase hexadecimal characters).
  *
  * @description
  * Regular expression for validating SHA-1 hashes used in Git.
  * Matches exactly 40 lowercase hexadecimal characters.
+ *
+ * @deprecated Use SHA1_PATTERN for SHA-1 only, or SHA_COMBINED_PATTERN for both SHA-1 and SHA-256.
  *
  * @example
  * ```typescript
@@ -41,7 +47,7 @@
  * }
  * ```
  */
-export const SHA_PATTERN = /^[0-9a-f]{40}$/;
+export const SHA_PATTERN = SHA1_PATTERN;
 /**
  * Valid file modes in Git.
  *
@@ -55,14 +61,19 @@ export const SHA_PATTERN = /^[0-9a-f]{40}$/;
  */
 export const VALID_MODES = new Set(['100644', '100755', '040000', '120000', '160000']);
 /**
- * Validate a SHA-1 hash string.
+ * Validate a SHA hash string (supports both SHA-1 and SHA-256).
  *
  * @description
- * Checks if a string is a valid Git SHA-1 hash (40 lowercase hex characters).
+ * Checks if a string is a valid Git SHA hash:
+ * - SHA-1: 40 lowercase hexadecimal characters
+ * - SHA-256: 64 lowercase hexadecimal characters
+ *
  * Use this to validate user input or data from external sources.
+ * For strict SHA-1 only validation, use isValidSha1().
+ * For strict SHA-256 only validation, use isValidSha256().
  *
  * @param sha - The string to validate
- * @returns True if the string is a valid SHA-1 hash
+ * @returns True if the string is a valid SHA-1 or SHA-256 hash
  *
  * @example
  * ```typescript
@@ -70,13 +81,60 @@ export const VALID_MODES = new Set(['100644', '100755', '040000', '120000', '160
  *   console.log('Invalid SHA') // Too short
  * }
  *
+ * // SHA-1 (40 chars)
  * if (isValidSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
- *   console.log('Valid SHA')
+ *   console.log('Valid SHA-1')
+ * }
+ *
+ * // SHA-256 (64 chars)
+ * if (isValidSha('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')) {
+ *   console.log('Valid SHA-256')
  * }
  * ```
  */
 export function isValidSha(sha) {
-    return typeof sha === 'string' && SHA_PATTERN.test(sha);
+    return isValidShaCombined(sha);
+}
+/**
+ * Minimum length for a short SHA prefix.
+ *
+ * @description
+ * Git requires a minimum of 4 characters for a short SHA prefix.
+ * This matches the behavior of the git command-line tool.
+ */
+export const MIN_SHORT_SHA_LENGTH = 4;
+/**
+ * Pattern for validating short SHA prefixes (4-40 hex characters, case-insensitive).
+ */
+export const SHORT_SHA_PATTERN = /^[0-9a-fA-F]{4,40}$/;
+/**
+ * Validate a short SHA-1 prefix string.
+ *
+ * @description
+ * Checks if a string is a valid short Git SHA-1 prefix (4-40 hex characters).
+ * Short SHAs are commonly used in Git commands and UIs for convenience.
+ * Git requires at least 4 characters to avoid excessive ambiguity.
+ *
+ * @param sha - The string to validate
+ * @returns True if the string is a valid short SHA-1 prefix (4-40 hex characters)
+ *
+ * @example
+ * ```typescript
+ * if (isValidShortSha('abc')) {
+ *   console.log('Invalid - too short') // Less than 4 chars
+ * }
+ *
+ * if (isValidShortSha('abc123')) {
+ *   console.log('Valid short SHA')
+ * }
+ *
+ * if (isValidShortSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
+ *   console.log('Valid full SHA (also a valid short SHA)')
+ * }
+ * ```
+ */
+export function isValidShortSha(sha) {
+    return typeof sha === 'string' && SHORT_SHA_PATTERN.test(sha);
 }
 /**
  * Validate a Git object type string.
@@ -163,7 +221,7 @@ export function validateTreeEntry(entry) {
  * ```typescript
  * const result = validateAuthor({
  *   name: 'Alice',
- *   email: 'alice@example.com',
+ *   email: 'alice@example.com.ai',
  *   timestamp: 1704067200,
  *   timezone: '+0000'
  * })
@@ -402,6 +460,22 @@ function formatAuthor(prefix, author) {
     return `${prefix} ${author.name} <${author.email}> ${author.timestamp} ${author.timezone}`;
 }
 /**
+ * Type guard to check if regex match groups are defined.
+ *
+ * @param match - The regex match result
+ * @param requiredGroups - Number of capture groups required (excluding full match at index 0)
+ * @returns True if all required groups are non-undefined strings
+ * @internal
+ */
+function hasValidGroups(match, requiredGroups) {
+    for (let i = 1; i <= requiredGroups; i++) {
+        if (typeof match[i] !== 'string') {
+            return false;
+        }
+    }
+    return true;
+}
+/**
  * Parse a Git author/committer/tagger line into an Author object.
  *
  * @param line - The full line including prefix
@@ -417,11 +491,23 @@ function parseAuthorLine(line) {
     if (!match) {
         throw new Error(`Invalid author line: ${line}`);
     }
+    // Type guard ensures all capture groups are defined strings
+    if (!hasValidGroups(match, 4)) {
+        throw new Error(`Invalid author line format - missing capture groups: ${line}`);
+    }
+    const name = match[1];
+    const email = match[2];
+    const timestampStr = match[3];
+    const timezone = match[4];
+    const timestamp = parseInt(timestampStr, 10);
+    if (!Number.isFinite(timestamp) || timestamp < 0) {
+        throw new Error(`Invalid timestamp in author line: ${timestampStr}`);
+    }
     return {
-        name: match[1],
-        email: match[2],
-        timestamp: parseInt(match[3], 10),
-        timezone: match[4]
+        name,
+        email,
+        timestamp,
+        timezone
     };
 }
 // ============================================================================
@@ -525,8 +611,8 @@ export function serializeTree(entries) {
  * const commit = serializeCommit({
  *   tree: 'abc123...',
  *   parents: ['parent1...'],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit'
  * })
  * const sha = await sha1(commit)
@@ -570,7 +656,7 @@ export function serializeCommit(commit) {
  *   object: 'commitsha...',
  *   objectType: 'commit',
  *   name: 'v1.0.0',
- *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Bob', email: 'bob@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release v1.0.0'
  * })
  * const sha = await sha1(tag)
@@ -814,7 +900,10 @@ export function parseTag(data) {
             object = line.slice(7);
         }
         else if (line.startsWith('type ')) {
-            objectType = line.slice(5);
+            const parsed = line.slice(5);
+            if (isValidObjectType(parsed)) {
+                objectType = parsed;
+            }
         }
         else if (line.startsWith('tag ')) {
             name = line.slice(4);

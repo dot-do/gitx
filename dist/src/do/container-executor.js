@@ -58,7 +58,7 @@
  * ```typescript
  * // Using HTTP exec endpoint
  * const executor = new CloudflareContainerExecutor({
- *   httpExecEndpoint: 'https://container.example.com/exec',
+ *   httpExecEndpoint: 'https://container.example.com.ai/exec',
  *   sessionId: 'session-456',
  * })
  *

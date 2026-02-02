@@ -15,16 +15,21 @@ class ZlibImpl {
     Inflate = class ZlibInflate {
         result = new Uint8Array(0);
         err = 0;
+        msg;
+        ended = false;
         strm = {};
-        chunks = [];
-        push(data, final) {
+        push(data, _final) {
             try {
                 const result = zlibInflate(data);
                 this.result = result;
-                this.strm.next_in = this.findCompressedLength(data);
+                const compressedLength = this.findCompressedLength(data);
+                this.strm.next_in = compressedLength;
+                this.strm.avail_in = data.length - compressedLength;
+                this.ended = true;
             }
             catch (e) {
                 this.err = 1;
+                this.msg = e instanceof Error ? e.message : 'Unknown error';
             }
         }
         findCompressedLength(data) {

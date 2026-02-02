@@ -187,9 +187,10 @@ export declare function encodeDeltaOffset(offset: number): Uint8Array;
  * Pack file parser.
  */
 export declare class PackParser {
-    private data;
+    private _data;
     private header;
     constructor(data: Uint8Array);
+    getData(): Uint8Array;
     getHeader(): PackHeader;
     getObjectCount(): number;
 }

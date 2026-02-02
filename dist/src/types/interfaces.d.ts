@@ -23,6 +23,35 @@
  * ```
  */
 /**
+ * Typed constructor generic for mixin composition.
+ *
+ * @description
+ * Represents a class constructor that produces instances of type T.
+ * This is the standard constraint used by all mixin functions (withGit,
+ * withFs, withBash, etc.) to accept a base class and return an
+ * extended class with additional capabilities.
+ *
+ * @template T - The instance type produced by the constructor (defaults to object)
+ *
+ * @example
+ * ```typescript
+ * // Use in a mixin function signature
+ * function withCapability<TBase extends Constructor>(Base: TBase) {
+ *   return class extends Base {
+ *     capability = true
+ *   }
+ * }
+ *
+ * // Constrain to a specific base type
+ * function withStorage<TBase extends Constructor<{ storage: SqlStorage }>>(Base: TBase) {
+ *   return class extends Base {
+ *     async query(sql: string) { return this.storage.sql.exec(sql) }
+ *   }
+ * }
+ * ```
+ */
+export type Constructor<T = object> = new (...args: any[]) => T;
+/**
  * SQL execution result interface.
  *
  * @description
@@ -500,6 +529,21 @@ export type ScheduleProxy = {
     };
 };
 /**
+ * Result returned by $.try() and $.do() workflow actions.
+ *
+ * @description
+ * Provides a properly typed result instead of using unsafe generic casts.
+ * Contains the action name, optional data payload, and a success flag.
+ */
+export interface ActionResult {
+    /** The name of the action that was executed */
+    action: string;
+    /** The data payload that was passed to the action */
+    data?: unknown;
+    /** Whether the action completed successfully */
+    success: boolean;
+}
+/**
  * Workflow context interface (the $ API).
  *
  * @description
@@ -538,7 +582,7 @@ export interface WorkflowContext {
      * @param data - Optional action data
      * @returns Promise resolving to the action result
      */
-    try<T>(action: string, data?: unknown): Promise<T>;
+    try(action: string, data?: unknown): Promise<ActionResult>;
     /**
      * Durable execution with retries.
      * Stores the action for durability and executes with retry logic.
@@ -546,7 +590,7 @@ export interface WorkflowContext {
      * @param data - Optional action data
      * @returns Promise resolving to the action result
      */
-    do<T>(action: string, data?: unknown): Promise<T>;
+    do(action: string, data?: unknown): Promise<ActionResult>;
     /**
      * Event handler registration proxy.
      * Use as $.on.Noun.verb(handler).

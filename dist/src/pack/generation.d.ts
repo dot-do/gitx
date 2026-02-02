@@ -77,7 +77,7 @@ export interface PackableObject {
     /** The raw (uncompressed) object data */
     data: Uint8Array;
     /** Optional file path, used to improve delta base selection */
-    path?: string;
+    path?: string | undefined;
 }
 /**
  * Represents a delta object that references an external base.
@@ -226,22 +226,7 @@ export interface ThinPackResult {
     /** Generation statistics */
     stats: PackGenerationStats;
 }
-/**
- * Computes the SHA-1 checksum of pack content.
- *
- * @description Calculates the 20-byte SHA-1 hash that serves as the pack's
- * checksum/trailer. This checksum is appended to the pack and also used
- * in the corresponding .idx file.
- *
- * @param {Uint8Array} data - The pack data to checksum
- * @returns {Uint8Array} 20-byte SHA-1 checksum
- *
- * @example
- * const packWithoutChecksum = generatePackContent(objects);
- * const checksum = computePackChecksum(packWithoutChecksum);
- * // Append checksum to create complete packfile
- */
-export declare function computePackChecksum(data: Uint8Array): Uint8Array;
+export { computePackChecksum } from './utils';
 /**
  * Orders objects for optimal delta compression.
  *

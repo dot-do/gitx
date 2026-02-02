@@ -1,0 +1,1533 @@
+/**
+ * @fileoverview Git Object Store for Durable Objects
+ *
+ * This module provides a Git object storage implementation backed by SQLite
+ * within Cloudflare Durable Objects. It handles CRUD operations for all four
+ * Git object types (blob, tree, commit, tag) with proper SHA-1 hash computation.
+ *
+ * **Key Features**:
+ * - Content-addressable storage using SHA-1 hashes
+ * - Write-ahead logging (WAL) for durability
+ * - Object index for tiered storage support
+ * - Batch operations for efficiency with transaction support
+ * - LRU caching for hot tier objects
+ * - Metrics and logging infrastructure
+ * - Typed accessors for each Git object type
+ *
+ * @module do/object-store
+ *
+ * @example
+ * ```typescript
+ * import { SqliteObjectStore } from './do/object-store'
+ *
+ * const store = new SqliteObjectStore(durableObjectStorage, {
+ *   cacheMaxCount: 1000,
+ *   cacheMaxBytes: 50 * 1024 * 1024, // 50MB
+ *   enableMetrics: true
+ * })
+ *
+ * // Store a blob
+ * const content = new TextEncoder().encode('Hello, World!')
+ * const sha = await store.putObject('blob', content)
+ *
+ * // Retrieve it (cached on second access)
+ * const obj = await store.getObject(sha)
+ * console.log(obj?.type, obj?.size)
+ *
+ * // Get typed object
+ * const blob = await store.getBlobObject(sha)
+ *
+ * // Get metrics
+ * const metrics = store.getMetrics()
+ * console.log(`Cache hit rate: ${metrics.cacheHitRate}%`)
+ * ```
+ */
+import { LRUCache } from '../storage/lru-cache';
+import { isValidObjectType, isValidSha, isValidShortSha } from '../types/objects';
+import { hashObject, HashCache } from '../utils/hash';
+import { DEFAULT_HASH_CACHE_SIZE } from '../constants';
+import { assertValidTreeEntries, sortTreeEntries, serializeTreeEntries, parseTreeEntries } from '../utils/tree';
+import { typedQuery, validateRow } from '../utils/sql-validate';
+import { CHUNK_SIZE, shouldChunk, getChunkKey, splitIntoChunks, reassembleChunks } from '../storage/chunk-utils';
+// ============================================================================
+// Constants
+// ============================================================================
+/**
+ * Size threshold for streaming blob operations (1MB).
+ * Blobs larger than this will be handled with streaming APIs.
+ */
+const LARGE_BLOB_THRESHOLD = 1024 * 1024;
+/**
+ * Chunk size for streaming operations (64KB).
+ */
+const STREAM_CHUNK_SIZE = 64 * 1024;
+/**
+ * Chunk size for blob storage (2MB).
+ * DO SQLite charges per row read/write, not per-byte.
+ * By chunking large blobs into 2MB segments, we optimize storage costs.
+ * Objects >= BLOB_CHUNK_SIZE will be chunked.
+ * @deprecated Use CHUNK_SIZE from chunk-utils.ts instead
+ */
+export const BLOB_CHUNK_SIZE = CHUNK_SIZE;
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+// Default cache configuration
+const DEFAULT_CACHE_MAX_COUNT = 500;
+const DEFAULT_CACHE_MAX_BYTES = 25 * 1024 * 1024; // 25MB
+// ============================================================================
+// ObjectStore Class
+// ============================================================================
+/**
+ * ObjectStore class for managing Git objects in SQLite storage.
+ *
+ * @description
+ * Provides a complete implementation of Git object storage operations.
+ * All objects are stored in the `objects` table and indexed in `object_index`
+ * for tiered storage support. Write operations are logged to WAL for durability.
+ *
+ * @example
+ * ```typescript
+ * const store = new SqliteObjectStore(durableObjectStorage)
+ *
+ * // Create a commit
+ * const commitSha = await store.putCommitObject({
+ *   tree: treeSha,
+ *   parents: [parentSha],
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   message: 'Initial commit'
+ * })
+ *
+ * // Read it back
+ * const commit = await store.getCommitObject(commitSha)
+ * console.log(commit?.message)
+ * ```
+ */
+export class SqliteObjectStore {
+    storage;
+    cache;
+    hashCache;
+    options;
+    logger;
+    backend;
+    // Metrics tracking
+    _reads = 0;
+    _writes = 0;
+    _deletes = 0;
+    _bytesWritten = 0;
+    _bytesRead = 0;
+    _totalWriteLatency = 0;
+    _totalReadLatency = 0;
+    _batchOperations = 0;
+    _batchObjectsTotal = 0;
+    _largeBlobOperations = 0;
+    _largeBlobBytes = 0;
+    _streamingOperations = 0;
+    _objectsByType = { blob: 0, tree: 0, commit: 0, tag: 0 };
+    /**
+     * Create a new ObjectStore.
+     *
+     * @param storage - Durable Object storage interface with SQL support
+     * @param options - Configuration options for caching, metrics, logging, and backend
+     *
+     * @example
+     * ```typescript
+     * // Basic usage (SQLite backend)
+     * const store = new ObjectStore(storage)
+     *
+     * // With caching and metrics
+     * const store = new ObjectStore(storage, {
+     *   cacheMaxCount: 1000,
+     *   cacheMaxBytes: 50 * 1024 * 1024,
+     *   enableMetrics: true,
+     *   logger: console
+     * })
+     *
+     * // With StorageBackend abstraction
+     * const store = new ObjectStore(storage, {
+     *   backend: fsBackend
+     * })
+     * ```
+     */
+    constructor(storage, options) {
+        this.storage = storage;
+        this.options = options ?? {};
+        this.logger = options?.logger;
+        this.backend = options?.backend ?? null;
+        // Initialize LRU cache for hot tier objects with improved eviction strategy
+        // Uses size-aware eviction with priority for smaller objects to maximize cache utilization
+        this.cache = new LRUCache({
+            maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
+            maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
+            defaultTTL: options?.cacheTTL,
+            sizeCalculator: (obj) => {
+                const stored = obj;
+                // 100 bytes overhead for metadata, plus actual data size
+                return stored.data.byteLength + 100;
+            },
+            onEvict: (key, value, reason) => {
+                const stored = value;
+                this.log('debug', `Cache eviction: ${key} type=${stored?.type} size=${stored?.size} (reason: ${reason})`);
+            }
+        });
+        // Initialize hash cache for optimizing repeated hash computations
+        // This is especially useful for pack file operations and deduplication checks
+        this.hashCache = new HashCache(DEFAULT_HASH_CACHE_SIZE);
+    }
+    /**
+     * Log a message if logger is configured.
+     * @internal
+     */
+    log(level, message, ...args) {
+        if (!this.logger)
+            return;
+        const logFn = this.logger[level];
+        if (logFn) {
+            logFn.call(this.logger, `[ObjectStore] ${message}`, ...args);
+        }
+    }
+    /**
+     * Store a raw object and return its SHA.
+     *
+     * @description
+     * Computes the SHA-1 hash of the object in Git format (type + size + content),
+     * logs the operation to WAL, stores the object, and updates the object index.
+     * If an object with the same SHA already exists, it is replaced (idempotent).
+     * The object is also added to the LRU cache for fast subsequent reads.
+     *
+     * @param type - Object type ('blob', 'tree', 'commit', 'tag')
+     * @param data - Raw object content (without Git header)
+     * @returns 40-character SHA-1 hash of the stored object
+     *
+     * @example
+     * ```typescript
+     * const content = new TextEncoder().encode('file content')
+     * const sha = await store.putObject('blob', content)
+     * console.log(`Stored blob: ${sha}`)
+     * ```
+     */
+    async putObject(type, data) {
+        const startTime = this.options.enableMetrics ? Date.now() : 0;
+        const isLargeBlob = type === 'blob' && data.length > LARGE_BLOB_THRESHOLD;
+        const needsChunking = type === 'blob' && shouldChunk(data.length);
+        // Delegate to backend if available
+        if (this.backend) {
+            const sha = await this.backend.putObject(type, data);
+            // Add to cache for fast subsequent reads
+            const storedObject = {
+                sha,
+                type,
+                size: data.length,
+                data,
+                createdAt: Date.now()
+            };
+            this.cache.set(sha, storedObject);
+            // Update metrics
+            if (this.options.enableMetrics) {
+                this._writes++;
+                this._bytesWritten += data.length;
+                this._totalWriteLatency += Date.now() - startTime;
+                this._objectsByType[type]++;
+                if (isLargeBlob) {
+                    this._largeBlobOperations++;
+                    this._largeBlobBytes += data.length;
+                }
+            }
+            return sha;
+        }
+        // Use hash cache for optimized hash computation
+        // This avoids recomputing hashes for content we've seen before
+        const sha = await this.hashCache.getOrCompute(data, () => hashObject(type, data));
+        this.log('debug', `Storing ${type} object: ${sha} (${data.length} bytes)${isLargeBlob ? ' [LARGE]' : ''}${needsChunking ? ' [CHUNKED]' : ''}`);
+        // Log to WAL first
+        await this.logToWAL('PUT', sha, type, data);
+        const now = Date.now();
+        // Handle chunked storage for large blobs (>2MB) using shared chunk-utils
+        if (needsChunking) {
+            const chunks = splitIntoChunks(data);
+            const chunkCount = chunks.length;
+            // Store each chunk
+            for (let i = 0; i < chunkCount; i++) {
+                const chunkData = chunks[i];
+                const chunkKey = getChunkKey(sha, i);
+                this.storage.sql.exec('INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)', chunkKey, 'blob_chunk', chunkData.length, chunkData, now);
+            }
+            // Update object index with chunked metadata
+            this.storage.sql.exec('INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at, chunked, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', sha, 'hot', null, null, data.length, type, now, 1, // chunked = true
+            chunkCount);
+        }
+        else {
+            // Store the object directly (unchunked)
+            this.storage.sql.exec('INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)', sha, type, data.length, data, now);
+            // Update object index
+            this.storage.sql.exec('INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at, chunked, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', sha, 'hot', null, // pack_id is null for hot tier
+            null, // offset is null for hot tier
+            data.length, type, now, 0, // chunked = false
+            0 // chunk_count = 0
+            );
+        }
+        // Add to cache for fast subsequent reads
+        const storedObject = {
+            sha,
+            type,
+            size: data.length,
+            data,
+            createdAt: now
+        };
+        this.cache.set(sha, storedObject);
+        // Update metrics
+        if (this.options.enableMetrics) {
+            this._writes++;
+            this._bytesWritten += data.length;
+            this._totalWriteLatency += Date.now() - startTime;
+            this._objectsByType[type]++;
+            if (isLargeBlob) {
+                this._largeBlobOperations++;
+                this._largeBlobBytes += data.length;
+            }
+        }
+        return sha;
+    }
+    /**
+     * Store a Git object and return its SHA-1 hash.
+     *
+     * @description
+     * Alias for {@link putObject} that satisfies the canonical
+     * {@link BasicObjectStore} interface from types/storage.ts.
+     *
+     * @param type - Object type ('blob', 'tree', 'commit', 'tag')
+     * @param data - Raw object content (without Git header)
+     * @returns 40-character SHA-1 hash of the stored object
+     */
+    async storeObject(type, data) {
+        return this.putObject(type, data);
+    }
+    /**
+     * Store a large blob using streaming.
+     *
+     * @description
+     * Stores a large blob by processing it in chunks to minimize memory usage.
+     * This is useful for blobs larger than the LARGE_BLOB_THRESHOLD (1MB).
+     * The hash is computed incrementally as chunks are processed.
+     *
+     * @param chunks - Async iterable of data chunks
+     * @returns 40-character SHA-1 hash of the stored blob
+     *
+     * @example
+     * ```typescript
+     * async function* generateChunks() {
+     *   for (let i = 0; i < 10; i++) {
+     *     yield new Uint8Array(1024 * 64).fill(i)
+     *   }
+     * }
+     * const sha = await store.putBlobStreaming(generateChunks())
+     * ```
+     */
+    async putBlobStreaming(chunks) {
+        // Collect all chunks and compute total size
+        const collectedChunks = [];
+        let totalSize = 0;
+        for await (const chunk of chunks) {
+            collectedChunks.push(chunk);
+            totalSize += chunk.length;
+        }
+        // Combine chunks into single buffer
+        const data = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of collectedChunks) {
+            data.set(chunk, offset);
+            offset += chunk.length;
+        }
+        this.log('debug', `Streaming blob: ${totalSize} bytes in ${collectedChunks.length} chunks`);
+        // Use the standard putObject which handles caching and metrics
+        const sha = await this.putObject('blob', data);
+        // Track streaming operation
+        if (this.options.enableMetrics) {
+            this._streamingOperations++;
+        }
+        return sha;
+    }
+    /**
+     * Read a blob using streaming.
+     *
+     * @description
+     * Retrieves a blob and provides it as an async iterable of chunks.
+     * This is useful for large blobs to avoid loading the entire content into memory at once.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns StreamingBlobResult or null if not found
+     *
+     * @example
+     * ```typescript
+     * const result = await store.getBlobStreaming(sha)
+     * if (result) {
+     *   for await (const chunk of result.chunks) {
+     *     process(chunk.data)
+     *   }
+     * }
+     * ```
+     */
+    async getBlobStreaming(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj || obj.type !== 'blob') {
+            return null;
+        }
+        const data = obj.data;
+        const totalSize = data.length;
+        const chunkSize = STREAM_CHUNK_SIZE;
+        // Track streaming operation
+        if (this.options.enableMetrics) {
+            this._streamingOperations++;
+        }
+        // Create async generator for chunks with proper cleanup on early termination
+        async function* generateChunks() {
+            let offset = 0;
+            // Track a reference to the data slice for cleanup
+            let currentChunk = null;
+            try {
+                while (offset < totalSize) {
+                    const end = Math.min(offset + chunkSize, totalSize);
+                    currentChunk = data.slice(offset, end);
+                    const isLast = end >= totalSize;
+                    yield {
+                        data: currentChunk,
+                        offset,
+                        totalSize,
+                        isLast
+                    };
+                    currentChunk = null; // Clear reference after yield
+                    offset = end;
+                }
+            }
+            finally {
+                // Clean up any pending chunk reference on early termination
+                // This ensures the slice is released for garbage collection
+                currentChunk = null;
+            }
+        }
+        return {
+            sha,
+            size: totalSize,
+            chunks: generateChunks()
+        };
+    }
+    /**
+     * Store a tree object with entries.
+     *
+     * @description
+     * Creates a Git tree object from an array of entries. Entries are sorted
+     * by name (with directories treated as having trailing slashes for sorting).
+     * Each entry is serialized as: "{mode} {name}\0{20-byte-sha}"
+     *
+     * @param entries - Array of tree entries (files and subdirectories)
+     * @returns 40-character SHA-1 hash of the stored tree
+     *
+     * @example
+     * ```typescript
+     * const treeSha = await store.putTreeObject([
+     *   { mode: '100644', name: 'README.md', sha: blobSha },
+     *   { mode: '040000', name: 'src', sha: subdirSha }
+     * ])
+     * ```
+     */
+    async putTreeObject(entries) {
+        // Validate entries (throws on invalid)
+        assertValidTreeEntries(entries);
+        // Sort and serialize using utility functions
+        const sortedEntries = sortTreeEntries(entries);
+        const content = serializeTreeEntries(sortedEntries);
+        return this.putObject('tree', content);
+    }
+    /**
+     * Store a commit object.
+     *
+     * @description
+     * Creates a Git commit object with the specified tree, parents, author,
+     * committer, and message. The commit content is formatted according to
+     * the Git commit format specification.
+     *
+     * @param commit - Commit data
+     * @param commit.tree - SHA of the root tree object
+     * @param commit.parents - Array of parent commit SHAs (empty for root commit)
+     * @param commit.author - Author information
+     * @param commit.committer - Committer information
+     * @param commit.message - Commit message
+     * @returns 40-character SHA-1 hash of the stored commit
+     *
+     * @example
+     * ```typescript
+     * const now = Math.floor(Date.now() / 1000)
+     * const author = { name: 'Alice', email: 'alice@example.com.ai', timestamp: now, timezone: '+0000' }
+     *
+     * const sha = await store.putCommitObject({
+     *   tree: treeSha,
+     *   parents: [],
+     *   author,
+     *   committer: author,
+     *   message: 'Initial commit\n\nThis is the first commit.'
+     * })
+     * ```
+     */
+    async putCommitObject(commit) {
+        // Build commit content (without header)
+        const lines = [];
+        lines.push(`tree ${commit.tree}`);
+        for (const parent of commit.parents) {
+            lines.push(`parent ${parent}`);
+        }
+        lines.push(`author ${commit.author.name} <${commit.author.email}> ${commit.author.timestamp} ${commit.author.timezone}`);
+        lines.push(`committer ${commit.committer.name} <${commit.committer.email}> ${commit.committer.timestamp} ${commit.committer.timezone}`);
+        lines.push('');
+        lines.push(commit.message);
+        const content = encoder.encode(lines.join('\n'));
+        return this.putObject('commit', content);
+    }
+    /**
+     * Store a tag object (annotated tag).
+     *
+     * @description
+     * Creates a Git tag object pointing to another object with tagger
+     * information and a message. The tag content is formatted according
+     * to the Git tag format specification.
+     *
+     * @param tag - Tag data
+     * @param tag.object - SHA of the object being tagged
+     * @param tag.objectType - Type of the object being tagged
+     * @param tag.tagger - Tagger information
+     * @param tag.message - Tag message
+     * @param tag.name - Tag name
+     * @returns 40-character SHA-1 hash of the stored tag object
+     *
+     * @example
+     * ```typescript
+     * const now = Math.floor(Date.now() / 1000)
+     * const tagger = { name: 'Bob', email: 'bob@example.com.ai', timestamp: now, timezone: '+0000' }
+     *
+     * const sha = await store.putTagObject({
+     *   object: commitSha,
+     *   objectType: 'commit',
+     *   tagger,
+     *   message: 'Release v1.0.0',
+     *   name: 'v1.0.0'
+     * })
+     * ```
+     */
+    async putTagObject(tag) {
+        // Build tag content (without header)
+        const lines = [];
+        lines.push(`object ${tag.object}`);
+        lines.push(`type ${tag.objectType}`);
+        lines.push(`tag ${tag.name}`);
+        if (tag.tagger) {
+            lines.push(`tagger ${tag.tagger.name} <${tag.tagger.email}> ${tag.tagger.timestamp} ${tag.tagger.timezone}`);
+        }
+        lines.push('');
+        lines.push(tag.message);
+        const content = encoder.encode(lines.join('\n'));
+        return this.putObject('tag', content);
+    }
+    /**
+     * Resolve a short SHA prefix to a full 40-char SHA.
+     *
+     * @description
+     * Looks up a short SHA prefix (4-39 hex chars) in the objects table
+     * using a range query. Returns the full SHA if exactly one match is
+     * found, throws on ambiguous prefix, returns null if not found.
+     *
+     * @param prefix - Short SHA prefix (4-39 hex chars)
+     * @returns Full 40-char SHA or null if not found
+     * @throws Error if prefix is ambiguous (matches multiple objects)
+     * @internal
+     */
+    async resolveShaPrefix(prefix) {
+        // Delegate to backend if available
+        if (this.backend) {
+            // Backend doesn't support prefix lookup; fall through to SQLite
+        }
+        // Compute upper bound for range query: increment last char
+        const upperBound = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+        // Check object_index first (covers both chunked and non-chunked objects)
+        const result = this.storage.sql.exec('SELECT sha FROM object_index WHERE sha >= ? AND sha < ? LIMIT 2', prefix, upperBound);
+        const rows = typedQuery(result, validateRow(['sha']));
+        if (rows.length === 1) {
+            return rows[0].sha;
+        }
+        if (rows.length > 1) {
+            throw new Error(`Ambiguous SHA prefix: ${prefix}`);
+        }
+        // Fall back to objects table (in case object_index is out of sync)
+        const objResult = this.storage.sql.exec('SELECT sha FROM objects WHERE sha >= ? AND sha < ? LIMIT 2', prefix, upperBound);
+        const objRows = typedQuery(objResult, validateRow(['sha']));
+        if (objRows.length === 1) {
+            return objRows[0].sha;
+        }
+        if (objRows.length > 1) {
+            throw new Error(`Ambiguous SHA prefix: ${prefix}`);
+        }
+        return null;
+    }
+    /**
+     * Retrieve an object by SHA.
+     *
+     * @description
+     * Fetches an object from the LRU cache first, falling back to the database
+     * if not cached. Returns null if the object doesn't exist or if the SHA is invalid.
+     * Supports short SHA prefixes (4-39 hex chars) which are resolved to full SHAs.
+     *
+     * @param sha - 40-character SHA-1 hash or short SHA prefix
+     * @returns The stored object or null if not found
+     *
+     * @example
+     * ```typescript
+     * const obj = await store.getObject(sha)
+     * if (obj) {
+     *   console.log(`Found ${obj.type} of ${obj.size} bytes`)
+     * }
+     * ```
+     */
+    async getObject(sha) {
+        const startTime = this.options.enableMetrics ? Date.now() : 0;
+        // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
+        if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
+            return null;
+        }
+        // Resolve short SHA prefix to full SHA
+        if (!isValidSha(sha)) {
+            const resolved = await this.resolveShaPrefix(sha);
+            if (!resolved) {
+                if (this.options.enableMetrics) {
+                    this._reads++;
+                    this._totalReadLatency += Date.now() - startTime;
+                }
+                return null;
+            }
+            sha = resolved;
+        }
+        // Check cache first (fast path)
+        const cached = this.cache.get(sha);
+        if (cached) {
+            this.log('debug', `Cache hit for object: ${sha}`);
+            if (this.options.enableMetrics) {
+                this._reads++;
+                this._bytesRead += cached.size;
+                this._totalReadLatency += Date.now() - startTime;
+            }
+            return cached;
+        }
+        // Delegate to backend if available
+        if (this.backend) {
+            const result = await this.backend.getObject(sha);
+            if (!result) {
+                this.log('debug', `Object not found: ${sha}`);
+                if (this.options.enableMetrics) {
+                    this._reads++;
+                    this._totalReadLatency += Date.now() - startTime;
+                }
+                return null;
+            }
+            const obj = {
+                sha,
+                type: result.type,
+                size: result.content.length,
+                data: result.content,
+                createdAt: Date.now()
+            };
+            // Add to cache for subsequent reads
+            this.cache.set(sha, obj);
+            if (this.options.enableMetrics) {
+                this._reads++;
+                this._bytesRead += obj.size;
+                this._totalReadLatency += Date.now() - startTime;
+            }
+            return obj;
+        }
+        // Check object_index first to see if this is a chunked blob
+        const indexResult = this.storage.sql.exec('SELECT sha, tier, size, type, chunked, chunk_count FROM object_index WHERE sha = ?', sha);
+        const indexRows = typedQuery(indexResult, validateRow(['sha', 'tier', 'size', 'type', 'chunked', 'chunk_count']));
+        if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+            // This is a chunked blob - reassemble from chunks using shared chunk-utils
+            const indexEntry = indexRows[0];
+            const chunkCount = indexEntry.chunk_count;
+            this.log('debug', `Reassembling chunked blob: ${sha} (${chunkCount} chunks)`);
+            // Fetch all chunks in order
+            const chunks = [];
+            for (let i = 0; i < chunkCount; i++) {
+                const chunkKey = getChunkKey(sha, i);
+                const chunkResult = this.storage.sql.exec('SELECT data FROM objects WHERE sha = ?', chunkKey);
+                const chunkRows = typedQuery(chunkResult, validateRow(['data']));
+                if (chunkRows.length === 0) {
+                    this.log('error', `Missing chunk ${i} for chunked blob: ${sha}`);
+                    if (this.options.enableMetrics) {
+                        this._reads++;
+                        this._totalReadLatency += Date.now() - startTime;
+                    }
+                    return null;
+                }
+                chunks.push(new Uint8Array(chunkRows[0].data));
+            }
+            // Reassemble chunks using shared utility
+            const data = reassembleChunks(chunks, indexEntry.size);
+            const obj = {
+                sha,
+                type: indexEntry.type,
+                size: indexEntry.size,
+                data,
+                createdAt: Date.now()
+            };
+            // Add to cache for subsequent reads
+            this.cache.set(sha, obj);
+            if (this.options.enableMetrics) {
+                this._reads++;
+                this._bytesRead += obj.size;
+                this._totalReadLatency += Date.now() - startTime;
+            }
+            return obj;
+        }
+        // Fall back to database for non-chunked objects
+        const result = this.storage.sql.exec('SELECT sha, type, size, data, created_at FROM objects WHERE sha = ?', sha);
+        const rows = typedQuery(result, validateRow(['sha', 'type', 'size', 'data']));
+        if (rows.length === 0) {
+            this.log('debug', `Object not found: ${sha}`);
+            if (this.options.enableMetrics) {
+                this._reads++;
+                this._totalReadLatency += Date.now() - startTime;
+            }
+            return null;
+        }
+        const row = rows[0];
+        const obj = {
+            sha: row.sha,
+            type: row.type,
+            size: row.size,
+            data: row.data,
+            createdAt: row.created_at,
+        };
+        // Add to cache for subsequent reads
+        this.cache.set(sha, obj);
+        if (this.options.enableMetrics) {
+            this._reads++;
+            this._bytesRead += obj.size;
+            this._totalReadLatency += Date.now() - startTime;
+        }
+        return obj;
+    }
+    /**
+     * Delete an object by SHA.
+     *
+     * @description
+     * Removes an object from the cache, objects table, and the object index.
+     * The operation is logged to WAL. Returns false if the object doesn't exist.
+     *
+     * **Warning**: Deleting objects that are still referenced by other objects
+     * (e.g., blobs referenced by trees) will corrupt the repository.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns True if the object was deleted, false if it didn't exist
+     *
+     * @example
+     * ```typescript
+     * const deleted = await store.deleteObject(sha)
+     * if (deleted) {
+     *   console.log('Object removed')
+     * }
+     * ```
+     */
+    async deleteObject(sha) {
+        // Delegate to backend if available
+        if (this.backend) {
+            // Check if object exists first via backend
+            const exists = await this.backend.hasObject(sha);
+            if (!exists) {
+                return false;
+            }
+            this.log('debug', `Deleting object via backend: ${sha}`);
+            await this.backend.deleteObject(sha);
+            // Remove from cache
+            this.cache.delete(sha);
+            // Update metrics
+            if (this.options.enableMetrics) {
+                this._deletes++;
+            }
+            return true;
+        }
+        // Check object_index to see if this is a chunked blob
+        const indexResult = this.storage.sql.exec('SELECT chunked, chunk_count FROM object_index WHERE sha = ?', sha);
+        const indexRows = typedQuery(indexResult, validateRow(['chunked', 'chunk_count']));
+        // Check if object exists (either in index or directly in objects table)
+        const exists = await this.hasObject(sha);
+        if (!exists) {
+            return false;
+        }
+        this.log('debug', `Deleting object: ${sha}`);
+        // Log to WAL
+        await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0));
+        // If this is a chunked blob, delete all chunks using shared chunk-utils
+        if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+            const chunkCount = indexRows[0].chunk_count;
+            this.log('debug', `Deleting ${chunkCount} chunks for chunked blob: ${sha}`);
+            for (let i = 0; i < chunkCount; i++) {
+                const chunkKey = getChunkKey(sha, i);
+                this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', chunkKey);
+            }
+        }
+        else {
+            // Delete from objects table (non-chunked)
+            this.storage.sql.exec('DELETE FROM objects WHERE sha = ?', sha);
+        }
+        // Delete from object index
+        this.storage.sql.exec('DELETE FROM object_index WHERE sha = ?', sha);
+        // Remove from cache
+        this.cache.delete(sha);
+        // Update metrics
+        if (this.options.enableMetrics) {
+            this._deletes++;
+        }
+        return true;
+    }
+    /**
+     * Check if an object exists.
+     *
+     * @description
+     * Efficiently checks for object existence without fetching the full content.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns True if the object exists, false otherwise
+     *
+     * @example
+     * ```typescript
+     * if (await store.hasObject(sha)) {
+     *   console.log('Object exists')
+     * }
+     * ```
+     */
+    async hasObject(sha) {
+        // Validate SHA format - accept full SHAs or short SHAs (for compatibility)
+        if (!sha || (!isValidSha(sha) && !isValidShortSha(sha))) {
+            return false;
+        }
+        // Resolve short SHA prefix to full SHA
+        if (!isValidSha(sha)) {
+            const resolved = await this.resolveShaPrefix(sha);
+            return resolved !== null;
+        }
+        // Check cache first (fast path)
+        if (this.cache.has(sha)) {
+            return true;
+        }
+        // Delegate to backend if available
+        if (this.backend) {
+            return this.backend.hasObject(sha);
+        }
+        // Lightweight existence check - avoid reading the full data column
+        try {
+            const result = this.storage.sql.exec('SELECT 1 FROM objects WHERE sha = ? LIMIT 1', sha);
+            const rows = result.toArray();
+            return rows.length > 0;
+        }
+        catch {
+            return false;
+        }
+    }
+    /**
+     * Verify an object's integrity by recomputing its hash.
+     *
+     * @description
+     * Computes the SHA-1 hash of the stored object and compares it
+     * to the stored SHA. Returns false if the object is corrupted
+     * or doesn't exist.
+     *
+     * @param sha - 40-character SHA-1 hash to verify
+     * @returns True if the computed hash matches, false otherwise
+     *
+     * @example
+     * ```typescript
+     * if (await store.verifyObject(sha)) {
+     *   console.log('Object integrity verified')
+     * } else {
+     *   console.log('Object is corrupted or missing')
+     * }
+     * ```
+     */
+    async verifyObject(sha) {
+        // Read directly from storage (bypass cache) to verify actual stored data
+        const result = this.storage.sql.exec('SELECT type, data FROM objects WHERE sha = ?', sha);
+        const rows = typedQuery(result, validateRow(['type', 'data']));
+        if (rows.length === 0) {
+            return false;
+        }
+        const obj = rows[0];
+        const computedSha = await hashObject(obj.type, new Uint8Array(obj.data));
+        return computedSha === sha;
+    }
+    /**
+     * Get object type by SHA.
+     *
+     * @description
+     * Returns just the type of an object without fetching its content.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Object type or null if not found
+     *
+     * @example
+     * ```typescript
+     * const type = await store.getObjectType(sha)
+     * if (type === 'commit') {
+     *   // Handle commit
+     * }
+     * ```
+     */
+    async getObjectType(sha) {
+        const obj = await this.getObject(sha);
+        return obj?.type ?? null;
+    }
+    /**
+     * Get object size by SHA.
+     *
+     * @description
+     * Returns just the size of an object without fetching its content.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Object size in bytes or null if not found
+     *
+     * @example
+     * ```typescript
+     * const size = await store.getObjectSize(sha)
+     * console.log(`Object is ${size} bytes`)
+     * ```
+     */
+    async getObjectSize(sha) {
+        const obj = await this.getObject(sha);
+        return obj?.size ?? null;
+    }
+    /**
+     * Store multiple objects in a batch using a single transaction.
+     *
+     * @description
+     * Stores multiple objects atomically within a single SQLite transaction.
+     * This is more efficient than individual puts for bulk operations as it:
+     * - Reduces the number of disk flushes
+     * - Ensures atomic writes (all-or-nothing)
+     * - Batches WAL entries for better performance
+     *
+     * @param objects - Array of objects to store
+     * @returns Array of SHA-1 hashes in the same order as input
+     *
+     * @example
+     * ```typescript
+     * const shas = await store.putObjects([
+     *   { type: 'blob', data: content1 },
+     *   { type: 'blob', data: content2 }
+     * ])
+     * ```
+     */
+    async putObjects(objects) {
+        if (objects.length === 0) {
+            return [];
+        }
+        // For single objects, delegate to putObject
+        if (objects.length === 1) {
+            const sha = await this.putObject(objects[0].type, objects[0].data);
+            return [sha];
+        }
+        const startTime = this.options.enableMetrics ? Date.now() : 0;
+        const shas = [];
+        const now = Date.now();
+        let totalBytes = 0;
+        this.log('info', `Starting batch write of ${objects.length} objects`);
+        // Pre-compute all SHA hashes (CPU-bound, before transaction)
+        const objectsWithSha = [];
+        for (const obj of objects) {
+            const sha = await hashObject(obj.type, obj.data);
+            objectsWithSha.push({ sha, type: obj.type, data: obj.data });
+            shas.push(sha);
+            totalBytes += obj.data.length;
+        }
+        // Begin transaction for atomic batch write
+        this.storage.sql.exec('BEGIN TRANSACTION');
+        try {
+            for (const { sha, type, data } of objectsWithSha) {
+                // Log batch operation to WAL (single entry for the batch)
+                const payload = encoder.encode(JSON.stringify({
+                    sha,
+                    type,
+                    timestamp: now,
+                    batchSize: objects.length
+                }));
+                this.storage.sql.exec('INSERT INTO wal (operation, payload, created_at, flushed) VALUES (?, ?, ?, 0)', 'BATCH_PUT', payload, now);
+                // Store the object
+                this.storage.sql.exec('INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)', sha, type, data.length, data, now);
+                // Update object index
+                this.storage.sql.exec('INSERT OR REPLACE INTO object_index (sha, tier, pack_id, offset, size, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', sha, 'hot', null, // pack_id is null for hot tier
+                null, // offset is null for hot tier
+                data.length, type, now);
+            }
+            // Commit transaction
+            this.storage.sql.exec('COMMIT');
+        }
+        catch (error) {
+            // Rollback SQL transaction - LRU cache and bloom filter are updated only
+            // after successful commit below, so no in-memory state needs rollback.
+            this.storage.sql.exec('ROLLBACK');
+            this.log('error', `Batch write failed, transaction rolled back`, error);
+            throw error;
+        }
+        // Update cache AFTER successful commit to ensure cache/storage consistency.
+        // If the transaction was rolled back, we never reach this point.
+        for (const { sha, type, data } of objectsWithSha) {
+            const storedObject = {
+                sha,
+                type,
+                size: data.length,
+                data,
+                createdAt: now
+            };
+            this.cache.set(sha, storedObject);
+        }
+        this.log('info', `Batch write completed: ${objects.length} objects, ${totalBytes} bytes`);
+        // Update metrics
+        if (this.options.enableMetrics) {
+            this._writes += objects.length;
+            this._bytesWritten += totalBytes;
+            this._totalWriteLatency += Date.now() - startTime;
+            this._batchOperations++;
+            this._batchObjectsTotal += objects.length;
+        }
+        return shas;
+    }
+    /**
+     * Retrieve multiple objects by SHA using optimized batch queries.
+     *
+     * @description
+     * Fetches multiple objects efficiently by:
+     * 1. First checking the LRU cache for each SHA
+     * 2. Batching uncached SHAs into a single SQL query with IN clause
+     * 3. Returning results in the original order with null for missing objects
+     *
+     * @param shas - Array of 40-character SHA-1 hashes
+     * @returns Array of objects (or null for missing) in the same order
+     *
+     * @example
+     * ```typescript
+     * const objects = await store.getObjects([sha1, sha2, sha3])
+     * objects.forEach((obj, i) => {
+     *   if (obj) {
+     *     console.log(`${i}: ${obj.type}`)
+     *   }
+     * })
+     * ```
+     */
+    async getObjects(shas) {
+        if (shas.length === 0) {
+            return [];
+        }
+        const startTime = this.options.enableMetrics ? Date.now() : 0;
+        const results = new Array(shas.length).fill(null);
+        const uncachedIndices = [];
+        const uncachedShas = [];
+        let totalBytesRead = 0;
+        // First pass: check cache for each SHA
+        for (let i = 0; i < shas.length; i++) {
+            const sha = shas[i];
+            if (!sha || sha.length < 4) {
+                results[i] = null;
+                continue;
+            }
+            const cached = this.cache.get(sha);
+            if (cached) {
+                results[i] = cached;
+                totalBytesRead += cached.size;
+            }
+            else {
+                uncachedIndices.push(i);
+                uncachedShas.push(sha);
+            }
+        }
+        // Second pass: batch query for uncached objects
+        if (uncachedShas.length > 0) {
+            this.log('debug', `Batch fetching ${uncachedShas.length} uncached objects`);
+            const SQL_BATCH_SIZE = 999;
+            const rowMap = new Map();
+            for (let batchStart = 0; batchStart < uncachedShas.length; batchStart += SQL_BATCH_SIZE) {
+                const batch = uncachedShas.slice(batchStart, batchStart + SQL_BATCH_SIZE);
+                const placeholders = batch.map(() => '?').join(', ');
+                const result = this.storage.sql.exec(`SELECT sha, type, size, data, created_at FROM objects WHERE sha IN (${placeholders})`, ...batch);
+                const rows = typedQuery(result, validateRow(['sha', 'type', 'size', 'data']));
+                // Build lookup map for O(1) access
+                for (const row of rows) {
+                    const obj = {
+                        sha: row.sha,
+                        type: row.type,
+                        size: row.size,
+                        data: row.data,
+                        createdAt: row.created_at,
+                    };
+                    rowMap.set(obj.sha, obj);
+                    // Add to cache for future reads
+                    this.cache.set(obj.sha, obj);
+                    totalBytesRead += obj.size;
+                }
+            }
+            // Fill in results at original indices
+            for (let i = 0; i < uncachedIndices.length; i++) {
+                const originalIndex = uncachedIndices[i];
+                const sha = uncachedShas[i];
+                results[originalIndex] = rowMap.get(sha) ?? null;
+            }
+        }
+        // Update metrics
+        if (this.options.enableMetrics) {
+            this._reads += shas.length;
+            this._bytesRead += totalBytesRead;
+            this._totalReadLatency += Date.now() - startTime;
+        }
+        return results;
+    }
+    /**
+     * Get a blob object with typed result.
+     *
+     * @description
+     * Fetches an object and returns it as a BlobObject if it's a blob.
+     * Returns null if the object doesn't exist or isn't a blob.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Typed BlobObject or null
+     *
+     * @example
+     * ```typescript
+     * const blob = await store.getBlobObject(sha)
+     * if (blob) {
+     *   const content = new TextDecoder().decode(blob.data)
+     *   console.log(content)
+     * }
+     * ```
+     */
+    async getBlobObject(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj || obj.type !== 'blob') {
+            return null;
+        }
+        return {
+            type: 'blob',
+            data: obj.data
+        };
+    }
+    /**
+     * Get a tree object with parsed entries.
+     *
+     * @description
+     * Fetches and parses a tree object, extracting all entries
+     * with their modes, names, and SHA references.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Parsed TreeObject with entries or null
+     *
+     * @example
+     * ```typescript
+     * const tree = await store.getTreeObject(sha)
+     * if (tree) {
+     *   for (const entry of tree.entries) {
+     *     console.log(`${entry.mode} ${entry.name} ${entry.sha}`)
+     *   }
+     * }
+     * ```
+     */
+    async getTreeObject(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj || obj.type !== 'tree') {
+            return null;
+        }
+        // Parse tree entries using utility function
+        const result = parseTreeEntries(obj.data);
+        return {
+            type: 'tree',
+            data: obj.data,
+            entries: result.success ? result.entries : []
+        };
+    }
+    /**
+     * Get a commit object with parsed fields.
+     *
+     * @description
+     * Fetches and parses a commit object, extracting tree SHA,
+     * parent SHAs, author, committer, and message.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Parsed CommitObject or null
+     *
+     * @example
+     * ```typescript
+     * const commit = await store.getCommitObject(sha)
+     * if (commit) {
+     *   console.log(`Author: ${commit.author.name}`)
+     *   console.log(`Message: ${commit.message}`)
+     *   console.log(`Parents: ${commit.parents.length}`)
+     * }
+     * ```
+     */
+    async getCommitObject(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj || obj.type !== 'commit') {
+            return null;
+        }
+        const content = decoder.decode(obj.data);
+        const lines = content.split('\n');
+        let tree = '';
+        const parents = [];
+        let author = null;
+        let committer = null;
+        let messageStartIndex = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line === '') {
+                messageStartIndex = i + 1;
+                break;
+            }
+            if (line.startsWith('tree ')) {
+                tree = line.slice(5);
+            }
+            else if (line.startsWith('parent ')) {
+                parents.push(line.slice(7));
+            }
+            else if (line.startsWith('author ')) {
+                author = parseAuthorLine(line);
+            }
+            else if (line.startsWith('committer ')) {
+                committer = parseAuthorLine(line);
+            }
+        }
+        if (!author || !committer) {
+            return null;
+        }
+        const message = lines.slice(messageStartIndex).join('\n');
+        return {
+            type: 'commit',
+            data: obj.data,
+            tree,
+            parents,
+            author,
+            committer,
+            message
+        };
+    }
+    /**
+     * Get a tag object with parsed fields.
+     *
+     * @description
+     * Fetches and parses an annotated tag object, extracting
+     * the tagged object SHA, object type, tag name, tagger, and message.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Parsed TagObject or null
+     *
+     * @example
+     * ```typescript
+     * const tag = await store.getTagObject(sha)
+     * if (tag) {
+     *   console.log(`Tag: ${tag.name}`)
+     *   console.log(`Points to: ${tag.object} (${tag.objectType})`)
+     *   console.log(`Tagger: ${tag.tagger?.name}`)
+     * }
+     * ```
+     */
+    async getTagObject(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj || obj.type !== 'tag') {
+            return null;
+        }
+        const content = decoder.decode(obj.data);
+        const lines = content.split('\n');
+        let object = '';
+        let objectType = 'commit';
+        let name = '';
+        let tagger = undefined;
+        let messageStartIndex = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line === '') {
+                messageStartIndex = i + 1;
+                break;
+            }
+            if (line.startsWith('object ')) {
+                object = line.slice(7);
+            }
+            else if (line.startsWith('type ')) {
+                const parsed = line.slice(5);
+                if (isValidObjectType(parsed)) {
+                    objectType = parsed;
+                }
+            }
+            else if (line.startsWith('tag ')) {
+                name = line.slice(4);
+            }
+            else if (line.startsWith('tagger ')) {
+                try {
+                    tagger = parseAuthorLine(line);
+                }
+                catch {
+                    // Malformed tagger line - leave tagger as undefined
+                    return null;
+                }
+            }
+        }
+        // Validate required fields - object and name must be present
+        // tagger is optional (some older tags or special tags may not have it)
+        if (!object || !name) {
+            return null;
+        }
+        const message = lines.slice(messageStartIndex).join('\n');
+        return {
+            type: 'tag',
+            data: obj.data,
+            object,
+            objectType,
+            name,
+            tagger,
+            message
+        };
+    }
+    /**
+     * Get raw serialized object with Git header.
+     *
+     * @description
+     * Returns the complete Git object format including header:
+     * "{type} {size}\0{content}"
+     *
+     * This is the format used for hashing and storage in pack files.
+     *
+     * @param sha - 40-character SHA-1 hash
+     * @returns Complete object with Git header or null
+     *
+     * @example
+     * ```typescript
+     * const raw = await store.getRawObject(sha)
+     * if (raw) {
+     *   // Can be written directly to a pack file or loose object
+     * }
+     * ```
+     */
+    async getRawObject(sha) {
+        const obj = await this.getObject(sha);
+        if (!obj) {
+            return null;
+        }
+        // Build git object format: "type size\0content"
+        const header = encoder.encode(`${obj.type} ${obj.data.length}\0`);
+        const result = new Uint8Array(header.length + obj.data.length);
+        result.set(header);
+        result.set(obj.data, header.length);
+        return result;
+    }
+    /**
+     * Get comprehensive metrics about ObjectStore operations.
+     *
+     * @description
+     * Returns detailed metrics including read/write counts, cache statistics,
+     * hash cache performance, large blob operations, and object type breakdown.
+     * Useful for monitoring and performance tuning.
+     *
+     * @returns ObjectStoreMetrics object with all collected metrics
+     *
+     * @example
+     * ```typescript
+     * const metrics = store.getMetrics()
+     * console.log(`Read operations: ${metrics.reads}`)
+     * console.log(`Cache hit rate: ${metrics.cacheHitRate}%`)
+     * console.log(`Hash cache hit rate: ${metrics.hashCache.hitRate}%`)
+     * console.log(`Large blob operations: ${metrics.largeBlobOperations}`)
+     * console.log(`Objects by type:`, metrics.objectsByType)
+     * ```
+     */
+    getMetrics() {
+        const cacheStats = this.cache.getStats();
+        const hashCacheStats = this.hashCache.getStats();
+        return {
+            reads: this._reads,
+            writes: this._writes,
+            deletes: this._deletes,
+            cache: cacheStats,
+            cacheHitRate: cacheStats.hitRate,
+            bytesWritten: this._bytesWritten,
+            bytesRead: this._bytesRead,
+            avgWriteLatencyMs: this._writes > 0 ? this._totalWriteLatency / this._writes : 0,
+            avgReadLatencyMs: this._reads > 0 ? this._totalReadLatency / this._reads : 0,
+            batchOperations: this._batchOperations,
+            batchObjectsTotal: this._batchObjectsTotal,
+            hashCache: {
+                hits: hashCacheStats.hits,
+                misses: hashCacheStats.misses,
+                size: hashCacheStats.size,
+                hitRate: hashCacheStats.hitRate
+            },
+            largeBlobOperations: this._largeBlobOperations,
+            largeBlobBytes: this._largeBlobBytes,
+            streamingOperations: this._streamingOperations,
+            objectsByType: { ...this._objectsByType }
+        };
+    }
+    /**
+     * Reset all metrics counters.
+     *
+     * @description
+     * Resets all operation counters and latency measurements to zero.
+     * The object and hash caches are NOT cleared - only the metrics.
+     * Useful for starting fresh measurements after a baseline period.
+     *
+     * @example
+     * ```typescript
+     * // After warmup period
+     * store.resetMetrics()
+     * // Now metrics reflect production traffic only
+     * ```
+     */
+    resetMetrics() {
+        this._reads = 0;
+        this._writes = 0;
+        this._deletes = 0;
+        this._bytesWritten = 0;
+        this._bytesRead = 0;
+        this._totalWriteLatency = 0;
+        this._totalReadLatency = 0;
+        this._batchOperations = 0;
+        this._batchObjectsTotal = 0;
+        this._largeBlobOperations = 0;
+        this._largeBlobBytes = 0;
+        this._streamingOperations = 0;
+        this._objectsByType = { blob: 0, tree: 0, commit: 0, tag: 0 };
+        this.cache.resetStats();
+        this.hashCache.clear();
+    }
+    /**
+     * List objects by type with optional limit.
+     *
+     * @description
+     * Queries the objects table for all objects of the given type,
+     * returning their SHA and raw data ordered by creation time (newest first).
+     * This is useful for export operations that need to iterate over all
+     * objects of a specific type (e.g., all commits for Parquet export).
+     *
+     * @param type - Object type to filter by ('blob', 'tree', 'commit', 'tag')
+     * @param limit - Maximum number of objects to return (default 10000)
+     * @returns Array of objects with sha and data fields
+     *
+     * @example
+     * ```typescript
+     * const commits = await store.listObjectsByType('commit')
+     * for (const { sha, data } of commits) {
+     *   console.log(`Commit ${sha}: ${data.length} bytes`)
+     * }
+     * ```
+     */
+    async listObjectsByType(type, limit = 10000) {
+        // Delegate to backend if available - backend doesn't support type queries,
+        // so we fall through to SQLite
+        if (this.backend) {
+            // Backend interface doesn't support listing by type, so fall through to SQLite
+            // This is acceptable because the objects table is the canonical source for type queries
+        }
+        try {
+            const result = this.storage.sql.exec('SELECT sha, data FROM objects WHERE type = ? ORDER BY created_at DESC LIMIT ?', type, limit);
+            return result.toArray();
+        }
+        catch (error) {
+            this.log('error', `Error listing objects by type ${type}:`, error);
+            return [];
+        }
+    }
+    /**
+     * Get the hash cache for external inspection or tuning.
+     *
+     * @description
+     * Returns the internal hash cache instance. This can be used for
+     * manual cache inspection, clearing, or advanced tuning scenarios.
+     *
+     * @returns The HashCache instance used by this ObjectStore
+     *
+     * @example
+     * ```typescript
+     * const hashCache = store.getHashCache()
+     * console.log(`Hash cache size: ${hashCache.size}`)
+     * ```
+     */
+    getHashCache() {
+        return this.hashCache;
+    }
+    /**
+     * Log operation to WAL.
+     *
+     * @description
+     * Writes an operation entry to the write-ahead log for durability.
+     * The WAL ensures operations can be recovered after crashes.
+     *
+     * @param operation - Operation type ('PUT', 'DELETE', etc.)
+     * @param sha - Object SHA being operated on
+     * @param type - Object type
+     * @param _data - Object data (not stored in WAL, just for signature compatibility)
+     * @internal
+     */
+    async logToWAL(operation, sha, type, _data) {
+        // Create payload with operation details
+        const payload = encoder.encode(JSON.stringify({
+            sha,
+            type,
+            timestamp: Date.now()
+        }));
+        this.storage.sql.exec('INSERT INTO wal (operation, payload, created_at, flushed) VALUES (?, ?, ?, 0)', operation, payload, Date.now());
+    }
+    /**
+     * Truncate WAL by deleting flushed entries.
+     *
+     * @description
+     * Removes all entries from the write-ahead log that have been marked as flushed.
+     * This is a maintenance operation to free up disk space without losing durability
+     * for unflushed entries.
+     *
+     * @returns Number of WAL entries deleted
+     *
+     * @example
+     * ```typescript
+     * const deletedCount = await store.truncateWAL()
+     * console.log(`Deleted ${deletedCount} flushed WAL entries`)
+     * ```
+     */
+    async truncateWAL() {
+        const result = this.storage.sql.exec('DELETE FROM wal WHERE flushed = 1');
+        // Get the number of rows affected - SQLite returns this via changes
+        const changesResult = this.storage.sql.exec('SELECT changes() as count');
+        const rows = typedQuery(changesResult, validateRow(['count']));
+        const deletedCount = rows.length > 0 ? rows[0].count : 0;
+        this.log('info', `WAL truncation: deleted ${deletedCount} flushed entries`);
+        return deletedCount;
+    }
+}
+// ============================================================================
+// Helper Functions
+// ============================================================================
+/**
+ * Parse author/committer/tagger line.
+ *
+ * @description
+ * Parses a Git author/committer/tagger line in the format:
+ * "author Name <email> timestamp timezone"
+ *
+ * @param line - Full line including prefix
+ * @returns Parsed Author object
+ * @throws Error if line format is invalid
+ * @internal
+ */
+function parseAuthorLine(line) {
+    const match = line.match(/^(?:author|committer|tagger) (.+) <(.+)> (\d+) ([+-]\d{4})$/);
+    if (!match) {
+        throw new Error(`Invalid author line: ${line}`);
+    }
+    return {
+        name: match[1],
+        email: match[2],
+        timestamp: parseInt(match[3], 10),
+        timezone: match[4]
+    };
+}
+/**
+ * @deprecated Use {@link SqliteObjectStore} instead. This alias exists for backward compatibility.
+ */
+export const ObjectStore = SqliteObjectStore;
+//# sourceMappingURL=object-store.js.map

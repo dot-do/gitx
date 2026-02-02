@@ -44,6 +44,7 @@
  *
  * @module ops/merge
  */
+import { BINARY_CHECK_BYTES } from '../constants';
 /**
  * Performs a three-way merge between the current branch and another commit.
  *
@@ -1488,8 +1489,8 @@ export function isBinaryFile(content) {
         content[5] === 0x61) {
         return true;
     }
-    // Check first 8000 bytes for null bytes (similar to Git's heuristic)
-    const checkLength = Math.min(content.length, 8000);
+    // Check first BINARY_CHECK_BYTES bytes for null bytes (similar to Git's heuristic)
+    const checkLength = Math.min(content.length, BINARY_CHECK_BYTES);
     for (let i = 0; i < checkLength; i++) {
         if (content[i] === 0x00) {
             return true;

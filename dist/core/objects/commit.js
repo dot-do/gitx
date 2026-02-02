@@ -9,11 +9,15 @@
  * parent <sha> (zero or more)
  * author <name> <email> <timestamp> <timezone>
  * committer <name> <email> <timestamp> <timezone>
+ * encoding <encoding> (optional)
+ * mergetag object <sha>... (optional, for merge commits with signed tags)
  * gpgsig -----BEGIN PGP SIGNATURE-----
  *  <signature lines>
  *  -----END PGP SIGNATURE-----
  *
  * <message>
+ *
+ * @module core/objects/commit
  */
 import { calculateObjectHash, createObjectHeader, parseObjectHeader } from './hash';
 import { isValidSha } from './types';
@@ -31,7 +35,7 @@ const decoder = new TextDecoder();
  */
 export function parseIdentity(line) {
     // Format: author/committer/tagger Name <email> timestamp timezone
-    // Example: "author John Doe <john@example.com> 1704067200 +0530"
+    // Example: "author John Doe <john@example.com.ai> 1704067200 +0530"
     // Find email boundaries
     const emailStart = line.indexOf('<');
     const emailEnd = line.indexOf('>');
@@ -48,8 +52,13 @@ export function parseIdentity(line) {
     if (parts.length < 2) {
         throw new Error(`Invalid identity line: missing timestamp/timezone: ${line}`);
     }
-    const timestamp = parseInt(parts[0], 10);
-    const timezone = parts[1];
+    const timestampStr = parts[0];
+    const timezoneStr = parts[1];
+    if (timestampStr === undefined || timezoneStr === undefined) {
+        throw new Error(`Invalid identity line: missing timestamp/timezone: ${line}`);
+    }
+    const timestamp = parseInt(timestampStr, 10);
+    const timezone = timezoneStr;
     return { name, email, timestamp, timezone };
 }
 /**
@@ -75,11 +84,132 @@ export function hasGpgSignature(commit) {
 export function parseGpgSignature(commit) {
     return commit.gpgSignature;
 }
+/**
+ * Validates commit data before creation.
+ * Returns validation result with error/warning messages.
+ *
+ * @param data - Commit data to validate
+ * @returns Validation result object
+ *
+ * @example
+ * ```typescript
+ * const result = validateCommitData({
+ *   tree: 'abc123...',
+ *   author: { ... },
+ *   committer: { ... },
+ *   message: 'Commit message'
+ * })
+ * if (!result.isValid) {
+ *   throw new Error(result.error)
+ * }
+ * ```
+ */
+export function validateCommitData(data) {
+    const warnings = [];
+    // Validate tree SHA
+    if (!data.tree) {
+        return { isValid: false, error: 'Missing tree SHA' };
+    }
+    if (!isValidSha(data.tree)) {
+        return { isValid: false, error: `Invalid tree SHA: ${data.tree}` };
+    }
+    // Validate parent SHAs
+    if (data.parents) {
+        for (let i = 0; i < data.parents.length; i++) {
+            const parentSha = data.parents[i];
+            if (parentSha === undefined || !isValidSha(parentSha)) {
+                return { isValid: false, error: `Invalid parent SHA at index ${i}: ${parentSha}` };
+            }
+        }
+    }
+    // Validate author
+    const authorResult = validateIdentity(data.author, 'author');
+    if (!authorResult.isValid) {
+        return authorResult;
+    }
+    if (authorResult.warnings) {
+        warnings.push(...authorResult.warnings);
+    }
+    // Validate committer
+    const committerResult = validateIdentity(data.committer, 'committer');
+    if (!committerResult.isValid) {
+        return committerResult;
+    }
+    if (committerResult.warnings) {
+        warnings.push(...committerResult.warnings);
+    }
+    // Validate message
+    if (typeof data.message !== 'string') {
+        return { isValid: false, error: 'Commit message must be a string' };
+    }
+    // Warn about empty message
+    if (data.message.trim() === '') {
+        warnings.push('Empty commit message');
+    }
+    // Warn about very long subject lines
+    const firstLine = data.message.split('\n')[0] ?? '';
+    if (firstLine.length > 72) {
+        warnings.push(`Subject line exceeds 72 characters (${firstLine.length} chars)`);
+    }
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
+}
+/**
+ * Validates a GitIdentity object
+ */
+function validateIdentity(identity, field) {
+    const warnings = [];
+    if (!identity) {
+        return { isValid: false, error: `Missing ${field}` };
+    }
+    if (!identity.name || typeof identity.name !== 'string') {
+        return { isValid: false, error: `Invalid ${field} name` };
+    }
+    if (!identity.email || typeof identity.email !== 'string') {
+        return { isValid: false, error: `Invalid ${field} email` };
+    }
+    if (typeof identity.timestamp !== 'number' || !Number.isInteger(identity.timestamp)) {
+        return { isValid: false, error: `Invalid ${field} timestamp` };
+    }
+    if (identity.timestamp < 0) {
+        warnings.push(`${field} has negative timestamp`);
+    }
+    if (!identity.timezone || !/^[+-]\d{4}$/.test(identity.timezone)) {
+        return { isValid: false, error: `Invalid ${field} timezone format: expected +/-HHMM` };
+    }
+    if (warnings.length > 0) {
+        return { isValid: true, warnings };
+    }
+    return { isValid: true };
+}
 // =============================================================================
 // GitCommit Class
 // =============================================================================
 /**
- * Git commit object
+ * Git commit object with support for GPG signatures and extra headers.
+ *
+ * Provides methods for serialization, deserialization, and inspection
+ * of Git commit objects.
+ *
+ * @example
+ * ```typescript
+ * // Create a new commit
+ * const commit = new GitCommit({
+ *   tree: treeSha,
+ *   parents: [parentSha],
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   message: 'Initial commit'
+ * })
+ *
+ * // Get the SHA
+ * const sha = await commit.hash()
+ *
+ * // Parse from serialized data
+ * const parsed = GitCommit.parse(serializedData)
+ * ```
  */
 export class GitCommit {
     type = 'commit';
@@ -89,26 +219,31 @@ export class GitCommit {
     committer;
     message;
     gpgSignature;
+    extraHeaders;
     /**
      * Creates a new GitCommit
+     * @param data - Commit data including tree, parents, author, committer, message
      * @throws Error if tree or any parent SHA is invalid
      */
     constructor(data) {
-        if (!isValidSha(data.tree)) {
-            throw new Error(`Invalid tree SHA: ${data.tree}`);
+        // Validate using the validation function
+        const validation = validateCommitData(data);
+        if (!validation.isValid) {
+            throw new Error(validation.error);
         }
         const parents = data.parents ?? [];
-        for (const parent of parents) {
-            if (!isValidSha(parent)) {
-                throw new Error(`Invalid parent SHA: ${parent}`);
-            }
-        }
         this.tree = data.tree;
-        this.parents = parents;
-        this.author = data.author;
-        this.committer = data.committer;
+        this.parents = Object.freeze([...parents]); // Immutable copy
+        this.author = Object.freeze({ ...data.author });
+        this.committer = Object.freeze({ ...data.committer });
         this.message = data.message;
-        this.gpgSignature = data.gpgSignature;
+        if (data.gpgSignature !== undefined) {
+            this.gpgSignature = data.gpgSignature;
+        }
+        // Store extra headers if provided
+        if ('extraHeaders' in data && data.extraHeaders) {
+            this.extraHeaders = Object.freeze({ ...data.extraHeaders });
+        }
     }
     /**
      * Creates a GitCommit from raw commit content (without header)
@@ -185,6 +320,12 @@ export class GitCommit {
         return result;
     }
     /**
+     * Gets extra headers (encoding, mergetag, etc.) if present
+     */
+    getExtraHeaders() {
+        return this.extraHeaders;
+    }
+    /**
      * Serializes just the commit content (without header)
      */
     serializeContent() {
@@ -199,9 +340,42 @@ export class GitCommit {
         lines.push(formatIdentity('author', this.author));
         // Committer line
         lines.push(formatIdentity('committer', this.committer));
+        // Extra headers (encoding, mergetag, etc.)
+        if (this.extraHeaders) {
+            // Encoding header
+            if (this.extraHeaders.encoding) {
+                lines.push(`encoding ${this.extraHeaders.encoding}`);
+            }
+            // Mergetag header (multi-line)
+            if (this.extraHeaders.mergetag) {
+                const mergetagLines = this.extraHeaders.mergetag.split('\n');
+                lines.push(`mergetag ${mergetagLines[0]}`);
+                for (let i = 1; i < mergetagLines.length; i++) {
+                    lines.push(` ${mergetagLines[i]}`);
+                }
+            }
+            // Other unknown headers (preserved for round-trip compatibility)
+            for (const [key, value] of Object.entries(this.extraHeaders)) {
+                if (key === 'encoding' || key === 'mergetag')
+                    continue;
+                if (typeof value === 'string') {
+                    lines.push(`${key} ${value}`);
+                }
+                else if (Array.isArray(value)) {
+                    for (const v of value) {
+                        lines.push(`${key} ${v}`);
+                    }
+                }
+            }
+        }
         // GPG signature (if present)
         if (this.gpgSignature) {
-            lines.push(`gpgsig ${this.gpgSignature}`);
+            // GPG signatures are multi-line with continuation lines starting with space
+            const sigLines = this.gpgSignature.split('\n');
+            lines.push(`gpgsig ${sigLines[0]}`);
+            for (let i = 1; i < sigLines.length; i++) {
+                lines.push(` ${sigLines[i]}`);
+            }
         }
         // Blank line before message
         lines.push('');
@@ -220,8 +394,82 @@ export class GitCommit {
     }
 }
 // =============================================================================
-// Commit Content Parser
+// Commit Content Parser (Optimized)
 // =============================================================================
+/**
+ * Multi-line headers that span multiple lines with space continuation
+ */
+const MULTILINE_HEADERS = new Set(['gpgsig', 'mergetag']);
+/**
+ * Parses a multi-line header value (like gpgsig or mergetag).
+ * These headers continue on subsequent lines that start with a space.
+ *
+ * For GPG signatures specifically, we need to read until we find
+ * the "-----END PGP SIGNATURE-----" marker because the content
+ * may include blank lines.
+ *
+ * @param lines - Array of all lines
+ * @param startIdx - Index of the first line
+ * @param firstLineValue - The value from the first line (after header name)
+ * @param headerName - The name of the header being parsed
+ * @returns Tuple of [parsedValue, lastLineIndex]
+ */
+function parseMultilineHeader(lines, startIdx, firstLineValue, headerName = '') {
+    const valueLines = [firstLineValue];
+    let i = startIdx + 1;
+    // For GPG signatures, read until END marker
+    if (headerName === 'gpgsig' || firstLineValue.includes('-----BEGIN PGP SIGNATURE-----')) {
+        while (i < lines.length) {
+            const line = lines[i];
+            if (line === undefined)
+                break;
+            // Remove leading space from continuation lines
+            const content = line.startsWith(' ') ? line.slice(1) : line;
+            // Check if we've hit the end of headers (empty line at start of message)
+            // But only if we've already seen the END marker or this line doesn't look like continuation
+            if (line === '' && !valueLines.some(l => l.includes('-----END PGP SIGNATURE-----'))) {
+                valueLines.push('');
+                i++;
+                continue;
+            }
+            // If this line doesn't start with space and we've seen END, we're done
+            if (!line.startsWith(' ') && line !== '' && valueLines.some(l => l.includes('-----END PGP SIGNATURE-----'))) {
+                i--; // Back up so the main loop sees this line
+                break;
+            }
+            // Add the content
+            valueLines.push(content);
+            // If we just added the END marker, we're done
+            if (content.includes('-----END PGP SIGNATURE-----')) {
+                break;
+            }
+            i++;
+        }
+    }
+    else {
+        // Continue reading lines that start with space (continuation)
+        while (i < lines.length) {
+            const currentLine = lines[i];
+            if (currentLine === undefined || !currentLine.startsWith(' '))
+                break;
+            // Remove the leading space from continuation lines
+            valueLines.push(currentLine.slice(1));
+            i++;
+        }
+        i--; // Back up because main loop will increment
+    }
+    return [valueLines.join('\n'), i];
+}
+/**
+ * Optimized commit content parser.
+ *
+ * Uses efficient string scanning and avoids unnecessary allocations.
+ * Supports all standard Git commit headers plus extra headers.
+ *
+ * @param content - Raw commit content string (without Git object header)
+ * @returns Parsed GitCommit object
+ * @throws Error if required fields are missing
+ */
 function parseCommitContent(content) {
     const lines = content.split('\n');
     let tree;
@@ -229,40 +477,77 @@ function parseCommitContent(content) {
     let author;
     let committer;
     let gpgSignature;
+    const extraHeaders = {};
     let messageStartIdx = -1;
     let i = 0;
     while (i < lines.length) {
         const line = lines[i];
+        if (line === undefined)
+            break;
         // Empty line marks start of message
         if (line === '') {
             messageStartIdx = i + 1;
             break;
         }
-        if (line.startsWith('tree ')) {
-            tree = line.slice(5);
-        }
-        else if (line.startsWith('parent ')) {
-            parents.push(line.slice(7));
-        }
-        else if (line.startsWith('author ')) {
-            author = parseIdentity(line);
-        }
-        else if (line.startsWith('committer ')) {
-            committer = parseIdentity(line);
-        }
-        else if (line.startsWith('gpgsig ')) {
-            // GPG signature spans multiple lines until -----END PGP SIGNATURE-----
-            const sigLines = [line.slice(7)];
+        // Find the first space to split header name from value
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx === -1) {
+            // Line without space - skip (shouldn't happen in valid commits)
             i++;
-            while (i < lines.length && !lines[i].includes('-----END PGP SIGNATURE-----')) {
-                // Lines in signature may start with space
-                sigLines.push(lines[i].startsWith(' ') ? lines[i].slice(1) : lines[i]);
-                i++;
+            continue;
+        }
+        const headerName = line.slice(0, spaceIdx);
+        const headerValue = line.slice(spaceIdx + 1);
+        // Parse known headers
+        switch (headerName) {
+            case 'tree':
+                tree = headerValue;
+                break;
+            case 'parent':
+                parents.push(headerValue);
+                break;
+            case 'author':
+                author = parseIdentity(line);
+                break;
+            case 'committer':
+                committer = parseIdentity(line);
+                break;
+            case 'gpgsig': {
+                const [value, lastIdx] = parseMultilineHeader(lines, i, headerValue, 'gpgsig');
+                gpgSignature = value;
+                i = lastIdx;
+                break;
             }
-            if (i < lines.length) {
-                sigLines.push(lines[i].startsWith(' ') ? lines[i].slice(1) : lines[i]);
+            case 'encoding':
+                extraHeaders.encoding = headerValue;
+                break;
+            case 'mergetag': {
+                const [value, lastIdx] = parseMultilineHeader(lines, i, headerValue);
+                extraHeaders.mergetag = value;
+                i = lastIdx;
+                break;
             }
-            gpgSignature = sigLines.join('\n');
+            default:
+                // Unknown header - preserve for round-trip compatibility
+                if (MULTILINE_HEADERS.has(headerName)) {
+                    const [value, lastIdx] = parseMultilineHeader(lines, i, headerValue);
+                    extraHeaders[headerName] = value;
+                    i = lastIdx;
+                }
+                else {
+                    // Single-line unknown header - may appear multiple times
+                    const existing = extraHeaders[headerName];
+                    if (existing === undefined) {
+                        extraHeaders[headerName] = headerValue;
+                    }
+                    else if (Array.isArray(existing)) {
+                        existing.push(headerValue);
+                    }
+                    else {
+                        extraHeaders[headerName] = [existing, headerValue];
+                    }
+                }
+                break;
         }
         i++;
     }
@@ -276,8 +561,10 @@ function parseCommitContent(content) {
     if (!committer) {
         throw new Error('Invalid commit: missing committer');
     }
-    // Extract message
+    // Extract message - use substring for efficiency with large messages
     const message = messageStartIdx >= 0 ? lines.slice(messageStartIdx).join('\n') : '';
+    // Only include extraHeaders if there are any
+    const hasExtraHeaders = Object.keys(extraHeaders).length > 0;
     return new GitCommit({
         tree,
         parents: parents.length > 0 ? parents : undefined,
@@ -285,6 +572,7 @@ function parseCommitContent(content) {
         committer,
         message,
         gpgSignature,
+        extraHeaders: hasExtraHeaders ? extraHeaders : undefined,
     });
 }
 //# sourceMappingURL=commit.js.map

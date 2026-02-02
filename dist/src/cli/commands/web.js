@@ -50,10 +50,10 @@ void _DEFAULT_ENDPOINT; // Reserved for production use
  */
 export async function webCommand(ctx) {
     const options = {
-        expires: ctx.options.expires,
-        open: ctx.options.open,
-        endpoint: ctx.options.endpoint,
-        timeout: ctx.options.timeout,
+        expires: ctx.options['expires'],
+        open: ctx.options['open'],
+        endpoint: ctx.options['endpoint'],
+        timeout: ctx.options['timeout'],
     };
     // Get diff from working directory
     const diff = await getUnstagedDiff(ctx.cwd);
@@ -569,11 +569,11 @@ export async function uploadPreview(html, options) {
                 });
             }
             catch (err) {
-                if (err.name === 'AbortError') {
+                if (err instanceof Error && err.name === 'AbortError') {
                     throw new Error('Request timed out');
                 }
                 // Wrap network errors with a better message
-                const message = err?.message || String(err);
+                const message = err instanceof Error ? err.message : String(err);
                 // Try to infer error type from endpoint URL for better error messages
                 // This helps in testing scenarios where mock servers may be unreachable
                 if (endpoint.includes('/500') || endpoint.includes('/502') || endpoint.includes('/503')) {

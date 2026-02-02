@@ -255,10 +255,10 @@ function parseIdentityLine(line: string): { name: string; email: string; timesta
   }
 
   return {
-    name: match[1],
-    email: match[2],
-    timestamp: parseInt(match[3], 10),
-    timezone: match[4]
+    name: match[1] ?? '',
+    email: match[2] ?? '',
+    timestamp: parseInt(match[3] ?? '0', 10),
+    timezone: match[4] ?? '+0000'
   }
 }
 
@@ -280,6 +280,7 @@ function parseCommitContent(data: Uint8Array): ParsedCommit {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
+    if (line === undefined) continue
 
     if (inGpgSig) {
       gpgSigLines.push(line)
@@ -312,14 +313,17 @@ function parseCommitContent(data: Uint8Array): ParsedCommit {
 
   const message = lines.slice(messageStart).join('\n')
 
-  return {
+  const result: ParsedCommit = {
     tree,
     parents,
     author,
     committer,
-    message,
-    gpgSig
+    message
   }
+  if (gpgSig !== undefined) {
+    result.gpgSig = gpgSig
+  }
+  return result
 }
 
 // ============================================================================
@@ -783,7 +787,7 @@ export async function isGitRepository(repoPath: string): Promise<boolean> {
         // .git file (worktree) - read the actual gitdir path
         const content = await fs.readFile(gitPath, 'utf8')
         const match = content.match(/^gitdir:\s*(.+)$/m)
-        if (match) {
+        if (match && match[1]) {
           const actualGitDir = path.resolve(repoPath, match[1].trim())
           return await isValidGitDir(actualGitDir)
         }
@@ -871,7 +875,7 @@ export async function createFSxCLIAdapter(
         // .git file (worktree)
         const content = await fs.readFile(gitPath, 'utf8')
         const match = content.match(/^gitdir:\s*(.+)$/m)
-        if (match) {
+        if (match && match[1]) {
           gitDir = path.resolve(repoPath, match[1].trim())
         } else {
           throw new FSxCLIAdapterError(

@@ -1,0 +1,1 @@
+{"version":3,"file":"language.d.ts","sourceRoot":"","sources":["../../../src/enrichment/language.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,sEAAsE;AACtE,eAAO,MAAM,SAAS,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAuJ5C,CAAA;AAED;;;GAGG;AACH,eAAO,MAAM,QAAQ,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAyE3C,CAAA;AAED;;;;;GAKG;AACH,wBAAgB,cAAc,CAAC,IAAI,EAAE,MAAM,GAAG,MAAM,GAAG,IAAI,CAgC1D"}

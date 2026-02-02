@@ -1,18 +1,22 @@
 /**
  * @fileoverview Core Type Definitions (Platform Agnostic)
  *
- * This module defines the storage abstraction interfaces and common types
- * used throughout the core git implementation. These interfaces are designed
- * to be implemented by platform-specific backends (Node.js fs, Cloudflare R2, etc.)
+ * This module re-exports the canonical storage interfaces from types/storage
+ * and defines additional platform-agnostic types for git operations.
+ * These interfaces are designed to be implemented by platform-specific
+ * backends (Node.js fs, Cloudflare R2, etc.)
  *
  * This module has ZERO Cloudflare dependencies and can run in any JavaScript runtime.
  *
  * @module core/types
  */
-import type { CommitObject, TreeObject, ObjectType } from './objects';
-import type { Ref } from './refs';
+import type { ObjectType } from './objects';
+export type { ObjectStore, BasicObjectStore, RefObjectStore, TreeDiffObjectStore, CommitProvider, BasicCommitProvider, ValidationResult, } from '../types/storage';
 /**
  * Result of retrieving a Git object from storage.
+ *
+ * Note: This uses 'data' instead of 'content' for backward compatibility
+ * with modules expecting the older interface.
  */
 export interface StoredObjectResult {
     /** The type of Git object */
@@ -20,163 +24,7 @@ export interface StoredObjectResult {
     /** Raw binary content of the object (excluding Git header) */
     data: Uint8Array;
 }
-/**
- * Basic object store interface for core operations.
- *
- * This is the minimal interface needed for object storage.
- */
-export interface BasicObjectStore {
-    /**
-     * Retrieve a Git object by its SHA-1 hash.
-     */
-    getObject(sha: string): Promise<StoredObjectResult | null>;
-    /**
-     * Store a Git object and return its SHA-1 hash.
-     */
-    storeObject(type: ObjectType, data: Uint8Array): Promise<string>;
-    /**
-     * Check if an object exists in the store.
-     */
-    hasObject(sha: string): Promise<boolean>;
-}
-/**
- * Object store with reference management capabilities.
- */
-export interface RefObjectStore extends BasicObjectStore {
-    /**
-     * Get a reference by its name.
-     */
-    getRef(refName: string): Promise<string | null>;
-    /**
-     * Set a reference to point to a SHA.
-     */
-    setRef(refName: string, sha: string): Promise<void>;
-    /**
-     * Delete a reference.
-     */
-    deleteRef(refName: string): Promise<boolean>;
-    /**
-     * List references with a given prefix.
-     */
-    listRefs(prefix: string): Promise<Array<{
-        name: string;
-        sha: string;
-    }>>;
-}
-/**
- * Object store specialized for tree diff operations.
- */
-export interface TreeDiffObjectStore {
-    /**
-     * Get a tree object by SHA.
-     */
-    getTree(sha: string): Promise<TreeObject | null>;
-    /**
-     * Get blob content by SHA.
-     */
-    getBlob(sha: string): Promise<Uint8Array | null>;
-    /**
-     * Check if an object exists.
-     */
-    exists(sha: string): Promise<boolean>;
-}
-/**
- * Full-featured object store interface.
- */
-export interface ObjectStore extends RefObjectStore, TreeDiffObjectStore {
-}
-/**
- * Interface for retrieving commits from storage.
- */
-export interface CommitProvider {
-    /**
-     * Get a commit by SHA.
-     */
-    getCommit(sha: string): Promise<CommitObject | null>;
-    /**
-     * Get commits that modify a specific path (optional).
-     */
-    getCommitsForPath?(path: string): Promise<string[]>;
-    /**
-     * Get the tree for a commit (optional).
-     */
-    getTree?(commitSha: string): Promise<unknown>;
-}
-/**
- * Minimal commit provider interface.
- */
-export interface BasicCommitProvider {
-    /**
-     * Get a commit by SHA.
-     */
-    getCommit(sha: string): Promise<CommitObject | null>;
-}
-/**
- * Low-level storage backend interface.
- *
- * This interface abstracts over different storage implementations
- * (file system, Cloudflare R2, SQLite, etc.) and provides a unified API.
- */
-export interface StorageBackend {
-    /**
-     * Store a Git object and return its SHA-1 hash.
-     */
-    putObject(type: ObjectType, content: Uint8Array): Promise<string>;
-    /**
-     * Retrieve a Git object by its SHA-1 hash.
-     */
-    getObject(sha: string): Promise<StoredObjectResult | null>;
-    /**
-     * Check if a Git object exists in storage.
-     */
-    hasObject(sha: string): Promise<boolean>;
-    /**
-     * Delete a Git object from storage.
-     */
-    deleteObject(sha: string): Promise<void>;
-    /**
-     * Get a reference by name.
-     */
-    getRef(name: string): Promise<Ref | null>;
-    /**
-     * Create or update a reference.
-     */
-    setRef(name: string, ref: Ref): Promise<void>;
-    /**
-     * Delete a reference.
-     */
-    deleteRef(name: string): Promise<void>;
-    /**
-     * List references matching an optional prefix.
-     */
-    listRefs(prefix?: string): Promise<Ref[]>;
-    /**
-     * Read a raw file from the repository.
-     */
-    readFile(path: string): Promise<Uint8Array | null>;
-    /**
-     * Write a raw file to the repository.
-     */
-    writeFile(path: string, content: Uint8Array): Promise<void>;
-    /**
-     * Delete a raw file from the repository.
-     */
-    deleteFile(path: string): Promise<void>;
-    /**
-     * Check if a file or directory exists.
-     */
-    exists(path: string): Promise<boolean>;
-    /**
-     * List contents of a directory.
-     */
-    readdir(path: string): Promise<string[]>;
-    /**
-     * Create a directory.
-     */
-    mkdir(path: string, options?: {
-        recursive?: boolean;
-    }): Promise<void>;
-}
+export type { CASBackend, RefBackend, FileBackend, StorageBackend, } from '../storage/backend';
 /**
  * Interface for SHA-1 hashing.
  *
@@ -215,13 +63,6 @@ export interface CompressionProvider {
      * Synchronous inflate (if available).
      */
     inflateSync?(data: Uint8Array): Uint8Array;
-}
-/**
- * Standard validation result.
- */
-export interface ValidationResult {
-    isValid: boolean;
-    error?: string;
 }
 /**
  * Operation result with optional error.

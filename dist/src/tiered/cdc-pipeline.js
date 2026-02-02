@@ -1061,8 +1061,9 @@ export class CDCBatcher {
                             handlerPromises.push(maybePromise);
                         }
                     }
-                    catch {
-                        // Ignore handler errors in timer context
+                    catch (error) {
+                        // Log handler errors in timer context but don't fail the flush
+                        console.warn('[CDCPipeline] batch handler threw in timer context:', error instanceof Error ? error.message : String(error));
                     }
                 }
                 // Execute all handlers and ignore the result

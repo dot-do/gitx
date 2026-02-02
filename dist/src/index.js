@@ -16,8 +16,19 @@
  *
  * @module gitx.do
  *
+ * Subpath imports are available for targeted usage without pulling in the
+ * entire barrel:
+ *
+ *   - `gitx.do/types`    - Type definitions (objects, storage, capability, interfaces)
+ *   - `gitx.do/core`     - Core git operations (merge, blame, commit, branch)
+ *   - `gitx.do/storage`  - R2 pack storage, object index, tiered storage
+ *   - `gitx.do/wire`     - Git Smart HTTP protocol, pkt-line, auth
+ *   - `gitx.do/delta`    - Delta transaction log (ref-log, branching, merging)
+ *   - `gitx.do/iceberg`  - Iceberg v2 metadata generation
+ *
  * @example
  * ```typescript
+ * // Full barrel import (backward compatible)
  * import {
  *   // Types
  *   type CommitObject,
@@ -38,12 +49,17 @@
  *   handleUploadPack,
  * } from 'gitx.do'
  *
+ * // Or use targeted subpath imports
+ * import { R2PackStorage, ObjectIndex } from 'gitx.do/storage'
+ * import { handleInfoRefs, handleUploadPack } from 'gitx.do/wire'
+ * import { merge, createCommit } from 'gitx.do/core'
+ *
  * // Create a commit
  * const commit = await createCommit(storage, {
  *   tree: treeSha,
  *   parents: [parentSha],
  *   message: 'Add new feature',
- *   author: { name: 'Alice', email: 'alice@example.com' }
+ *   author: { name: 'Alice', email: 'alice@example.com.ai' }
  * })
  * ```
  */
@@ -179,6 +195,63 @@ PACK_INDEX_SIGNATURE, PACK_INDEX_MAGIC, PACK_INDEX_VERSION, LARGE_OFFSET_THRESHO
 parsePackIndex, createPackIndex, lookupObject, verifyPackIndex, serializePackIndex, 
 // Utility functions
 getFanoutRange, calculateCRC32, binarySearchObjectId, binarySearchSha, parseFanoutTable, readPackOffset, } from './pack/index';
+/**
+ * Pack unpacking operations.
+ *
+ * @description
+ * Functions for extracting objects from Git packfiles:
+ * - Full packfile unpacking with delta resolution
+ * - Memory-efficient streaming iteration
+ * - Support for thin packs with external base resolution
+ *
+ * @example
+ * ```typescript
+ * import { unpackPackfile, iteratePackfile } from 'gitx.do'
+ *
+ * // Unpack entire packfile
+ * const result = await unpackPackfile(packData)
+ * for (const obj of result.objects) {
+ *   console.log(`${obj.sha}: ${obj.type}`)
+ * }
+ *
+ * // Stream objects for large packs
+ * for await (const obj of iteratePackfile(packData)) {
+ *   await store.putObject(obj.type, obj.data)
+ * }
+ * ```
+ */
+export { unpackPackfile, iteratePackfile, computeObjectSha, packTypeToObjectType, bytesToHex, } from './pack/unpack';
+/**
+ * Pack multi-index operations.
+ *
+ * @description
+ * Functions for managing multiple pack indices for improved scalability:
+ * - Incremental index updates without full rebuilds
+ * - Sharded indices for memory efficiency
+ * - Batch lookups across multiple packs
+ * - Fanout tables for O(1) range narrowing
+ *
+ * @example
+ * ```typescript
+ * import { MultiIndexManager, createMultiIndexManager } from 'gitx.do'
+ *
+ * // Create a multi-index manager
+ * const manager = createMultiIndexManager({ shardCount: 16 })
+ *
+ * // Add pack indices
+ * manager.addPackIndex(packId, entries)
+ *
+ * // Lookup objects
+ * const location = manager.lookupObject(sha)
+ * if (location) {
+ *   console.log(`Found in ${location.packId} at offset ${location.offset}`)
+ * }
+ *
+ * // Batch lookup
+ * const result = manager.batchLookup(shas)
+ * ```
+ */
+export { MultiIndexManager, createMultiIndexManager, addPackIndexFromData, batchLookupAcrossManagers, } from './pack/multi-index';
 // =============================================================================
 // Git Operations - Core git commands (merge, blame, commit, branch)
 // =============================================================================
@@ -248,7 +321,7 @@ export { blame, blameFile, blameLine, blameRange, getBlameForCommit, trackConten
  * ```typescript
  * import { createCommit, createAuthor, formatTimestamp } from 'gitx.do'
  *
- * const author = createAuthor('Alice', 'alice@example.com')
+ * const author = createAuthor('Alice', 'alice@example.com.ai')
  * const commit = await createCommit(storage, {
  *   tree: treeSha,
  *   parents: [parentSha],
@@ -309,7 +382,9 @@ export { createBranch, deleteBranch, listBranches, renameBranch, checkoutBranch,
  * ```
  */
 export { 
-// Tool definitions
+// New search/fetch/do tools
+createGitBindingFromContext, createGitTools, 
+// Legacy tool definitions (backward compat)
 gitTools, registerTool, validateToolInput, invokeTool, listTools, getTool, } from './mcp/tools';
 /**
  * MCP adapter.
@@ -395,6 +470,100 @@ export {
 encodePktLine, decodePktLine, encodeFlushPkt, encodeDelimPkt, pktLineStream, 
 // Constants
 FLUSH_PKT, DELIM_PKT, MAX_PKT_LINE_DATA, } from './wire/pkt-line';
+/**
+ * Git HTTP Authentication.
+ *
+ * @description
+ * Authentication layer for Git HTTP protocol operations (push/pull) including:
+ * - Basic authentication (username/password or token)
+ * - Bearer token authentication
+ * - Credential parsing and encoding
+ * - Authentication middleware
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createAuthMiddleware,
+ *   MemoryAuthProvider,
+ *   parseAuthorizationHeader,
+ *   encodeBasicAuth
+ * } from 'gitx.do'
+ *
+ * // Create an auth provider
+ * const provider = new MemoryAuthProvider({
+ *   users: {
+ *     'alice': { password: 'secret', scopes: ['repo:read', 'repo:write'] }
+ *   }
+ * })
+ *
+ * // Create middleware
+ * const auth = createAuthMiddleware(provider)
+ *
+ * // Authenticate a request
+ * const result = await auth.authenticate(request)
+ * if (!result.authenticated) {
+ *   return new Response('Unauthorized', { status: 401 })
+ * }
+ * ```
+ */
+export { 
+// Credential parsing/encoding
+parseAuthorizationHeader, encodeBasicAuth, encodeBearerAuth, 
+// Response helpers
+createUnauthorizedResponse, 
+// Type guards
+isAnonymous, isBasicAuth, isBearerAuth, 
+// Utilities
+constantTimeCompare, 
+// Constants
+DEFAULT_REALM, } from './wire/auth';
+/**
+ * Git HTTP Authentication Middleware.
+ *
+ * @description
+ * Middleware for authenticating Git HTTP protocol requests including:
+ * - Request-level authentication
+ * - Integration with RepositoryProvider
+ * - Built-in auth providers (memory, callback)
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createAuthMiddleware,
+ *   MemoryAuthProvider,
+ *   CallbackAuthProvider,
+ *   createAuthenticatedRepositoryProvider
+ * } from 'gitx.do'
+ *
+ * // Memory-based provider for development
+ * const memProvider = new MemoryAuthProvider({
+ *   users: { 'user': { password: 'pass', scopes: ['repo:read'] } },
+ *   tokens: { 'token123': { scopes: ['repo:read', 'repo:write'] } }
+ * })
+ *
+ * // Callback-based provider for production
+ * const callbackProvider = new CallbackAuthProvider({
+ *   validateBasic: async (username, password, context) => {
+ *     const valid = await checkCredentials(username, password)
+ *     return { valid, user: valid ? { id: username } : undefined }
+ *   }
+ * })
+ *
+ * // Wrap repository with auth context
+ * const authedRepo = createAuthenticatedRepositoryProvider(
+ *   repository,
+ *   authResult.user,
+ *   authResult.scopes
+ * )
+ * ```
+ */
+export { 
+// Middleware factory
+createAuthMiddleware, 
+// Built-in providers
+MemoryAuthProvider, CallbackAuthProvider, 
+// Repository wrapper
+createAuthenticatedRepositoryProvider, } from './wire/auth-middleware';
 // =============================================================================
 // Storage - R2 packfile storage and object indexing
 // =============================================================================
@@ -504,6 +673,44 @@ TierMigrator, AccessTracker, MigrationError, MigrationRollback, ConcurrentAccess
 export { 
 // Class
 TieredReader, TieredObjectStoreStub, } from './tiered/read-path';
+/**
+ * Background tier migration with DO alarms.
+ *
+ * @description
+ * Functions for background tier migration using Durable Object alarms:
+ * - Schedule migration cycles via DO alarms
+ * - Migrate objects from hot to warm to cold based on access patterns
+ * - Exponential backoff on failures
+ * - Persistent state tracking
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   TierMigrationScheduler,
+ *   createMigrationScheduler,
+ *   DEFAULT_MIGRATION_CONFIG
+ * } from 'gitx.do'
+ *
+ * // Create scheduler
+ * const scheduler = createMigrationScheduler(storage, tieredStorage, {
+ *   hotToWarmAgeMs: 24 * 60 * 60 * 1000,  // 24 hours
+ *   batchSize: 50
+ * })
+ *
+ * // Schedule background migration
+ * await scheduler.scheduleBackgroundMigration()
+ *
+ * // In alarm handler
+ * await scheduler.runMigrationCycle()
+ * ```
+ */
+export { 
+// Class
+TierMigrationScheduler, 
+// Factory
+createMigrationScheduler, 
+// Constants
+DEFAULT_MIGRATION_CONFIG, } from './tiered/background-migration';
 // =============================================================================
 // UI Components - App dashboard and Site marketing page
 // =============================================================================
@@ -548,4 +755,101 @@ export { default as App } from '../App.js';
  * ```
  */
 export { default as Site } from '../Site.js';
+// =============================================================================
+// Middleware - Rate limiting and other request processing
+// =============================================================================
+/**
+ * Rate limiting middleware.
+ *
+ * @description
+ * Configurable rate limiting to protect against abuse:
+ * - Different limits for different endpoint types (push, fetch, API)
+ * - In-memory and Durable Object-backed storage options
+ * - Returns 429 Too Many Requests with Retry-After header
+ * - Configurable key extraction (IP, user ID, API key)
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   createRateLimitMiddleware,
+ *   MemoryRateLimitStore,
+ *   DEFAULT_LIMITS
+ * } from 'gitx.do'
+ *
+ * const store = new MemoryRateLimitStore()
+ * const rateLimiter = createRateLimitMiddleware({
+ *   store,
+ *   limits: DEFAULT_LIMITS,
+ * })
+ *
+ * // Apply to Hono router
+ * app.use('*', rateLimiter)
+ * ```
+ */
+export { 
+// Constants
+DEFAULT_LIMITS, 
+// Stores
+MemoryRateLimitStore, DORateLimitStore, 
+// DO class
+RateLimitDO, 
+// Middleware factory
+createRateLimitMiddleware, 
+// Utility functions
+createDefaultRateLimiter, createStrictRateLimiter, createPermissiveRateLimiter, 
+// Key extraction
+defaultKeyExtractor, createUserAwareKeyExtractor, 
+// Endpoint classification
+defaultEndpointClassifier, } from './middleware/rate-limit';
+// =============================================================================
+// Errors - Unified error hierarchy
+// =============================================================================
+/**
+ * Unified error hierarchy.
+ *
+ * @description
+ * All GitX errors extend from GitXError, providing:
+ * - Standardized error codes for programmatic handling
+ * - Error cause chaining for debugging
+ * - Consistent serialization via toJSON()
+ * - Type guards for error checking
+ *
+ * Error classes by domain:
+ * - {@link GitXError}: Base error class
+ * - {@link StorageError}: R2, SQLite, Parquet operations
+ * - {@link WireError}: Git protocol, pkt-line, auth
+ * - {@link IcebergError}: Iceberg catalog and metadata
+ * - {@link RefError}: Branches, tags, refs
+ * - {@link ObjectError}: Git objects, parsing, deltas
+ * - {@link RPCError}: RPC/MCP operations
+ * - {@link MigrationError}: Schema and data migrations
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   GitXError,
+ *   StorageError,
+ *   WireError,
+ *   isGitXError,
+ *   hasErrorCode
+ * } from 'gitx.do'
+ *
+ * try {
+ *   await storage.getObject(sha)
+ * } catch (error) {
+ *   if (hasErrorCode(error, 'NOT_FOUND')) {
+ *     // Handle not found
+ *   } else if (error instanceof StorageError) {
+ *     console.log(`Storage error: ${error.code}`)
+ *   }
+ * }
+ * ```
+ */
+export { 
+// Base error class
+GitXError, 
+// Domain-specific errors
+StorageError, WireError, IcebergError, RefError, ObjectError, RPCError, MigrationError, 
+// Type guards
+isGitXError, isStorageError, isWireError, isIcebergError, isRefError, isObjectError, isRPCError, isMigrationError, hasErrorCode, } from './errors';
 //# sourceMappingURL=index.js.map

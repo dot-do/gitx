@@ -83,6 +83,7 @@ export default {
 };
 `;
 }
+/** Evaluates untrusted code in a Miniflare sandbox with network access blocked. */
 export async function evaluateWithMiniflare(code, config) {
     const startTime = performance.now();
     // Check for network calls (fetch, XMLHttpRequest, etc.)

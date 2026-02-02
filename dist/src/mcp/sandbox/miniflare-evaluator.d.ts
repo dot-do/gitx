@@ -18,5 +18,6 @@ export interface EvaluatorResult {
     logs: string[];
     duration: number;
 }
+/** Evaluates untrusted code in a Miniflare sandbox with network access blocked. */
 export declare function evaluateWithMiniflare(code: string, config?: MiniflareEvaluatorConfig): Promise<EvaluatorResult>;
 //# sourceMappingURL=miniflare-evaluator.d.ts.map

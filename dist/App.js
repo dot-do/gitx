@@ -18,7 +18,7 @@ const config = {
     },
     identity: {
         clientId: 'gitx',
-        devMode: process.env.NODE_ENV === 'development',
+        devMode: process.env['NODE_ENV'] === 'development',
     },
     routes: {
         overview: true,

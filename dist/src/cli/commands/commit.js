@@ -64,7 +64,7 @@ async function parseGitConfig(cwd) {
             }
             else if (inUserSection) {
                 const match = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-                if (match) {
+                if (match && match[1] && match[2]) {
                     const [, key, value] = match;
                     if (key === 'name') {
                         config.userName = value.trim();
@@ -125,7 +125,7 @@ async function getCurrentBranch(cwd) {
     try {
         const content = await fs.readFile(headPath, 'utf8');
         const match = content.trim().match(/^ref: refs\/heads\/(.+)$/);
-        if (match) {
+        if (match && match[1]) {
             return match[1];
         }
         return null; // Detached HEAD
@@ -158,7 +158,7 @@ async function updateRef(cwd, sha) {
     if (headContent.trim().startsWith('ref:')) {
         // Symbolic ref - update the branch
         const match = headContent.trim().match(/^ref: (.+)$/);
-        if (match) {
+        if (match && match[1]) {
             const refPath = path.join(cwd, '.git', match[1]);
             await fs.mkdir(path.dirname(refPath), { recursive: true });
             await fs.writeFile(refPath, sha + '\n');
@@ -194,7 +194,7 @@ async function updateRef(cwd, sha) {
 export async function commitCommand(ctx) {
     const { cwd, options, stdout } = ctx;
     // Handle --help flag
-    if (options.help || options.h) {
+    if (options['help'] || options['h']) {
         stdout(`gitx commit - Record changes to the repository
 
 Usage: gitx commit [options]
@@ -212,25 +212,29 @@ Examples:
         return;
     }
     // Check for message option
-    const message = options.m;
-    const amend = options.amend;
-    const all = options.a;
+    const message = options['m'];
+    const amend = options['amend'];
+    const all = options['a'];
     // Require message unless amending
     if (!message && !amend) {
         throw new Error('Commit message required. Use -m <message> to provide a message.');
     }
     try {
-        const result = await createCommit(cwd, {
-            message,
-            amend,
-            all
-        });
+        const commitOpts = {};
+        if (message !== undefined)
+            commitOpts.message = message;
+        if (amend !== undefined)
+            commitOpts.amend = amend;
+        if (all !== undefined)
+            commitOpts.all = all;
+        const result = await createCommit(cwd, commitOpts);
         // Get branch name for output
         const branch = await getCurrentBranch(cwd);
         const branchDisplay = branch ?? 'HEAD';
         const shortSha = result.sha.substring(0, 7);
         // Output in git-style format: [branch shortsha] message
-        stdout(`[${branchDisplay} ${shortSha}] ${result.message.split('\n')[0]}`);
+        const firstLine = result.message.split('\n')[0] ?? '';
+        stdout(`[${branchDisplay} ${shortSha}] ${firstLine}`);
         // Show file count
         const stagedFiles = await getStagedFiles(cwd);
         const fileCount = stagedFiles.length || 1; // At least 1 file changed
@@ -444,8 +448,8 @@ export async function getStagedFiles(cwd) {
         return lines.map(line => {
             // Format: sha mode path
             const parts = line.split(' ');
-            const sha = parts[0];
-            const mode = parseInt(parts[1], 8);
+            const sha = parts[0] ?? '';
+            const mode = parseInt(parts[1] ?? '0', 8);
             const filePath = parts.slice(2).join(' ');
             return { path: filePath, sha, mode };
         });

@@ -5,7 +5,7 @@
  *
  * @module @dotdo/gitx/objects
  */
-export { GitBlob, GitTree, GitCommit, GitTag, sortTreeEntries, parseTreeEntries, serializeTreeEntries, type TreeEntry, parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature, type GitIdentity, type ObjectType, type GitObjectData, type BlobData, type TreeData, type CommitData, type TagData, OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType, calculateSha1, calculateObjectHash, createObjectHeader, parseObjectHeader, bytesToHex, hexToBytes, compressObject, decompressObject, writeLooseObject, readLooseObject, detectObjectType, parseGitObject, createGitObject, } from '../../core/objects';
+export { GitBlob, GitTree, GitCommit, GitTag, sortTreeEntries, parseTreeEntries, serializeTreeEntries, type TreeEntry, parseIdentity, formatIdentity, hasGpgSignature, parseGpgSignature, type GitIdentity, type ObjectType, type GitObjectData, type BlobData, type TreeData, type CommitData, type TagData, OBJECT_TYPES, VALID_MODES, isValidSha, isValidMode, isValidObjectType, isValidIdentity, isValidTreeEntry, isBlobData, isTreeData, isCommitData, isTagData, InvalidGitObjectDataError, calculateSha1, calculateObjectHash, createObjectHeader, parseObjectHeader, bytesToHex, hexToBytes, compressObject, decompressObject, writeLooseObject, readLooseObject, detectObjectType, parseGitObject, createGitObject, } from '../../core/objects';
 import { type ObjectType as CoreObjectType, type TreeEntry as CoreTreeEntry } from '../../core/objects';
 /**
  * Base interface for all Git objects.
@@ -108,9 +108,13 @@ export declare function parseCommit(data: Uint8Array): CommitObject;
  * @deprecated Use GitTag.parse(data) instead
  */
 export declare function parseTag(data: Uint8Array): TagObject;
+/** Type guard that checks whether a GitObject is a blob. */
 export declare function isBlob(obj: GitObject): obj is BlobObject;
+/** Type guard that checks whether a GitObject is a tree. */
 export declare function isTree(obj: GitObject): obj is TreeObject;
+/** Type guard that checks whether a GitObject is a commit. */
 export declare function isCommit(obj: GitObject): obj is CommitObject;
+/** Type guard that checks whether a GitObject is an annotated tag. */
 export declare function isTag(obj: GitObject): obj is TagObject;
 /**
  * Validate a tree entry object.

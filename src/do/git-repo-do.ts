@@ -346,7 +346,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     if (env.ENABLE_RATE_LIMIT) {
       routeOptions.rateLimit = {
         store: env.RATE_LIMIT_DO
-          ? new DORateLimitStore(env.RATE_LIMIT_DO as unknown as Parameters<typeof DORateLimitStore>[0])
+          ? new DORateLimitStore(env.RATE_LIMIT_DO as DurableObjectNamespace)
           : new MemoryRateLimitStore(),
         limits: DEFAULT_LIMITS,
       }
@@ -487,9 +487,8 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    */
   getObjectStore(): SqliteObjectStore {
     if (!this._cachedObjectStore) {
-      this._cachedObjectStore = new SqliteObjectStore(this.state.storage, {
-        backend: this._parquetStore,
-      })
+      const options = this._parquetStore ? { backend: this._parquetStore } : {}
+      this._cachedObjectStore = new SqliteObjectStore(this.state.storage, options)
       this._logger.debug('ObjectStore created and cached')
     }
     return this._cachedObjectStore
@@ -552,7 +551,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    * @throws {GitRepoDOError} If namespace URL is invalid
    */
   async initialize(options: InitializeOptions): Promise<void> {
-    this._logger.debug('Initializing GitRepoDO', { ns: options.ns, parent: options.parent })
+    this._logger.debug('Initializing GitRepoDO', { ns: options.ns, parent: options.parent ?? null })
 
     // Validate namespace URL
     let url: URL
@@ -585,18 +584,18 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       const timestamp = Date.now()
       await this.state.storage.put(`things:root:${timestamp}`, {
         type: 'tree',
-        entries: [],
+        entries: [] as string[],
         created: timestamp,
       })
       await this.state.storage.put(`actions:init:${timestamp}`, {
         action: 'initialize',
         timestamp,
-        ns: options.ns,
+        ns: options.ns as string,
       })
       await this.state.storage.put(`events:init:${timestamp}`, {
         event: 'repo.initialized',
         timestamp,
-        ns: options.ns,
+        ns: options.ns as string,
       })
     }
 
@@ -608,14 +607,14 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
    * @throws {GitRepoDOError} If DO not initialized or target URL is invalid
    */
   async fork(options: ForkOptions): Promise<ForkResult> {
-    this._logger.debug('Forking GitRepoDO', { to: options.to, branch: options.branch })
+    this._logger.debug('Forking GitRepoDO', { to: options.to, branch: options.branch ?? null })
 
     if (!this._initialized || !this._ns) {
       this._logger.error('Cannot fork: DO not initialized')
       throw new GitRepoDOError(
         'Cannot fork: DO not initialized',
         GitRepoDOErrorCode.NOT_INITIALIZED,
-        { ns: this._ns }
+        { ns: this._ns as string | null }
       )
     }
 
@@ -632,11 +631,11 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     }
 
     // Create a new DO ID for the fork
-    const doId = this.env.DO?.newUniqueId() ?? { id: crypto.randomUUID() }
-    const doIdStr = typeof doId === 'object' && 'id' in doId ? String(doId.id) : String(doId)
+    const doId = this.env.DO?.newUniqueId()
+    const doIdStr = doId ? String(doId) : crypto.randomUUID()
 
     // If we have the DO binding, create the forked instance
-    if (this.env.DO) {
+    if (this.env.DO && doId) {
       try {
         const forkedDO = this.env.DO.get(doId)
         await forkedDO.fetch(new Request('https://internal/fork', {
@@ -648,11 +647,11 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
           }),
         }))
       } catch (error) {
-        this._logger.error('Fork operation failed', { error, to: options.to })
+        this._logger.error('Fork operation failed', { error: error instanceof Error ? error.message : String(error), to: options.to })
         throw new GitRepoDOError(
           `Fork failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           GitRepoDOErrorCode.FORK_FAILED,
-          { to: options.to, error }
+          { to: options.to, error: error instanceof Error ? error.message : String(error) }
         )
       }
     }
@@ -677,7 +676,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       throw new GitRepoDOError(
         'Cannot compact: DO not initialized',
         GitRepoDOErrorCode.NOT_INITIALIZED,
-        { ns: this._ns }
+        { ns: this._ns as string | null }
       )
     }
 
@@ -692,7 +691,7 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       throw new GitRepoDOError(
         'Nothing to compact',
         GitRepoDOErrorCode.NOTHING_TO_COMPACT,
-        { ns: this._ns }
+        { ns: this._ns as string | null }
       )
     }
 
@@ -820,7 +819,8 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       `SELECT attempt_count FROM ${COMPACTION_RETRIES_TABLE} WHERE id = 1`
     )
     const rows = result.toArray() as Array<{ attempt_count: number }>
-    return rows.length > 0 ? rows[0].attempt_count : 0
+    const row = rows[0]
+    return row ? row.attempt_count : 0
   }
 
   /**
@@ -962,7 +962,9 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
       // Quick attempt (blocking, non-durable)
       async try<T = unknown>(action: string, data?: T): Promise<ActionResult<T>> {
         // Execute action directly
-        return { action, data, success: true }
+        const result: ActionResult<T> = { action, success: true }
+        if (data !== undefined) result.data = data
+        return result
       },
 
       // Durable execution with retries
@@ -972,7 +974,8 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
         await self.state.storage.put(actionId, { action, data, status: 'pending' })
 
         // Execute and update status
-        const result: ActionResult<T> = { action, data, success: true }
+        const result: ActionResult<T> = { action, success: true }
+        if (data !== undefined) result.data = data
         await self.state.storage.put(actionId, { action, data, status: 'completed', result })
 
         return result
@@ -1061,8 +1064,8 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
     const storage = this.state.storage
 
     return {
-      async get(id: string): Promise<unknown> {
-        return storage.get(`${prefix}:${id}`)
+      async get<V = unknown>(id: string): Promise<V | undefined> {
+        return storage.get(`${prefix}:${id}`) as Promise<V | undefined>
       },
 
       async set(id: string, value: unknown): Promise<void> {
@@ -1073,11 +1076,11 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
         return storage.delete(`${prefix}:${id}`)
       },
 
-      async list(options?: { prefix?: string }): Promise<Map<string, unknown>> {
+      async list<V = unknown>(options?: { prefix?: string }): Promise<Map<string, V>> {
         const fullPrefix = options?.prefix
           ? `${prefix}:${options.prefix}`
           : `${prefix}:`
-        return storage.list({ prefix: fullPrefix })
+        return storage.list({ prefix: fullPrefix }) as Promise<Map<string, V>>
       },
     }
   }
@@ -1140,8 +1143,8 @@ export function isGitRepoDO(value: unknown): value is GitRepoDO {
   const candidate = value as Record<string, unknown>
 
   return (
-    candidate.$type === 'GitRepoDO' &&
-    typeof candidate.hasCapability === 'function' &&
+    candidate['$type'] === 'GitRepoDO' &&
+    typeof candidate['hasCapability'] === 'function' &&
     (candidate as unknown as GitRepoDO).hasCapability('git')
   )
 }

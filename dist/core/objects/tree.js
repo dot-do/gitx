@@ -144,7 +144,7 @@ export class GitTree {
         const entries = parseTreeEntries(content);
         // Create tree without re-sorting (entries from Git are already sorted)
         const tree = Object.create(GitTree.prototype);
-        tree.entries = entries;
+        Object.defineProperty(tree, 'entries', { value: entries, writable: false });
         Object.defineProperty(tree, 'type', { value: 'tree', writable: false });
         return tree;
     }

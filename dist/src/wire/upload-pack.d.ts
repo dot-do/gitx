@@ -225,6 +225,8 @@ export interface PackfileOptions {
     maxDeltaDepth?: number;
     /** Window size for delta compression algorithm */
     deltaWindowSize?: number;
+    /** Shallow boundary commits - don't traverse past these */
+    shallowCommits?: string[];
 }
 /**
  * Result of packfile generation.
@@ -242,16 +244,27 @@ export interface PackfileResult {
     includedObjects: string[];
 }
 /**
- * Object storage interface for retrieving git objects.
+ * Object storage interface for upload-pack operations.
  *
  * @description
  * Defines the methods required from an object store to support
  * upload-pack operations. Implementations typically wrap a Git
  * object database or similar storage.
  *
+ * This interface shares `getObject` and `hasObject` with the canonical
+ * {@link import('../types/storage').BasicObjectStore BasicObjectStore},
+ * but adds wire-protocol-specific methods (`getCommitParents`, `getRefs`,
+ * `getReachableObjects`) needed for fetch negotiation and packfile
+ * generation. It cannot directly extend BasicObjectStore because it
+ * does not include `storeObject` (upload-pack is read-only).
+ *
+ * @see {@link import('../types/storage').BasicObjectStore} for the canonical minimal store
+ * @see {@link import('../types/storage').ObjectStore} for the canonical full-featured store
+ * @see {@link import('./receive-pack').ReceivePackObjectStore} for the receive-pack counterpart
+ *
  * @example
  * ```typescript
- * class MyObjectStore implements ObjectStore {
+ * class MyObjectStore implements UploadPackObjectStore {
  *   async getObject(sha: string) {
  *     return this.database.get(sha)
  *   }
@@ -262,7 +275,7 @@ export interface PackfileResult {
  * }
  * ```
  */
-export interface ObjectStore {
+export interface UploadPackObjectStore {
     /**
      * Get an object by its SHA.
      * @param sha - The SHA-1 hash of the object
@@ -297,6 +310,10 @@ export interface ObjectStore {
      */
     getReachableObjects(sha: string, depth?: number): Promise<string[]>;
 }
+/**
+ * @deprecated Use {@link UploadPackObjectStore} instead. This alias exists for backward compatibility.
+ */
+export type ObjectStore = UploadPackObjectStore;
 /**
  * Shallow clone information.
  *
@@ -445,7 +462,7 @@ export declare function parseHaveLine(line: string): string;
  * // Send as response to GET /info/refs?service=git-upload-pack
  * ```
  */
-export declare function advertiseRefs(store: ObjectStore, capabilities?: Partial<UploadPackCapabilities>): Promise<string>;
+export declare function advertiseRefs(store: UploadPackObjectStore, capabilities?: Partial<UploadPackCapabilities>): Promise<string>;
 /**
  * Format an ACK response.
  *
@@ -507,7 +524,7 @@ export declare function formatNak(): string;
  * // session.wants now contains the validated wants
  * ```
  */
-export declare function processWants(session: UploadPackSession, wants: string[], store: ObjectStore): Promise<UploadPackSession>;
+export declare function processWants(session: UploadPackSession, wants: string[], store: UploadPackObjectStore): Promise<UploadPackSession>;
 /**
  * Process client haves and perform negotiation.
  *
@@ -532,7 +549,7 @@ export declare function processWants(session: UploadPackSession, wants: string[]
  * }
  * ```
  */
-export declare function processHaves(session: UploadPackSession, haves: string[], store: ObjectStore, done: boolean): Promise<WantHaveNegotiation>;
+export declare function processHaves(session: UploadPackSession, haves: string[], store: UploadPackObjectStore, done: boolean): Promise<WantHaveNegotiation>;
 /**
  * Calculate objects needed by client.
  *
@@ -557,7 +574,7 @@ export declare function processHaves(session: UploadPackSession, haves: string[]
  * // but not reachable from old-commit
  * ```
  */
-export declare function calculateMissingObjects(store: ObjectStore, wants: string[], haves: string[]): Promise<Set<string>>;
+export declare function calculateMissingObjects(store: UploadPackObjectStore, wants: string[], haves: string[], shallowCommits?: string[]): Promise<Set<string>>;
 /**
  * Process shallow/deepen commands.
  *
@@ -587,7 +604,7 @@ export declare function calculateMissingObjects(store: ObjectStore, wants: strin
  * // shallowInfo.shallowCommits contains boundary commits
  * ```
  */
-export declare function processShallow(session: UploadPackSession, shallowLines: string[], depth?: number, deepenSince?: number, deepenNot?: string[], store?: ObjectStore): Promise<ShallowInfo>;
+export declare function processShallow(session: UploadPackSession, shallowLines: string[], depth?: number, deepenSince?: number, deepenNot?: string[], store?: UploadPackObjectStore): Promise<ShallowInfo>;
 /**
  * Format shallow/unshallow lines for response.
  *
@@ -677,7 +694,7 @@ export declare function formatProgress(message: string): Uint8Array;
  * // result.objectCount is the number of objects
  * ```
  */
-export declare function generatePackfile(store: ObjectStore, wants: string[], haves: string[], options?: PackfileOptions): Promise<PackfileResult>;
+export declare function generatePackfile(store: UploadPackObjectStore, wants: string[], haves: string[], options?: PackfileOptions): Promise<PackfileResult>;
 /**
  * Generate thin pack with deltas against client's objects.
  *
@@ -699,7 +716,7 @@ export declare function generatePackfile(store: ObjectStore, wants: string[], ha
  * )
  * ```
  */
-export declare function generateThinPack(store: ObjectStore, objects: string[], clientHasObjects: string[]): Promise<PackfileResult>;
+export declare function generateThinPack(store: UploadPackObjectStore, objects: string[], clientHasObjects: string[]): Promise<PackfileResult>;
 /**
  * Handle a complete fetch request.
  *
@@ -723,5 +740,5 @@ export declare function generateThinPack(store: ObjectStore, objects: string[], 
  * // response contains NAK + packfile data
  * ```
  */
-export declare function handleFetch(session: UploadPackSession, request: string, store: ObjectStore): Promise<Uint8Array>;
+export declare function handleFetch(session: UploadPackSession, request: string, store: UploadPackObjectStore): Promise<Uint8Array>;
 //# sourceMappingURL=upload-pack.d.ts.map

@@ -742,7 +742,7 @@ export async function isGitRepository(repoPath: string): Promise<boolean> {
         // .git file (worktree) - read the actual gitdir path
         const content = await fs.readFile(gitPath, 'utf8')
         const match = content.match(/^gitdir:\s*(.+)$/m)
-        if (match) {
+        if (match && match[1]) {
           const actualGitDir = path.resolve(repoPath, match[1].trim())
           return await isValidGitDir(actualGitDir)
         }
@@ -789,7 +789,7 @@ export async function isBareRepository(gitDir: string): Promise<boolean> {
     if (await fileExists(configPath)) {
       const content = await fs.readFile(configPath, 'utf8')
       const match = content.match(/bare\s*=\s*(true|false)/i)
-      if (match) {
+      if (match && match[1]) {
         return match[1].toLowerCase() === 'true'
       }
     }
@@ -851,7 +851,7 @@ class FSIndexImpl implements FSIndex {
       throw new FSAdapterError('Index file too short', 'CORRUPT_INDEX')
     }
 
-    const signature = String.fromCharCode(data[0], data[1], data[2], data[3])
+    const signature = String.fromCharCode(data[0]!, data[1]!, data[2]!, data[3]!)
     if (signature !== 'DIRC') {
       throw new FSAdapterError('Invalid index signature', 'CORRUPT_INDEX')
     }
@@ -925,7 +925,7 @@ class FSIndexImpl implements FSIndex {
 
       if (this.version === 4) {
         // Version 4 uses path prefix compression
-        const prefixLen = data[offset++]
+        const prefixLen = data[offset++] ?? 0
         const suffixStart = offset
         let suffixEnd = suffixStart
         while (data[suffixEnd] !== 0 && suffixEnd < data.length) {
@@ -1046,15 +1046,15 @@ class FSConfigImpl implements FSConfig {
 
       // Section header: [section] or [section "subsection"]
       const sectionMatch = trimmed.match(/^\[([^\s\]"]+)(?:\s+"([^"]+)")?\]$/)
-      if (sectionMatch) {
+      if (sectionMatch && sectionMatch[1]) {
         currentSection = sectionMatch[1].toLowerCase()
-        currentSubsection = sectionMatch[2] || ''
+        currentSubsection = sectionMatch[2] ?? ''
         continue
       }
 
       // Key-value pair
       const kvMatch = trimmed.match(/^([^\s=]+)\s*=\s*(.*)$/)
-      if (kvMatch && currentSection) {
+      if (kvMatch && kvMatch[1] && kvMatch[2] !== undefined && currentSection) {
         const key = kvMatch[1].toLowerCase()
         let value = kvMatch[2].trim()
 
@@ -1079,7 +1079,7 @@ class FSConfigImpl implements FSConfig {
     await this.loadConfig()
     const fullKey = `${section.toLowerCase()}.${key.toLowerCase()}`
     const values = this.config!.get(fullKey)
-    return values && values.length > 0 ? values[values.length - 1] : null
+    return values && values.length > 0 ? (values[values.length - 1] ?? null) : null
   }
 
   async getAll(section: string, key: string): Promise<string[]> {
@@ -1092,8 +1092,9 @@ class FSConfigImpl implements FSConfig {
     await this.loadConfig()
     const result = new Map<string, string>()
     for (const [key, values] of this.config!) {
-      if (values.length > 0) {
-        result.set(key, values[values.length - 1])
+      const lastValue = values[values.length - 1]
+      if (values.length > 0 && lastValue !== undefined) {
+        result.set(key, lastValue)
       }
     }
     return result
@@ -1231,10 +1232,10 @@ class FSPackReaderImpl implements FSPackReader {
     if (type === PackObjectType.OBJ_OFS_DELTA) {
       // Read negative offset
       let baseOffset = 0
-      let byte = packData[dataOffset++]
+      let byte = packData[dataOffset++] ?? 0
       baseOffset = byte & 0x7f
       while (byte & 0x80) {
-        byte = packData[dataOffset++]
+        byte = packData[dataOffset++] ?? 0
         baseOffset = ((baseOffset + 1) << 7) | (byte & 0x7f)
       }
 
@@ -1464,7 +1465,7 @@ class FSAdapterImpl implements FSAdapter {
 
       const header = decoder.decode(inflated.subarray(0, nullIndex))
       const match = header.match(/^(blob|tree|commit|tag) (\d+)$/)
-      if (!match) {
+      if (!match || !match[1] || !match[2]) {
         throw new FSAdapterError(`Invalid object header: ${header}`, 'CORRUPT_OBJECT', objPath)
       }
 
@@ -1828,9 +1829,8 @@ class FSAdapterImpl implements FSAdapter {
 
         // Regular ref line: SHA ref-name
         const match = trimmed.match(/^([0-9a-f]{40})\s+(.+)$/)
-        if (match) {
-          const [, sha, refName] = match
-          this.packedRefs.set(refName, sha.toLowerCase())
+        if (match && match[1] && match[2]) {
+          this.packedRefs.set(match[2], match[1].toLowerCase())
         }
       }
     } catch {
@@ -1911,7 +1911,7 @@ export async function createFSAdapter(
         // .git file (worktree)
         const content = await fs.readFile(gitPath, 'utf8')
         const match = content.match(/^gitdir:\s*(.+)$/m)
-        if (match) {
+        if (match && match[1]) {
           gitDir = path.resolve(repoPath, match[1].trim())
         } else {
           throw new FSAdapterError(

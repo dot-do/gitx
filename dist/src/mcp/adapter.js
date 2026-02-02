@@ -44,7 +44,7 @@
  *   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
  * )
  */
-import { gitTools } from './tools';
+import { gitTools, createGitBindingFromContext, createGitTools, getRepositoryContext } from './tools';
 /**
  * JSON-RPC 2.0 error codes and MCP-specific error codes.
  *
@@ -418,6 +418,23 @@ export class MCPAdapter {
      * // All 18 git tools are now registered
      */
     registerGitTools() {
+        // Register the 3 search/fetch/do tools backed by the git binding
+        const ctx = getRepositoryContext();
+        if (ctx) {
+            const gitBinding = createGitBindingFromContext(ctx);
+            const tools = createGitTools(gitBinding);
+            for (const tool of tools) {
+                if (!this.tools.has(tool.name)) {
+                    this.registerTool({
+                        name: tool.name,
+                        description: tool.description,
+                        inputSchema: tool.inputSchema,
+                        handler: tool.handler,
+                    });
+                }
+            }
+        }
+        // Also register legacy git_* tools for backward compatibility
         for (const tool of gitTools) {
             if (!this.tools.has(tool.name)) {
                 this.registerTool({

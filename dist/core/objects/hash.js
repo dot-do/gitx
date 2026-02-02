@@ -17,7 +17,11 @@ const encoder = new TextEncoder();
  * @returns Promise resolving to 40-character lowercase hex string
  */
 export async function calculateSha1(data) {
-    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+    // Create a new ArrayBuffer to ensure compatibility with crypto.subtle.digest
+    // This handles the case where data.buffer might be a SharedArrayBuffer
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
     const hashArray = new Uint8Array(hashBuffer);
     return bytesToHex(hashArray);
 }

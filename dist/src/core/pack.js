@@ -95,12 +95,19 @@ export function getPackEntryType(num) {
  * Read a variable-length size from pack format.
  */
 export function readPackSize(data, offset) {
-    let byte = data[offset++];
+    let byte = data[offset];
+    if (byte === undefined) {
+        return { type: 0, size: 0, newOffset: offset };
+    }
+    offset++;
     const type = (byte >> 4) & 0x07;
     let size = byte & 0x0f;
     let shift = 4;
     while (byte & 0x80) {
-        byte = data[offset++];
+        byte = data[offset];
+        if (byte === undefined)
+            break;
+        offset++;
         size |= (byte & 0x7f) << shift;
         shift += 7;
     }
@@ -110,11 +117,18 @@ export function readPackSize(data, offset) {
  * Read a variable-length offset for OFS_DELTA.
  */
 export function readDeltaOffset(data, offset) {
-    let byte = data[offset++];
+    let byte = data[offset];
+    if (byte === undefined) {
+        return { deltaOffset: 0, newOffset: offset };
+    }
+    offset++;
     let deltaOffset = byte & 0x7f;
     while (byte & 0x80) {
         deltaOffset += 1;
-        byte = data[offset++];
+        byte = data[offset];
+        if (byte === undefined)
+            break;
+        offset++;
         deltaOffset = (deltaOffset << 7) | (byte & 0x7f);
     }
     return { deltaOffset, newOffset: offset };
@@ -127,7 +141,10 @@ export function readDeltaSize(data, offset) {
     let shift = 0;
     let byte;
     do {
-        byte = data[offset++];
+        byte = data[offset];
+        if (byte === undefined)
+            break;
+        offset++;
         size |= (byte & 0x7f) << shift;
         shift += 7;
     } while (byte & 0x80);
@@ -144,24 +161,34 @@ export function parseDeltaInstructions(data) {
     offset = offset2;
     const instructions = [];
     while (offset < data.length) {
-        const cmd = data[offset++];
+        const cmd = data[offset];
+        if (cmd === undefined)
+            break;
+        offset++;
         if (cmd & 0x80) {
             let copyOffset = 0;
             let copySize = 0;
-            if (cmd & 0x01)
-                copyOffset = data[offset++];
-            if (cmd & 0x02)
-                copyOffset |= data[offset++] << 8;
-            if (cmd & 0x04)
-                copyOffset |= data[offset++] << 16;
-            if (cmd & 0x08)
-                copyOffset |= data[offset++] << 24;
-            if (cmd & 0x10)
-                copySize = data[offset++];
-            if (cmd & 0x20)
-                copySize |= data[offset++] << 8;
-            if (cmd & 0x40)
-                copySize |= data[offset++] << 16;
+            if (cmd & 0x01) {
+                copyOffset = data[offset++] ?? 0;
+            }
+            if (cmd & 0x02) {
+                copyOffset |= (data[offset++] ?? 0) << 8;
+            }
+            if (cmd & 0x04) {
+                copyOffset |= (data[offset++] ?? 0) << 16;
+            }
+            if (cmd & 0x08) {
+                copyOffset |= (data[offset++] ?? 0) << 24;
+            }
+            if (cmd & 0x10) {
+                copySize = data[offset++] ?? 0;
+            }
+            if (cmd & 0x20) {
+                copySize |= (data[offset++] ?? 0) << 8;
+            }
+            if (cmd & 0x40) {
+                copySize |= (data[offset++] ?? 0) << 16;
+            }
             if (copySize === 0)
                 copySize = 0x10000;
             instructions.push({

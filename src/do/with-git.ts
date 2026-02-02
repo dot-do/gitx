@@ -224,7 +224,7 @@ export function withGit<TBase extends Constructor>(
     /**
      * Static list of capabilities for introspection.
      */
-    static capabilities = [...((Base as Record<string, unknown>).capabilities as string[] || []), 'git']
+    static capabilities = [...((Base as Record<string, unknown>)['capabilities'] as string[] || []), 'git']
 
     /**
      * Cached GitModule instance (lazy initialized).
@@ -262,8 +262,8 @@ export function withGit<TBase extends Constructor>(
       if (name === 'git') return true
       // Check if parent class has the hasCapability method
       const baseProto = Base.prototype as Record<string, unknown>
-      if (baseProto && typeof baseProto.hasCapability === 'function') {
-        return (baseProto.hasCapability as (name: string) => boolean).call(this, name)
+      if (baseProto && typeof baseProto['hasCapability'] === 'function') {
+        return (baseProto['hasCapability'] as (name: string) => boolean).call(this, name)
       }
       return false
     }
@@ -273,20 +273,19 @@ export function withGit<TBase extends Constructor>(
       super(...args)
 
       // Resolve R2 bucket from env if available
-      const env = (this as Record<string, unknown>).env as Record<string, unknown> | undefined
+      const env = (this as Record<string, unknown>)['env'] as Record<string, unknown> | undefined
       const r2BindingName = options.r2Binding ?? 'R2_BUCKET'
       const r2 = env?.[r2BindingName] as R2BucketLike | undefined
 
       // Get filesystem capability if available from $ context
-      const dollarContext = (this as Record<string, unknown>).$ as Record<string, unknown> | undefined
-      const fs = dollarContext?.fs as FsCapability | undefined
+      const dollarContext = (this as Record<string, unknown>)['$'] as Record<string, unknown> | undefined
+      const fs = dollarContext?.['fs'] as FsCapability | undefined
 
-      // Store resolved options
-      this[GIT_OPTIONS] = {
-        ...options,
-        r2,
-        fs,
-      }
+      // Store resolved options - only include defined values
+      const resolvedOpts: ResolvedGitOptions = { ...options }
+      if (r2 !== undefined) resolvedOpts.r2 = r2
+      if (fs !== undefined) resolvedOpts.fs = fs
+      this[GIT_OPTIONS] = resolvedOpts
 
       // Extend $ context if contextMode is enabled
       if (options.contextMode && dollarContext) {
@@ -294,13 +293,13 @@ export function withGit<TBase extends Constructor>(
         const original$ = dollarContext
 
         // Create a proxy that adds git to the $ context
-        ;(this as Record<string, GitContextValue>).$ = new Proxy(original$ as WithGitContext, {
+        ;(this as unknown as Record<string, GitContextValue>)['$'] = new Proxy(original$ as WithGitContext, {
           get(target, prop: string | symbol) {
             if (prop === 'git') {
               return self.git
             }
             // Forward to original context
-            const value = (target as Record<string | symbol, GitContextValue>)[prop]
+            const value = (target as unknown as Record<string | symbol, GitContextValue>)[prop]
             if (typeof value === 'function') {
               return value.bind(target)
             }
@@ -324,14 +323,15 @@ export function withGit<TBase extends Constructor>(
     private createGitModule(): GitModule {
       const opts = this[GIT_OPTIONS]
 
-      return new GitModule({
-        repo: opts.repo,
-        branch: opts.branch,
-        path: opts.path,
-        r2: opts.r2,
-        fs: opts.fs,
-        objectPrefix: opts.objectPrefix,
-      })
+      // Build options - only include defined values
+      const moduleOpts: GitModuleOptions = { repo: opts.repo }
+      if (opts.branch !== undefined) moduleOpts.branch = opts.branch
+      if (opts.path !== undefined) moduleOpts.path = opts.path
+      if (opts.r2 !== undefined) moduleOpts.r2 = opts.r2
+      if (opts.fs !== undefined) moduleOpts.fs = opts.fs
+      if (opts.objectPrefix !== undefined) moduleOpts.objectPrefix = opts.objectPrefix
+
+      return new GitModule(moduleOpts)
     }
 
     /**
@@ -352,7 +352,7 @@ export function withGit<TBase extends Constructor>(
     async disposeGit(): Promise<void> {
       if (this[GIT_MODULE_CACHE]) {
         await this[GIT_MODULE_CACHE].dispose()
-        this[GIT_MODULE_CACHE] = undefined
+        delete this[GIT_MODULE_CACHE]
         this.gitInitialized = false
       }
     }

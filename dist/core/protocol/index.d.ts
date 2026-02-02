@@ -37,6 +37,10 @@ export declare class CapabilityError extends WireProtocolError {
 export declare class NegotiationError extends WireProtocolError {
     constructor(message: string);
 }
+/** Git wire protocol version (v1 or v2) */
+export type ProtocolVersion = 1 | 2;
+/** Pkt-line input type (string or binary) */
+export type PktLineInput = string | Uint8Array;
 /** Capability value (true for presence, string for key=value) */
 export type CapabilityValue = boolean | string;
 /** Capability map */
@@ -135,6 +139,53 @@ export interface ReceivePackRequest {
     packfile?: Uint8Array;
     pushOptions?: string[];
 }
+/** Receive-pack response status for a single ref */
+export interface RefStatus {
+    ref: string;
+    status: 'ok' | 'ng';
+    message?: string;
+}
+/** Receive-pack response */
+export interface ReceivePackResponse {
+    unpackStatus: 'ok' | string;
+    refStatuses: RefStatus[];
+}
+/** Upload-pack response */
+export interface UploadPackResponse {
+    acks: AckNakResponse[];
+    shallows?: ShallowUpdate[];
+    packData?: Uint8Array;
+    progress?: string[];
+    errors?: string[];
+}
+/** Common capability names as constants */
+export declare const CAPABILITY_NAMES: {
+    readonly MULTI_ACK: "multi_ack";
+    readonly MULTI_ACK_DETAILED: "multi_ack_detailed";
+    readonly THIN_PACK: "thin-pack";
+    readonly SIDE_BAND: "side-band";
+    readonly SIDE_BAND_64K: "side-band-64k";
+    readonly OFS_DELTA: "ofs-delta";
+    readonly SHALLOW: "shallow";
+    readonly DEEPEN_SINCE: "deepen-since";
+    readonly DEEPEN_NOT: "deepen-not";
+    readonly DEEPEN_RELATIVE: "deepen-relative";
+    readonly NO_PROGRESS: "no-progress";
+    readonly INCLUDE_TAG: "include-tag";
+    readonly REPORT_STATUS: "report-status";
+    readonly REPORT_STATUS_V2: "report-status-v2";
+    readonly DELETE_REFS: "delete-refs";
+    readonly QUIET: "quiet";
+    readonly ATOMIC: "atomic";
+    readonly PUSH_OPTIONS: "push-options";
+    readonly ALLOW_TIP_SHA1_IN_WANT: "allow-tip-sha1-in-want";
+    readonly ALLOW_REACHABLE_SHA1_IN_WANT: "allow-reachable-sha1-in-want";
+    readonly FILTER: "filter";
+    readonly AGENT: "agent";
+    readonly OBJECT_FORMAT: "object-format";
+    readonly SYMREF: "symref";
+};
+export { ZERO_SHA } from '../refs';
 /**
  * Encode data as a pkt-line.
  * Returns string when given string, Uint8Array when given Uint8Array.

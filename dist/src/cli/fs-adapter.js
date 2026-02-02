@@ -220,11 +220,13 @@ class FSIndexImpl {
             this.parseIndex(new Uint8Array(data));
         }
         catch (error) {
-            if (error.code === 'ENOENT') {
+            const nodeErr = error;
+            if (nodeErr.code === 'ENOENT') {
                 this.entries = [];
                 return;
             }
-            throw new FSAdapterError(`Failed to read index: ${error.message}`, 'CORRUPT_INDEX', indexPath);
+            const message = error instanceof Error ? error.message : String(error);
+            throw new FSAdapterError(`Failed to read index: ${message}`, 'CORRUPT_INDEX', indexPath);
         }
     }
     parseIndex(data) {
@@ -517,7 +519,8 @@ class FSPackReaderImpl {
             return index;
         }
         catch (error) {
-            throw new FSAdapterError(`Failed to read pack index: ${error.message}`, 'CORRUPT_PACK', idxPath);
+            const message = error instanceof Error ? error.message : String(error);
+            throw new FSAdapterError(`Failed to read pack index: ${message}`, 'CORRUPT_PACK', idxPath);
         }
     }
     async getPackObjects(packName) {
@@ -531,7 +534,8 @@ class FSPackReaderImpl {
         }
         catch (error) {
             // Return empty array if pack doesn't exist
-            if (error.message?.includes('ENOENT')) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message.includes('ENOENT')) {
                 return [];
             }
             throw error;
@@ -777,12 +781,14 @@ class FSAdapterImpl {
         catch (error) {
             if (error instanceof FSAdapterError)
                 throw error;
-            if (error.code === 'ENOENT')
+            const nodeErr = error;
+            if (nodeErr.code === 'ENOENT')
                 return null;
-            if (error.code === 'EACCES' || error.code === 'EPERM') {
+            if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {
                 throw new FSAdapterError(`Permission denied reading object: ${sha}`, 'READ_ERROR', objPath);
             }
-            throw new FSAdapterError(`Failed to read object ${sha}: ${error.message}`, 'CORRUPT_OBJECT', objPath);
+            const message = error instanceof Error ? error.message : String(error);
+            throw new FSAdapterError(`Failed to read object ${sha}: ${message}`, 'CORRUPT_OBJECT', objPath);
         }
     }
     async hasObject(sha) {

@@ -802,8 +802,9 @@ export function defaultSizeCalculator(value) {
             const json = JSON.stringify(value);
             return json.length * 2;
         }
-        catch {
-            // If serialization fails, return a default size
+        catch (error) {
+            // If serialization fails (circular refs, etc), return a default size
+            console.debug('[LRUCache] estimateSizeInBytes: JSON serialization failed, using default size:', error instanceof Error ? error.message : String(error));
             return 64;
         }
     }

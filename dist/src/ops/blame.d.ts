@@ -254,7 +254,7 @@ export interface BlameResult {
     /** Map of commit SHA to commit information */
     commits: Map<string, BlameCommitInfo>;
     /** Options used for this blame operation */
-    options?: BlameOptions;
+    options?: BlameOptions | undefined;
 }
 /**
  * Options for formatting blame output.

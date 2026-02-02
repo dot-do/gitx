@@ -37,6 +37,7 @@
  *
  * @module ops/merge-base
  */
+import { assertValidSha } from '../types/objects';
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -169,6 +170,10 @@ async function filterToMaximalAncestors(provider, commonAncestors) {
  * ```
  */
 export async function findMergeBase(provider, commits, options = {}) {
+    // Validate all commit SHAs
+    for (const sha of commits) {
+        assertValidSha(sha, 'commit');
+    }
     // Handle edge cases
     if (commits.length === 0) {
         return {
@@ -318,6 +323,14 @@ export async function findAllMergeBases(provider, commit1, commit2) {
  * ```
  */
 export async function findForkPoint(provider, ref, baseRef, reflog) {
+    assertValidSha(ref, 'ref');
+    assertValidSha(baseRef, 'base ref');
+    // Validate reflog SHAs if provided
+    if (reflog) {
+        for (const sha of reflog) {
+            assertValidSha(sha, 'reflog entry');
+        }
+    }
     // If reflog is provided, use it for better detection
     if (reflog && reflog.length > 0) {
         // Get ancestors of ref
@@ -400,6 +413,8 @@ export async function findForkPoint(provider, ref, baseRef, reflog) {
  * ```
  */
 export async function isAncestor(provider, potentialAncestor, commit) {
+    assertValidSha(potentialAncestor, 'potential ancestor');
+    assertValidSha(commit, 'commit');
     // Same commit is considered its own ancestor
     if (potentialAncestor === commit) {
         return true;
@@ -438,6 +453,8 @@ export async function isAncestor(provider, potentialAncestor, commit) {
  * ```
  */
 export async function checkAncestor(provider, potentialAncestor, commit) {
+    assertValidSha(potentialAncestor, 'potential ancestor');
+    assertValidSha(commit, 'commit');
     // Same commit
     if (potentialAncestor === commit) {
         return {

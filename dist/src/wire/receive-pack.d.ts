@@ -23,6 +23,23 @@
  * - Validates ref names according to Git rules
  * - Supports pre-receive, update, and post-receive hooks
  *
+ * ## Hook System
+ *
+ * This module provides two hook APIs:
+ *
+ * ### Simple Hook Functions (backward compatible)
+ * - `executePreReceiveHook()` - Run a single pre-receive hook
+ * - `executeUpdateHook()` - Run update hooks per-ref
+ * - `executePostReceiveHook()` - Run a single post-receive hook
+ * - `executePostUpdateHook()` - Run a single post-update hook
+ *
+ * ### Advanced Hook System (via `./hooks` module)
+ * - `HookRegistry` - Register multiple hooks with priorities
+ * - `HookExecutor` - Execute hooks with streaming output
+ * - Webhook support with HTTP POST, HMAC signatures, and retry logic
+ * - Async/parallel hook execution
+ * - Hook priority ordering
+ *
  * @see {@link https://git-scm.com/docs/pack-protocol} Git Pack Protocol
  * @see {@link https://git-scm.com/docs/git-receive-pack} git-receive-pack Documentation
  *
@@ -41,8 +58,47 @@
  * // Handle push request
  * const response = await handleReceivePack(session, requestBody, store)
  * ```
+ *
+ * @example Advanced hooks with webhooks and priorities
+ * ```typescript
+ * import {
+ *   HookRegistry,
+ *   HookExecutor,
+ *   createPreReceiveHook,
+ *   createWebhook,
+ * } from './wire/receive-pack'
+ *
+ * const registry = new HookRegistry()
+ *
+ * // Add policy check hook (runs first)
+ * registry.register(createPreReceiveHook({
+ *   id: 'policy-check',
+ *   priority: 10,
+ *   handler: async (commands, env) => {
+ *     // Validate commands against policy
+ *     return { success: true }
+ *   }
+ * }))
+ *
+ * // Add CI webhook (runs after policy)
+ * registry.register(createWebhook({
+ *   id: 'ci-trigger',
+ *   point: 'post-receive',
+ *   priority: 100,
+ *   url: 'https://ci.example.com/hooks/git',
+ *   secret: 'webhook-secret',
+ *   retry: { attempts: 3, delay: 1000 }
+ * }))
+ *
+ * const executor = new HookExecutor(registry)
+ * const result = await executor.executePreReceive(commands, env, {
+ *   mode: 'sync',
+ *   onOutput: (output) => console.log(`Hook ${output.hookId}: ${output.message}`)
+ * })
+ * ```
  */
 import type { ObjectType } from '../types/objects';
+export * from './hooks';
 /**
  * Zero SHA - used for ref creation and deletion.
  *
@@ -277,9 +333,31 @@ export interface ReceivePackSession {
  * receive-pack operations. Implementations typically wrap a Git
  * object database or similar storage.
  *
+ * This interface shares `getObject` and `hasObject` with the canonical
+ * {@link import('../types/storage').BasicObjectStore BasicObjectStore},
+ * but differs in important ways:
+ *
+ * - `storeObject(sha, type, data)` takes the SHA as a parameter (the caller
+ *   computes it during packfile unpacking), whereas the canonical
+ *   `BasicObjectStore.storeObject(type, data)` computes and returns the SHA.
+ * - `getRef` returns a `Ref` object (with `name`, `sha`, `peeled?`) rather
+ *   than a plain `string | null`.
+ * - `deleteRef` returns `void` rather than `boolean`.
+ * - Adds wire-protocol-specific methods: `getCommitParents`, `getRefs`,
+ *   `isAncestor`, and the optional `compareAndSwapRef`.
+ *
+ * Because of these signature differences, this interface cannot directly
+ * extend BasicObjectStore. However, any object that implements
+ * ReceivePackObjectStore is structurally compatible with BasicObjectStore
+ * for its `getObject` and `hasObject` methods.
+ *
+ * @see {@link import('../types/storage').BasicObjectStore} for the canonical minimal store
+ * @see {@link import('../types/storage').ObjectStore} for the canonical full-featured store
+ * @see {@link import('./upload-pack').UploadPackObjectStore} for the upload-pack counterpart
+ *
  * @example
  * ```typescript
- * class MyObjectStore implements ObjectStore {
+ * class MyObjectStore implements ReceivePackObjectStore {
  *   async getObject(sha: string) {
  *     return this.database.get(sha)
  *   }
@@ -293,7 +371,7 @@ export interface ReceivePackSession {
  * }
  * ```
  */
-export interface ObjectStore {
+export interface ReceivePackObjectStore {
     /**
      * Get an object by its SHA.
      * @param sha - The SHA-1 hash of the object
@@ -351,6 +429,22 @@ export interface ObjectStore {
      * @returns true if ancestor is reachable from descendant
      */
     isAncestor(ancestor: string, descendant: string): Promise<boolean>;
+    /**
+     * Atomically update a ref using compare-and-swap semantics.
+     *
+     * Reads the current ref value and only writes the new value if the
+     * current value matches `expectedOldTarget`. This prevents lost updates
+     * from concurrent pushes.
+     *
+     * @param name - Full ref name (e.g., 'refs/heads/main')
+     * @param expectedOldTarget - Expected current value:
+     *   - A 40-char SHA means "ref must currently point to this SHA"
+     *   - `null` means "ref must not exist" (create-only)
+     *   - Empty string or ZERO_SHA means "ref must not exist"
+     * @param newTarget - New SHA to set the ref to
+     * @returns `true` if the swap succeeded, `false` if the current value didn't match
+     */
+    compareAndSwapRef?(name: string, expectedOldTarget: string | null, newTarget: string): Promise<boolean>;
 }
 /**
  * Parsed receive-pack request.
@@ -479,6 +573,41 @@ export interface UnpackOptions {
     resolveDelta?: boolean;
     /** Progress callback */
     onProgress?: (message: string) => void;
+    /** Use quarantine area for unpacking (isolates objects until validation passes) */
+    useQuarantine?: boolean;
+}
+/**
+ * Quarantine environment for packfile unpacking.
+ *
+ * @description
+ * Provides an isolated environment for unpacking objects before they're
+ * committed to the main object store. This allows validation to fail
+ * without polluting the repository with partial data.
+ *
+ * @example
+ * ```typescript
+ * const quarantine = createQuarantine('push-123')
+ * try {
+ *   await unpackObjects(packfile, quarantine.store, { useQuarantine: true })
+ *   // Validate objects...
+ *   await quarantine.commit(mainStore)
+ * } catch (e) {
+ *   await quarantine.abort()
+ *   throw e
+ * }
+ * ```
+ */
+export interface QuarantineEnvironment {
+    /** Unique quarantine ID */
+    id: string;
+    /** Isolated object store for quarantined objects */
+    store: ReceivePackObjectStore;
+    /** Commit quarantined objects to main store */
+    commit: (mainStore: ReceivePackObjectStore) => Promise<void>;
+    /** Abort and clean up quarantined objects */
+    abort: () => Promise<void>;
+    /** Get list of quarantined object SHAs */
+    getObjectShas: () => string[];
 }
 /**
  * Hook options.
@@ -580,7 +709,7 @@ export declare function createReceiveSession(repoId: string): ReceivePackSession
  * // Send as response to GET /info/refs?service=git-receive-pack
  * ```
  */
-export declare function advertiseReceiveRefs(store: ObjectStore, capabilities?: ReceivePackCapabilities): Promise<string>;
+export declare function advertiseReceiveRefs(store: ReceivePackObjectStore, capabilities?: ReceivePackCapabilities): Promise<string>;
 /**
  * Parse a single command line.
  *
@@ -682,7 +811,89 @@ export declare function validatePackfile(packfile: Uint8Array, options?: Packfil
  * }
  * ```
  */
-export declare function unpackObjects(packfile: Uint8Array, _store: ObjectStore, options?: UnpackOptions): Promise<UnpackResult>;
+export declare function unpackObjects(packfile: Uint8Array, _store: ReceivePackObjectStore, options?: UnpackOptions): Promise<UnpackResult>;
+/**
+ * Create a quarantine environment for isolated packfile unpacking.
+ *
+ * @description
+ * Creates an isolated environment for unpacking objects before committing
+ * them to the main object store. This follows Git's quarantine pattern
+ * which prevents partial or malicious data from polluting the repository
+ * if validation fails.
+ *
+ * The quarantine environment:
+ * - Maintains objects in an isolated store
+ * - Falls back to the main store for reading existing objects (deltas)
+ * - Can commit all quarantined objects atomically on success
+ * - Cleans up on abort without affecting the main store
+ *
+ * @param mainStore - The main object store (for reading existing objects)
+ * @param quarantineId - Optional unique ID for this quarantine session
+ * @returns A quarantine environment
+ *
+ * @example
+ * ```typescript
+ * const quarantine = createQuarantine(mainStore, 'push-abc123')
+ *
+ * try {
+ *   // Unpack to quarantine store
+ *   const result = await unpackObjects(packfile, quarantine.store)
+ *   if (!result.success) throw new Error(result.error)
+ *
+ *   // Validate objects in quarantine
+ *   for (const sha of quarantine.getObjectShas()) {
+ *     await validateObject(sha, quarantine.store)
+ *   }
+ *
+ *   // Success - commit to main store
+ *   await quarantine.commit(mainStore)
+ * } catch (e) {
+ *   // Failure - clean up quarantine
+ *   await quarantine.abort()
+ *   throw e
+ * }
+ * ```
+ */
+export declare function createQuarantine(mainStore: ReceivePackObjectStore, quarantineId?: string): QuarantineEnvironment;
+/**
+ * Unpack options with quarantine support.
+ */
+export interface UnpackWithQuarantineOptions extends UnpackOptions {
+    /** Session ID for quarantine (for logging/debugging) */
+    sessionId?: string;
+}
+/**
+ * Unpack packfile with quarantine support.
+ *
+ * @description
+ * High-level helper that unpacks a packfile using the quarantine pattern.
+ * Objects are first unpacked to an isolated quarantine environment, then
+ * committed to the main store only if unpacking succeeds.
+ *
+ * This is the recommended way to unpack pushes as it prevents partial
+ * or corrupt data from being committed to the repository.
+ *
+ * @param packfile - Packfile binary data
+ * @param store - Main object store
+ * @param options - Unpack options
+ * @returns Unpack result
+ *
+ * @example
+ * ```typescript
+ * // Safe unpacking with automatic quarantine
+ * const result = await unpackWithQuarantine(packfile, store, {
+ *   sessionId: 'push-123',
+ *   onProgress: (msg) => console.log(msg)
+ * })
+ *
+ * if (result.success) {
+ *   console.log(`Unpacked ${result.objectsUnpacked} objects`)
+ * } else {
+ *   console.error(`Unpack failed: ${result.error}`)
+ * }
+ * ```
+ */
+export declare function unpackWithQuarantine(packfile: Uint8Array, store: ReceivePackObjectStore, options?: UnpackWithQuarantineOptions): Promise<UnpackResult>;
 /**
  * Validate ref name according to git rules.
  *
@@ -742,7 +953,7 @@ export declare function validateRefName(refName: string): boolean;
  * const create = await validateFastForward(ZERO_SHA, sha, store)  // true
  * ```
  */
-export declare function validateFastForward(oldSha: string, newSha: string, store: ObjectStore): Promise<boolean>;
+export declare function validateFastForward(oldSha: string, newSha: string, store: ReceivePackObjectStore): Promise<boolean>;
 /**
  * Check ref permissions.
  *
@@ -796,7 +1007,7 @@ export declare function checkRefPermissions(refName: string, operation: 'create'
  * }
  * ```
  */
-export declare function processCommands(session: ReceivePackSession, commands: RefUpdateCommand[], store: ObjectStore, options?: ProcessCommandsOptions): Promise<ProcessCommandsResult>;
+export declare function processCommands(session: ReceivePackSession, commands: RefUpdateCommand[], store: ReceivePackObjectStore, options?: ProcessCommandsOptions): Promise<ProcessCommandsResult>;
 /**
  * Update refs in the store.
  *
@@ -813,7 +1024,7 @@ export declare function processCommands(session: ReceivePackSession, commands: R
  * await updateRefs(commands, store)
  * ```
  */
-export declare function updateRefs(commands: RefUpdateCommand[], store: ObjectStore): Promise<void>;
+export declare function updateRefs(commands: RefUpdateCommand[], store: ReceivePackObjectStore): Promise<void>;
 /**
  * Atomic ref update - all or nothing.
  *
@@ -835,10 +1046,52 @@ export declare function updateRefs(commands: RefUpdateCommand[], store: ObjectSt
  * }
  * ```
  */
-export declare function atomicRefUpdate(commands: RefUpdateCommand[], store: ObjectStore): Promise<AtomicRefUpdateResult>;
+export declare function atomicRefUpdate(commands: RefUpdateCommand[], store: ReceivePackObjectStore): Promise<AtomicRefUpdateResult>;
+/**
+ * Pre-receive hook function signature.
+ *
+ * Called before any refs are updated. Can reject the entire push by
+ * returning `{ success: false }`.
+ *
+ * @param commands - Array of ref update commands to be executed
+ * @param env - Environment variables (e.g., GIT_PUSH_OPTION_*)
+ * @returns Hook result indicating success or failure
+ */
 type PreReceiveHookFn = (commands: RefUpdateCommand[], env: Record<string, string>) => Promise<HookResult>;
+/**
+ * Update hook function signature.
+ *
+ * Called once for each ref being updated. Can reject individual refs
+ * by returning `{ success: false }`.
+ *
+ * @param refName - Full ref name being updated (e.g., 'refs/heads/main')
+ * @param oldSha - Current SHA of the ref (ZERO_SHA for new refs)
+ * @param newSha - New SHA for the ref (ZERO_SHA for deletions)
+ * @param env - Environment variables
+ * @returns Hook result indicating success or failure
+ */
 type UpdateHookFn = (refName: string, oldSha: string, newSha: string, env: Record<string, string>) => Promise<HookResult>;
+/**
+ * Post-receive hook function signature.
+ *
+ * Called after all refs have been updated. Cannot affect the push result
+ * but useful for notifications, CI triggers, etc.
+ *
+ * @param commands - Array of ref update commands that were executed
+ * @param results - Results for each ref update
+ * @param env - Environment variables (includes GIT_PUSH_OPTION_* if enabled)
+ * @returns Hook result (failure does not affect push success)
+ */
 type PostReceiveHookFn = (commands: RefUpdateCommand[], results: RefUpdateResult[], env: Record<string, string>) => Promise<HookResult>;
+/**
+ * Post-update hook function signature.
+ *
+ * Simplified version of post-receive that only receives ref names.
+ * Called after refs are updated.
+ *
+ * @param refNames - Array of successfully updated ref names
+ * @returns Hook result
+ */
 type PostUpdateHookFn = (refNames: string[]) => Promise<HookResult>;
 /**
  * Execute pre-receive hook.
@@ -868,7 +1121,7 @@ type PostUpdateHookFn = (refNames: string[]) => Promise<HookResult>;
  * )
  * ```
  */
-export declare function executePreReceiveHook(commands: RefUpdateCommand[], _store: ObjectStore, hookFn: PreReceiveHookFn, env?: Record<string, string>, options?: HookOptions): Promise<HookResult>;
+export declare function executePreReceiveHook(commands: RefUpdateCommand[], _store: ReceivePackObjectStore, hookFn: PreReceiveHookFn, env?: Record<string, string>, options?: HookOptions): Promise<HookResult>;
 /**
  * Execute update hook for each ref.
  *
@@ -895,7 +1148,7 @@ export declare function executePreReceiveHook(commands: RefUpdateCommand[], _sto
  * )
  * ```
  */
-export declare function executeUpdateHook(commands: RefUpdateCommand[], _store: ObjectStore, hookFn: UpdateHookFn, env?: Record<string, string>): Promise<{
+export declare function executeUpdateHook(commands: RefUpdateCommand[], _store: ReceivePackObjectStore, hookFn: UpdateHookFn, env?: Record<string, string>): Promise<{
     results: RefUpdateResult[];
 }>;
 /**
@@ -927,7 +1180,7 @@ export declare function executeUpdateHook(commands: RefUpdateCommand[], _store: 
  * )
  * ```
  */
-export declare function executePostReceiveHook(commands: RefUpdateCommand[], results: RefUpdateResult[], _store: ObjectStore, hookFn: PostReceiveHookFn, options?: HookOptions): Promise<{
+export declare function executePostReceiveHook(commands: RefUpdateCommand[], results: RefUpdateResult[], _store: ReceivePackObjectStore, hookFn: PostReceiveHookFn, options?: HookOptions): Promise<{
     pushSuccess: boolean;
     hookSuccess: boolean;
 }>;
@@ -1054,6 +1307,5 @@ export declare function rejectPush(refName: string, reason: string, options: {
  * // response contains status report if report-status was enabled
  * ```
  */
-export declare function handleReceivePack(session: ReceivePackSession, request: Uint8Array, store: ObjectStore): Promise<Uint8Array>;
-export {};
+export declare function handleReceivePack(session: ReceivePackSession, request: Uint8Array, store: ReceivePackObjectStore): Promise<Uint8Array>;
 //# sourceMappingURL=receive-pack.d.ts.map

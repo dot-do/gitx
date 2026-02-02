@@ -102,7 +102,7 @@ export interface FullPackOptions {
     /** Zlib compression level 0-9 (default: 6) */
     compressionLevel?: number;
     /** Object ordering strategy to use */
-    orderingStrategy?: PackOrderingStrategy;
+    orderingStrategy?: PackOrderingStrategy | undefined;
 }
 /**
  * Result of full pack generation.
@@ -155,7 +155,7 @@ export interface PackGenerationProgress {
     /** Bytes written to output so far */
     bytesWritten: number;
     /** SHA of currently processing object (if applicable) */
-    currentObject?: string;
+    currentObject?: string | undefined;
 }
 /**
  * Configuration for delta chain optimization.
@@ -260,7 +260,7 @@ export interface LargeRepoConfig {
  */
 export interface IncrementalUpdateOptions {
     generateThinPack?: boolean;
-    externalBases?: Set<string>;
+    externalBases?: Set<string> | undefined;
     reuseDeltas?: boolean;
     reoptimizeDeltas?: boolean;
 }
@@ -569,7 +569,7 @@ export declare class LargeRepositoryHandler {
  */
 export declare class StreamingPackWriter {
     private chunkCallback?;
-    private outputStream?;
+    private outputStream;
     private chunks;
     private objectCount;
     private expectedCount;

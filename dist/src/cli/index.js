@@ -136,7 +136,7 @@ export class CLI {
     async run(args, options = {}) {
         const parsed = parseArgs(args);
         // Check for help flag
-        if (parsed.options.help || parsed.options.h) {
+        if (parsed.options['help'] || parsed.options['h']) {
             // If there's a registered handler, let it handle its own help
             if (parsed.command && this.handlers.has(parsed.command)) {
                 // Pass through to handler - it will handle --help itself
@@ -152,12 +152,12 @@ export class CLI {
         }
         // Check for version flag (only when no command is specified)
         // When a command is present, -v should be interpreted as verbose for that command
-        if (!parsed.command && (parsed.options.version || parsed.options.v)) {
+        if (!parsed.command && (parsed.options['version'] || parsed.options['v'])) {
             this.stdout(`${this.name} ${this.version}`);
             return { exitCode: 0 };
         }
         // For --version flag without command
-        if (!parsed.command && parsed.options.version) {
+        if (!parsed.command && parsed.options['version']) {
             this.stdout(`${this.name} ${this.version}`);
             return { exitCode: 0 };
         }
@@ -330,20 +330,27 @@ function levenshteinDistance(a, b) {
     for (let i = 0; i <= b.length; i++) {
         matrix[i] = [i];
     }
-    for (let j = 0; j <= a.length; j++) {
-        matrix[0][j] = j;
+    const row0 = matrix[0];
+    if (row0) {
+        for (let j = 0; j <= a.length; j++) {
+            row0[j] = j;
+        }
     }
     for (let i = 1; i <= b.length; i++) {
         for (let j = 1; j <= a.length; j++) {
+            const currentRow = matrix[i];
+            const prevRow = matrix[i - 1];
+            if (!currentRow || !prevRow)
+                continue;
             if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                matrix[i][j] = matrix[i - 1][j - 1];
+                currentRow[j] = prevRow[j - 1] ?? 0;
             }
             else {
-                matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+                currentRow[j] = Math.min((prevRow[j - 1] ?? 0) + 1, (currentRow[j - 1] ?? 0) + 1, (prevRow[j] ?? 0) + 1);
             }
         }
     }
-    return matrix[b.length][a.length];
+    return matrix[b.length]?.[a.length] ?? Infinity;
 }
 // ============================================================================
 // Exported Functions
@@ -510,11 +517,11 @@ export function parseArgs(args) {
     }
     // Handle --cwd option
     let cwd = process.cwd();
-    if (parsed.options.cwd) {
-        cwd = resolve(process.cwd(), parsed.options.cwd);
+    if (parsed.options['cwd']) {
+        cwd = resolve(process.cwd(), parsed.options['cwd']);
     }
-    else if (parsed.options.C) {
-        cwd = resolve(process.cwd(), parsed.options.C);
+    else if (parsed.options['C']) {
+        cwd = resolve(process.cwd(), parsed.options['C']);
     }
     // Get rawArgs from cac's '--' key
     if (parsed.options['--'] && Array.isArray(parsed.options['--'])) {
@@ -524,17 +531,17 @@ export function parseArgs(args) {
     const options = { ...parsed.options };
     delete options['--'];
     // Convert numeric options (only if they look like numbers)
-    if (options.n !== undefined && typeof options.n === 'string') {
-        const parsed = parseInt(options.n, 10);
+    if (options['n'] !== undefined && typeof options['n'] === 'string') {
+        const parsedN = parseInt(options['n'], 10);
         // Only convert if it's a valid number (for log command)
         // For add command, -n file.txt should keep 'file.txt' as string
-        if (!isNaN(parsed)) {
-            options.n = parsed;
+        if (!isNaN(parsedN)) {
+            options['n'] = parsedN;
         }
         // Otherwise keep as string for add command to handle
     }
-    if (options.port !== undefined && typeof options.port === 'string') {
-        options.port = parseInt(options.port, 10);
+    if (options['port'] !== undefined && typeof options['port'] === 'string') {
+        options['port'] = parseInt(options['port'], 10);
     }
     return {
         command,

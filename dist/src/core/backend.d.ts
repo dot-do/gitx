@@ -239,6 +239,48 @@ export interface MemoryBackend extends GitBackend {
      * Resets the backend to a clean state. Useful for test isolation.
      */
     clear(): void;
+    /**
+     * Read a pack file by name.
+     *
+     * @param name - Name of the pack file
+     * @returns Pack data or null if not found
+     */
+    readPack(name: string): Promise<Uint8Array | null>;
+    /**
+     * List all pack files.
+     *
+     * @returns Array of pack file names
+     */
+    listPacks(): Promise<string[]>;
+    /**
+     * Write a symbolic reference.
+     *
+     * @param name - Symbolic ref name (e.g., 'HEAD')
+     * @param target - Target ref name (e.g., 'refs/heads/main')
+     */
+    writeSymbolicRef(name: string, target: string): Promise<void>;
+    /**
+     * Read a symbolic reference.
+     *
+     * @param name - Symbolic ref name
+     * @returns Target ref name or null if not found
+     */
+    readSymbolicRef(name: string): Promise<string | null>;
+    /**
+     * Compare and swap a reference atomically.
+     *
+     * @param name - Ref name
+     * @param expectedSha - Expected current value (null for new refs)
+     * @param newSha - New value to set
+     * @returns True if successful, false if current value didn't match
+     */
+    compareAndSwapRef(name: string, expectedSha: string | null, newSha: string): Promise<boolean>;
+    /**
+     * Delete an object from storage.
+     *
+     * @param sha - SHA of object to delete
+     */
+    deleteObject(sha: string): Promise<void>;
 }
 /**
  * Create a memory-backed GitBackend for testing.

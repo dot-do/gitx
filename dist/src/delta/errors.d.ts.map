@@ -1,0 +1,1 @@
+{"version":3,"file":"errors.d.ts","sourceRoot":"","sources":["../../../src/delta/errors.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAEH,qBAAa,UAAW,SAAQ,KAAK;gBACvB,OAAO,EAAE,MAAM;CAI5B;AAED,qBAAa,iBAAkB,SAAQ,UAAU;aAE7B,OAAO,EAAE,MAAM;aACf,UAAU,EAAE,MAAM;gBADlB,OAAO,EAAE,MAAM,EACf,UAAU,EAAE,MAAM;CAKrC"}

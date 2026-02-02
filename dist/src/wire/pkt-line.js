@@ -52,6 +52,39 @@
  * }
  * ```
  */
+// ============================================================================
+// Protocol Constants
+// ============================================================================
+/**
+ * Length prefix size in bytes.
+ *
+ * @description
+ * Every pkt-line starts with a 4-character hexadecimal length prefix
+ * that indicates the total packet size (including the prefix itself).
+ */
+export const PKT_LINE_LENGTH_SIZE = 4;
+/**
+ * Maximum total packet size in bytes.
+ *
+ * @description
+ * The maximum size of a complete pkt-line packet (prefix + data) is 65520 bytes.
+ * This limit is defined by the Git protocol specification.
+ */
+export const MAX_PKT_LINE_SIZE = 65520;
+/**
+ * Maximum pkt-line data size in bytes.
+ *
+ * @description
+ * The maximum data that can be included in a single pkt-line is 65516 bytes.
+ * This is calculated as: MAX_PKT_LINE_SIZE (65520) - PKT_LINE_LENGTH_SIZE (4) = 65516.
+ *
+ * Attempting to encode data larger than this will result in an error
+ * or require splitting into multiple packets.
+ */
+export const MAX_PKT_LINE_DATA = MAX_PKT_LINE_SIZE - PKT_LINE_LENGTH_SIZE;
+// ============================================================================
+// Special Packets
+// ============================================================================
 /**
  * Flush packet - indicates end of a message section.
  *
@@ -92,16 +125,25 @@ export const FLUSH_PKT = '0000';
  */
 export const DELIM_PKT = '0001';
 /**
- * Maximum pkt-line data size in bytes.
+ * Response-end packet - used in protocol v2.
  *
  * @description
- * The maximum data that can be included in a single pkt-line is 65516 bytes.
- * This is calculated as: 65520 (max packet) - 4 (length prefix) = 65516.
+ * The response-end packet `0002` is used in Git protocol v2 to indicate
+ * the end of a response in stateless connections. It signals that no
+ * more data will follow for this response.
  *
- * Attempting to encode data larger than this will result in an error
- * or require splitting into multiple packets.
+ * @example
+ * ```typescript
+ * // Protocol v2 response ending
+ * let response = encodePktLine('acknowledgments\n')
+ * response += encodePktLine('ACK abc123\n')
+ * response += RESPONSE_END_PKT  // End of response
+ * ```
  */
-export const MAX_PKT_LINE_DATA = 65516;
+export const RESPONSE_END_PKT = '0002';
+// ============================================================================
+// Encoding Functions
+// ============================================================================
 /**
  * Encode data into pkt-line format.
  *
@@ -141,28 +183,35 @@ export const MAX_PKT_LINE_DATA = 65516;
  * ```
  */
 export function encodePktLine(data) {
+    // Validate data size before processing
+    if (data.length > MAX_PKT_LINE_DATA) {
+        throw new Error(`Data too large: ${data.length} bytes exceeds maximum ${MAX_PKT_LINE_DATA}`);
+    }
     if (typeof data === 'string') {
         // String encoding - simple case
-        const length = 4 + data.length;
-        const hexLength = length.toString(16).padStart(4, '0');
+        const length = PKT_LINE_LENGTH_SIZE + data.length;
+        const hexLength = length.toString(16).padStart(PKT_LINE_LENGTH_SIZE, '0');
         return hexLength + data;
     }
     // Uint8Array encoding
-    const length = 4 + data.length;
-    const hexLength = length.toString(16).padStart(4, '0');
-    // Check if data contains only printable ASCII
+    const length = PKT_LINE_LENGTH_SIZE + data.length;
+    const hexLength = length.toString(16).padStart(PKT_LINE_LENGTH_SIZE, '0');
+    // Check if data contains only printable ASCII (including newline and carriage return)
     const isPrintable = data.every(byte => byte >= 0x20 && byte <= 0x7e || byte === 0x0a || byte === 0x0d);
     if (isPrintable) {
         // Return as string for printable content
         return hexLength + new TextDecoder().decode(data);
     }
     // Return as Uint8Array for binary content
-    const result = new Uint8Array(4 + data.length);
+    const result = new Uint8Array(PKT_LINE_LENGTH_SIZE + data.length);
     const encoder = new TextEncoder();
     result.set(encoder.encode(hexLength), 0);
-    result.set(data, 4);
+    result.set(data, PKT_LINE_LENGTH_SIZE);
     return result;
 }
+// ============================================================================
+// Decoding Functions
+// ============================================================================
 /**
  * Decode a pkt-line format message.
  *
@@ -177,7 +226,7 @@ export function encodePktLine(data) {
  * @param input - The input to decode (string or Uint8Array)
  * @returns Object with decoded data, packet type (if special), and bytes consumed
  *
- * @throws {Error} If packet size exceeds MAX_PKT_LINE_DATA + 4
+ * @throws {Error} If packet size exceeds MAX_PKT_LINE_SIZE (65520 bytes)
  *
  * @example Decoding a data packet
  * ```typescript
@@ -212,35 +261,50 @@ export function decodePktLine(input) {
     else {
         str = new TextDecoder().decode(input);
     }
-    // Need at least 4 bytes for length prefix
-    if (str.length < 4) {
+    // Need at least PKT_LINE_LENGTH_SIZE bytes for length prefix
+    if (str.length < PKT_LINE_LENGTH_SIZE) {
         return { data: null, type: 'incomplete', bytesRead: 0 };
     }
-    const hexLength = str.slice(0, 4);
+    const hexLength = str.slice(0, PKT_LINE_LENGTH_SIZE);
     // Check for special packets
-    if (hexLength === '0000') {
-        return { data: null, type: 'flush', bytesRead: 4 };
+    if (hexLength === FLUSH_PKT) {
+        return { data: null, type: 'flush', bytesRead: PKT_LINE_LENGTH_SIZE };
     }
-    if (hexLength === '0001') {
-        return { data: null, type: 'delim', bytesRead: 4 };
+    if (hexLength === DELIM_PKT) {
+        return { data: null, type: 'delim', bytesRead: PKT_LINE_LENGTH_SIZE };
     }
-    // Parse the length
+    if (hexLength === RESPONSE_END_PKT) {
+        return { data: null, type: 'flush', bytesRead: PKT_LINE_LENGTH_SIZE };
+    }
+    // Validate hex length contains only valid hex characters before parsing
+    // This prevents unexpected behavior from parseInt with invalid input
+    if (!/^[0-9a-fA-F]{4}$/.test(hexLength)) {
+        throw new Error(`Invalid pkt-line length prefix: ${JSON.stringify(hexLength)}`);
+    }
+    // Parse the length - early validation of packet size
     const length = parseInt(hexLength, 16);
-    if (isNaN(length) || length < 4) {
-        return { data: null, type: 'incomplete', bytesRead: 0 };
+    // SECURITY: Reject invalid lengths immediately.
+    // Values 1-3 are not valid data packet lengths (0 is flush, 1 is delim, 2 is response-end,
+    // and 3 cannot encode any data since the prefix alone is 4 bytes).
+    if (length > 0 && length < PKT_LINE_LENGTH_SIZE) {
+        throw new Error(`Invalid pkt-line length: ${length} (must be 0 or >= ${PKT_LINE_LENGTH_SIZE})`);
     }
-    // Validate packet size to prevent DoS attacks
-    if (length > MAX_PKT_LINE_DATA + 4) {
-        throw new Error(`Packet too large: ${length} bytes exceeds maximum ${MAX_PKT_LINE_DATA + 4}`);
+    // SECURITY: Validate packet size immediately after parsing to prevent DoS attacks
+    // This check must happen BEFORE any data processing to reject oversized packets early
+    if (length > MAX_PKT_LINE_SIZE) {
+        throw new Error(`Packet too large: ${length} bytes exceeds maximum ${MAX_PKT_LINE_SIZE}`);
     }
     // Check if we have enough data
     if (str.length < length) {
         return { data: null, type: 'incomplete', bytesRead: 0 };
     }
-    // Extract data (length includes the 4-byte prefix)
-    const data = str.slice(4, length);
+    // Extract data (length includes the prefix)
+    const data = str.slice(PKT_LINE_LENGTH_SIZE, length);
     return { data, bytesRead: length };
 }
+// ============================================================================
+// Special Packet Encoding Helpers
+// ============================================================================
 /**
  * Create a flush-pkt (0000).
  *
@@ -286,6 +350,29 @@ export function encodeFlushPkt() {
 export function encodeDelimPkt() {
     return DELIM_PKT;
 }
+/**
+ * Create a response-end-pkt (0002).
+ *
+ * @description
+ * Returns the response-end packet constant. The response-end packet is used
+ * in Git protocol v2 to indicate the end of a response in stateless connections.
+ *
+ * @returns The response-end packet string '0002'
+ *
+ * @example
+ * ```typescript
+ * // Protocol v2 response ending
+ * let response = encodePktLine('acknowledgments\n')
+ * response += encodePktLine('ACK abc123\n')
+ * response += encodeResponseEndPkt()  // End of response
+ * ```
+ */
+export function encodeResponseEndPkt() {
+    return RESPONSE_END_PKT;
+}
+// ============================================================================
+// Stream Parsing
+// ============================================================================
 /**
  * Parse a stream of pkt-lines.
  *

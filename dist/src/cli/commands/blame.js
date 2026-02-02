@@ -22,6 +22,7 @@
  * // Blame specific line range
  * const result = await getBlame(adapter, 'src/index.ts', { lineRange: '10,20' })
  */
+import { BINARY_CHECK_BYTES } from '../../constants';
 import { parseCommit, parseTree } from '../../types/objects';
 // ============================================================================
 // Helper Functions
@@ -31,7 +32,7 @@ const decoder = new TextDecoder();
  * Check if content is likely binary (contains null bytes)
  */
 function isBinaryContent(data) {
-    const checkLength = Math.min(data.length, 8000);
+    const checkLength = Math.min(data.length, BINARY_CHECK_BYTES);
     for (let i = 0; i < checkLength; i++) {
         if (data[i] === 0)
             return true;
@@ -262,7 +263,6 @@ function computeLineMapping(oldLines, newLines) {
  *
  * @param ctx - Command context containing cwd, args, options, and output functions
  * @returns Promise that resolves when output is complete
- * @throws {Error} Always throws "Not implemented" - command not yet implemented
  *
  * @example
  * // CLI usage
@@ -270,8 +270,80 @@ function computeLineMapping(oldLines, newLines) {
  * // gitx blame -L 10,20 src/index.ts
  * // gitx blame -C src/renamed-file.ts
  */
-export async function blameCommand(_ctx) {
-    throw new Error('Not implemented');
+export async function blameCommand(ctx) {
+    const { cwd, args, options, stdout, stderr } = ctx;
+    // Handle --help flag
+    if (options['help'] || options['h']) {
+        stdout(`gitx blame - Show what revision and author last modified each line of a file
+
+Usage: gitx blame [options] <file>
+
+Options:
+  -L <range>    Annotate only the given line range (e.g., "10,20" or "10,+5")
+  -C            Follow file renames
+  --highlight   Enable syntax highlighting
+  --theme       Syntax highlighting theme (default: github-dark)
+  -h, --help    Show this help message
+
+Examples:
+  gitx blame src/index.ts         Blame entire file
+  gitx blame -L 10,20 src/index.ts  Blame lines 10-20
+  gitx blame -C src/renamed.ts    Blame with rename tracking`);
+        return;
+    }
+    // Get file path from args
+    if (args.length === 0) {
+        stderr('fatal: no file specified');
+        throw new Error('No file specified');
+    }
+    const filePath = args[0];
+    // Import createFSAdapter dynamically to avoid circular dependencies
+    const { createFSAdapter } = await import('../fs-adapter');
+    // Create adapter
+    let adapter;
+    try {
+        adapter = await createFSAdapter(cwd);
+    }
+    catch (error) {
+        stderr(`fatal: not a git repository (or any of the parent directories): .git`);
+        throw error;
+    }
+    // Build options
+    const blameOptions = {};
+    if (options['L']) {
+        blameOptions.lineRange = String(options['L']);
+    }
+    if (options['C']) {
+        blameOptions.followRenames = true;
+    }
+    if (options['highlight']) {
+        blameOptions.highlight = true;
+        blameOptions.theme = options['theme'] || 'github-dark';
+    }
+    try {
+        const result = await getBlame(adapter, filePath, blameOptions);
+        // Handle binary file
+        if (result.isBinary) {
+            stdout(`${filePath}: binary file`);
+            if (result.fileCommit) {
+                stdout(`Last modified by ${result.fileCommit.author} at ${result.fileCommit.sha.substring(0, 8)}`);
+            }
+            return;
+        }
+        // Handle empty file
+        if (result.lines.length === 0) {
+            return;
+        }
+        // Output blame annotations
+        for (const line of result.lines) {
+            stdout(formatBlameLine(line, { showOriginalLineNumber: result.originalPath !== undefined }));
+        }
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        stderr(`fatal: ${message}`);
+        throw error;
+    }
 }
 /**
  * Get blame annotations for a file.

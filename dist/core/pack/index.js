@@ -431,7 +431,7 @@ export function parsePackIndex(data) {
     }
     return {
         version,
-        objectCount,
+        objectCount: objectCount,
         fanout,
         entries,
         packChecksum: data.slice(packChecksumStart, packChecksumStart + 20),
@@ -544,7 +544,7 @@ export function lookupObjectInIndex(index, sha) {
             hi = mid;
         }
         else {
-            return index.entries[mid];
+            return index.entries[mid] ?? null;
         }
     }
     return null;
@@ -652,14 +652,17 @@ export function encodeDeltaOffset(offset) {
  * Pack file parser.
  */
 export class PackParser {
-    data;
+    _data;
     header;
     constructor(data) {
         if (data.length < 12) {
             throw new Error('Pack data too short');
         }
-        this.data = data;
+        this._data = data;
         this.header = parsePackHeader(data);
+    }
+    getData() {
+        return this._data;
     }
     getHeader() {
         return this.header;
@@ -685,16 +688,14 @@ export class PackObjectIterator {
             // Decode object header
             const { type, size, bytesRead: headerSize } = decodeObjectHeader(this.data, offset);
             offset += headerSize;
-            // Handle delta types
-            let deltaOffset;
-            let deltaRef;
+            // Handle delta types - skip delta header bytes
             if (type === OBJ_OFS_DELTA) {
                 const result = parseDeltaOffset(this.data, offset);
-                deltaOffset = result.offset;
+                // deltaOffset = result.offset (available in result if needed)
                 offset += result.bytesRead;
             }
             else if (type === OBJ_REF_DELTA) {
-                deltaRef = this.data.slice(offset, offset + 20);
+                // deltaRef would be this.data.slice(offset, offset + 20) if needed
                 offset += 20;
             }
             // Find compressed data end by decompressing

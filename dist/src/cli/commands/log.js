@@ -34,13 +34,125 @@ import { parseCommit } from '../../types/objects';
  *
  * @param ctx - Command context with cwd, options, and I/O functions
  *
- * @throws {Error} Not implemented - placeholder for CLI integration
- *
  * @example
  * await logCommand({ cwd: '/repo', options: { n: 10 }, ... })
  */
-export async function logCommand(_ctx) {
-    throw new Error('Not implemented');
+export async function logCommand(ctx) {
+    const { cwd, args, options, stdout, stderr } = ctx;
+    // Handle --help flag
+    if (options['help'] || options['h']) {
+        stdout(`gitx log - Show commit logs
+
+Usage: gitx log [options] [<revision-range>] [[--] <path>...]
+
+Options:
+  -n <number>     Limit the number of commits to output
+  --oneline       Show each commit on a single line
+  --graph         Draw a text-based graphical representation
+  --all           Show commits from all refs (branches, tags)
+  --format <fmt>  Pretty-print commits with custom format string
+  --author <pat>  Filter commits by author (name or email)
+  --since <date>  Show commits more recent than a specific date
+  --until <date>  Show commits older than a specific date
+  -h, --help      Show this help message
+
+Format placeholders:
+  %H  Full commit hash          %h  Abbreviated hash
+  %an Author name               %ae Author email
+  %ad Author date               %s  Subject (first line)
+  %b  Body                      %P  Parent hashes
+
+Examples:
+  gitx log -n 10              Show last 10 commits
+  gitx log --oneline          One commit per line
+  gitx log --author="John"    Filter by author
+  gitx log --since="1 week ago"  Recent commits`);
+        return;
+    }
+    // Import createFSAdapter dynamically to avoid circular dependencies
+    const { createFSAdapter } = await import('../fs-adapter');
+    // Create adapter
+    let adapter;
+    try {
+        adapter = await createFSAdapter(cwd);
+    }
+    catch (error) {
+        stderr(`fatal: not a git repository (or any of the parent directories): .git`);
+        throw error;
+    }
+    // Build log options from CLI options
+    const logOptions = {};
+    if (options['n'] !== undefined) {
+        logOptions.n = typeof options['n'] === 'number' ? options['n'] : parseInt(String(options['n']), 10);
+    }
+    if (options['oneline']) {
+        logOptions.oneline = true;
+    }
+    if (options['graph']) {
+        logOptions.graph = true;
+    }
+    if (options['all']) {
+        logOptions.all = true;
+    }
+    if (options['format']) {
+        logOptions.format = String(options['format']);
+    }
+    if (options['author']) {
+        logOptions.author = String(options['author']);
+    }
+    if (options['since']) {
+        logOptions.since = String(options['since']);
+    }
+    if (options['until']) {
+        logOptions.until = String(options['until']);
+    }
+    // Check for path filter in args
+    if (args.length > 0) {
+        logOptions.path = args[0];
+    }
+    try {
+        const result = await getLog(adapter, logOptions);
+        // Handle empty result
+        if (result.entries.length === 0) {
+            return;
+        }
+        // Generate graph if requested
+        const graphLines = logOptions.graph ? generateGraph(result.entries) : null;
+        // Output entries
+        for (let i = 0; i < result.entries.length; i++) {
+            const entry = result.entries[i];
+            let output;
+            if (logOptions.format) {
+                output = formatWithString(entry, logOptions.format);
+            }
+            else {
+                output = formatLogEntry(entry, logOptions);
+            }
+            // Prepend graph if enabled
+            if (graphLines && graphLines[i]) {
+                const lines = output.split('\n');
+                const graphPrefix = graphLines[i];
+                output = lines.map((line, lineIdx) => {
+                    if (lineIdx === 0) {
+                        return `${graphPrefix} ${line}`;
+                    }
+                    else {
+                        return `${'|'.padEnd(graphPrefix.length)} ${line}`;
+                    }
+                }).join('\n');
+            }
+            stdout(output);
+            // Add blank line between entries in full format
+            if (!logOptions.oneline && i < result.entries.length - 1) {
+                stdout('');
+            }
+        }
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        stderr(`fatal: ${message}`);
+        throw error;
+    }
 }
 /**
  * Get log entries from repository.
@@ -265,7 +377,7 @@ export async function getLog(adapter, options = {}) {
  * // Full format
  * console.log(formatLogEntry(entry))
  * // commit abc1234def...
- * // Author: John Doe <john@example.com>
+ * // Author: John Doe <john@example.com.ai>
  * // Date:   Mon Jan 15 10:00:00 2024 +0000
  * //
  * //     Initial commit

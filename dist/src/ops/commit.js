@@ -23,7 +23,7 @@
  *   message: 'Add new feature',
  *   tree: treeHash,
  *   parents: [parentHash],
- *   author: { name: 'John Doe', email: 'john@example.com' }
+ *   author: { name: 'John Doe', email: 'john@example.com.ai' }
  * })
  *
  * console.log('Created commit:', result.sha)
@@ -108,8 +108,8 @@ export function parseTimestamp(timestampStr) {
  *
  * @example
  * ```typescript
- * const author = createAuthor('John Doe', 'john@example.com')
- * // { name: 'John Doe', email: 'john@example.com', timestamp: <now>, timezone: <local> }
+ * const author = createAuthor('John Doe', 'john@example.com.ai')
+ * // { name: 'John Doe', email: 'john@example.com.ai', timestamp: <now>, timezone: <local> }
  * ```
  */
 export function createAuthor(name, email, timezone) {
@@ -552,7 +552,7 @@ function serializeCommitContent(commit) {
  *   message: 'Test commit',
  *   tree: treeSha,
  *   parents: [parentSha],
- *   author: { name: 'Test', email: 'test@example.com' }
+ *   author: { name: 'Test', email: 'test@example.com.ai' }
  * })
  *
  * console.log(commit.message) // 'Test commit'
@@ -604,7 +604,7 @@ export function buildCommitObject(options) {
  *   message: 'Add new feature',
  *   tree: treeSha,
  *   parents: [headSha],
- *   author: { name: 'John', email: 'john@example.com' }
+ *   author: { name: 'John', email: 'john@example.com.ai' }
  * })
  *
  * // Signed commit
@@ -612,7 +612,7 @@ export function buildCommitObject(options) {
  *   message: 'Signed commit',
  *   tree: treeSha,
  *   parents: [headSha],
- *   author: { name: 'John', email: 'john@example.com' },
+ *   author: { name: 'John', email: 'john@example.com.ai' },
  *   signing: {
  *     sign: true,
  *     signer: async (data) => myGpgSign(data)
@@ -624,7 +624,7 @@ export function buildCommitObject(options) {
  *   message: 'Initial commit',
  *   tree: treeSha,
  *   parents: [],
- *   author: { name: 'John', email: 'john@example.com' }
+ *   author: { name: 'John', email: 'john@example.com.ai' }
  * })
  * ```
  */
@@ -742,7 +742,7 @@ function parseStoredCommit(data) {
     }
     const message = lines.slice(messageStartIndex).join('\n');
     if (!author) {
-        author = { name: 'Unknown', email: 'unknown@example.com', timestamp: 0, timezone: '+0000' };
+        author = { name: 'Unknown', email: 'unknown@example.com.ai', timestamp: 0, timezone: '+0000' };
     }
     if (!committer) {
         committer = author;
@@ -776,7 +776,7 @@ function parseStoredCommit(data) {
  * // Update tree and committer
  * const newCommit = await amendCommit(store, headSha, {
  *   tree: newTreeSha,
- *   committer: { name: 'New Name', email: 'new@example.com' }
+ *   committer: { name: 'New Name', email: 'new@example.com.ai' }
  * })
  * ```
  */

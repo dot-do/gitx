@@ -37,7 +37,19 @@
  * ```
  */
 import { encodePktLine, FLUSH_PKT } from './pkt-line';
-import * as pako from 'pako';
+import { generatePackfile as generatePackfileFromObjects, } from '../pack/generation';
+import { stringToPackObjectType } from '../pack/format';
+// ============================================================================
+// Constants
+// ============================================================================
+/** Text encoder for converting strings to bytes */
+const encoder = new TextEncoder();
+/** Text decoder for converting bytes to strings */
+const decoder = new TextDecoder();
+/** SHA-1 regex pattern for validation */
+const SHA1_REGEX = /^[0-9a-f]{40}$/i;
+/** Default server agent string */
+const DEFAULT_AGENT = 'gitx.do/1.0';
 /**
  * Side-band channel types for multiplexed output.
  *
@@ -57,12 +69,44 @@ export var SideBandChannel;
     SideBandChannel[SideBandChannel["ERROR"] = 3] = "ERROR";
 })(SideBandChannel || (SideBandChannel = {}));
 // ============================================================================
-// Helper Constants
+// Buffer Utilities
 // ============================================================================
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-/** SHA-1 regex for validation */
-const SHA1_REGEX = /^[0-9a-f]{40}$/i;
+/**
+ * Concatenate multiple Uint8Array buffers into a single buffer.
+ *
+ * @param parts - Array of Uint8Array buffers to concatenate
+ * @returns Single Uint8Array containing all input buffers
+ *
+ * @example
+ * ```typescript
+ * const header = new Uint8Array([0x50, 0x41])
+ * const data = new Uint8Array([0x43, 0x4b])
+ * const result = concatenateBuffers([header, data])
+ * // result: Uint8Array([0x50, 0x41, 0x43, 0x4b])
+ * ```
+ */
+function concatenateBuffers(parts) {
+    let totalLength = 0;
+    for (const part of parts) {
+        totalLength += part.length;
+    }
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const part of parts) {
+        result.set(part, offset);
+        offset += part.length;
+    }
+    return result;
+}
+/**
+ * Validate a SHA-1 hash string.
+ *
+ * @param sha - String to validate
+ * @returns true if valid SHA-1 format (40 hex characters)
+ */
+function isValidSha1(sha) {
+    return SHA1_REGEX.test(sha);
+}
 // ============================================================================
 // Capability Functions
 // ============================================================================
@@ -250,7 +294,7 @@ export function parseWantLine(line) {
     const rest = trimmed.slice(5); // Remove "want "
     const parts = rest.split(/\s+/);
     const sha = parts[0].toLowerCase();
-    if (!SHA1_REGEX.test(sha)) {
+    if (!isValidSha1(sha)) {
         throw new Error(`Invalid SHA in want line: ${sha}`);
     }
     // Parse capabilities from remaining parts
@@ -282,7 +326,7 @@ export function parseHaveLine(line) {
         throw new Error(`Invalid have line: ${line}`);
     }
     const sha = trimmed.slice(5).trim().toLowerCase();
-    if (!SHA1_REGEX.test(sha)) {
+    if (!isValidSha1(sha)) {
         throw new Error(`Invalid SHA in have line: ${sha}`);
     }
     return sha;
@@ -326,7 +370,7 @@ export async function advertiseRefs(store, capabilities) {
         shallow: capabilities?.shallow ?? true,
         includeTag: true,
         multiAckDetailed: true,
-        agent: 'gitx.do/1.0'
+        agent: DEFAULT_AGENT
     };
     // Merge with provided capabilities
     const finalCaps = { ...defaultCaps, ...capabilities };
@@ -537,6 +581,67 @@ export async function processHaves(session, haves, store, done) {
     return result;
 }
 // ============================================================================
+// Object Parsing Helpers
+// ============================================================================
+/**
+ * Extract the tree SHA from a commit object.
+ *
+ * @param commitData - Raw commit data
+ * @returns Tree SHA or null if not found
+ *
+ * @internal
+ */
+function extractTreeFromCommit(commitData) {
+    const commitStr = decoder.decode(commitData);
+    const match = commitStr.match(/^tree ([0-9a-f]{40})/m);
+    return match ? match[1] : null;
+}
+/**
+ * Extract parent commit SHAs from a commit object.
+ *
+ * @param commitData - Raw commit data
+ * @returns Array of parent SHAs (empty for root commits)
+ *
+ * @internal
+ */
+function extractParentsFromCommit(commitData) {
+    const commitStr = decoder.decode(commitData);
+    const parents = [];
+    const regex = /^parent ([0-9a-f]{40})/gm;
+    let match;
+    while ((match = regex.exec(commitStr)) !== null) {
+        parents.push(match[1]);
+    }
+    return parents;
+}
+/**
+ * Extract the target object SHA from a tag object.
+ *
+ * @param tagData - Raw tag data
+ * @returns Target object SHA or null if not found
+ *
+ * @internal
+ */
+function extractObjectFromTag(tagData) {
+    const tagStr = decoder.decode(tagData);
+    const match = tagStr.match(/^object ([0-9a-f]{40})/m);
+    return match ? match[1] : null;
+}
+/**
+ * Extract the committer timestamp from a commit object.
+ *
+ * @param commitData - Raw commit data
+ * @returns Unix timestamp in seconds, or null if not found
+ *
+ * @internal
+ */
+function extractCommitterTimestamp(commitData) {
+    const commitStr = decoder.decode(commitData);
+    // Format: committer Name <email> timestamp timezone
+    const match = commitStr.match(/^committer [^<]*<[^>]*> (\d+)/m);
+    return match ? parseInt(match[1], 10) : null;
+}
+// ============================================================================
 // Object Calculation
 // ============================================================================
 /**
@@ -563,12 +668,13 @@ export async function processHaves(session, haves, store, done) {
  * // but not reachable from old-commit
  * ```
  */
-export async function calculateMissingObjects(store, wants, haves) {
+export async function calculateMissingObjects(store, wants, haves, shallowCommits) {
     const missing = new Set();
     const havesSet = new Set(haves.map(h => h.toLowerCase()));
+    const shallowSet = new Set((shallowCommits || []).map(s => s.toLowerCase()));
     const visited = new Set();
     // Walk from each want to find all reachable objects
-    async function walkObject(sha) {
+    async function walkObject(sha, isFromShallowCommit = false) {
         const lowerSha = sha.toLowerCase();
         if (visited.has(lowerSha) || havesSet.has(lowerSha)) {
             return;
@@ -585,30 +691,31 @@ export async function calculateMissingObjects(store, wants, haves) {
         if (!obj)
             return;
         if (obj.type === 'commit') {
-            // Parse commit to get tree and parents directly from data
-            const commitStr = decoder.decode(obj.data);
-            // Walk tree
-            const treeMatch = commitStr.match(/^tree ([0-9a-f]{40})/m);
-            if (treeMatch) {
-                await walkObject(treeMatch[1]);
+            // Walk tree referenced by commit
+            const treeSha = extractTreeFromCommit(obj.data);
+            if (treeSha) {
+                await walkObject(treeSha, false);
             }
-            // Walk parent commits - parse from commit data directly
-            const parentRegex = /^parent ([0-9a-f]{40})/gm;
-            let parentMatch;
-            while ((parentMatch = parentRegex.exec(commitStr)) !== null) {
-                await walkObject(parentMatch[1]);
+            // Check if this is a shallow commit - if so, don't walk parents
+            if (shallowSet.has(lowerSha)) {
+                // This is a shallow boundary commit - include it but don't walk parents
+                return;
+            }
+            // Walk parent commits
+            const parents = extractParentsFromCommit(obj.data);
+            for (const parentSha of parents) {
+                await walkObject(parentSha, false);
             }
         }
         else if (obj.type === 'tree') {
-            // Parse tree entries (simplified - trees have binary format)
-            // For now, just rely on getReachableObjects for tree contents
+            // Tree contents are handled by getReachableObjects
+            // Binary tree format parsing could be added here for optimization
         }
         else if (obj.type === 'tag') {
             // Walk to tagged object
-            const tagStr = decoder.decode(obj.data);
-            const objectMatch = tagStr.match(/^object ([0-9a-f]{40})/m);
-            if (objectMatch) {
-                await walkObject(objectMatch[1]);
+            const targetSha = extractObjectFromTag(obj.data);
+            if (targetSha) {
+                await walkObject(targetSha, false);
             }
         }
     }
@@ -616,7 +723,7 @@ export async function calculateMissingObjects(store, wants, haves) {
     for (const want of wants) {
         const reachable = await store.getReachableObjects(want);
         for (const sha of reachable) {
-            await walkObject(sha);
+            await walkObject(sha, false);
         }
     }
     return missing;
@@ -667,38 +774,86 @@ export async function processShallow(session, shallowLines, depth, deepenSince, 
     }
     // Track previously shallow commits for unshallow detection
     const previouslyShallow = new Set(session.shallowCommits || []);
-    // Process depth limit
-    if (depth !== undefined && store) {
-        for (const want of session.wants) {
-            // Walk the commit graph up to depth
-            let currentDepth = 0;
-            let current = [want];
-            while (currentDepth < depth && current.length > 0) {
-                const next = [];
-                for (const sha of current) {
+    // Build exclusion set from deepen-not refs
+    const excludedCommits = new Set();
+    if (deepenNot !== undefined && deepenNot.length > 0 && store) {
+        // Resolve ref names to SHAs and collect all reachable commits
+        const refs = await store.getRefs();
+        for (const refName of deepenNot) {
+            const ref = refs.find(r => r.name === refName);
+            if (ref) {
+                // Add the ref's commit and all its ancestors to excluded set
+                const visited = new Set();
+                const stack = [ref.sha.toLowerCase()];
+                while (stack.length > 0) {
+                    const sha = stack.pop();
+                    if (visited.has(sha))
+                        continue;
+                    visited.add(sha);
+                    excludedCommits.add(sha);
                     const parents = await store.getCommitParents(sha);
-                    next.push(...parents);
-                }
-                current = next;
-                currentDepth++;
-            }
-            // Commits at depth boundary become shallow
-            for (const sha of current) {
-                if (!result.shallowCommits.includes(sha)) {
-                    result.shallowCommits.push(sha);
+                    stack.push(...parents.map(p => p.toLowerCase()));
                 }
             }
         }
     }
-    // Handle deepen-since
-    if (deepenSince !== undefined) {
-        // For now, just mark this as processed
-        // A full implementation would walk commit timestamps
-    }
-    // Handle deepen-not
-    if (deepenNot !== undefined && deepenNot.length > 0) {
-        // For now, just mark this as processed
-        // A full implementation would stop at these refs
+    // Process depth limit with optional deepen-since and deepen-not constraints
+    if (store && (depth !== undefined || deepenSince !== undefined || excludedCommits.size > 0)) {
+        for (const want of session.wants) {
+            // Walk the commit graph
+            let currentDepth = 0;
+            let current = [want];
+            const visited = new Set();
+            // Use a large default depth if only deepen-since is specified
+            const maxDepth = depth ?? Number.MAX_SAFE_INTEGER;
+            while (currentDepth < maxDepth && current.length > 0) {
+                const next = [];
+                for (const sha of current) {
+                    const lowerSha = sha.toLowerCase();
+                    if (visited.has(lowerSha))
+                        continue;
+                    visited.add(lowerSha);
+                    const parents = await store.getCommitParents(sha);
+                    for (const parentSha of parents) {
+                        const lowerParent = parentSha.toLowerCase();
+                        // Check if parent is excluded by deepen-not
+                        if (excludedCommits.has(lowerParent)) {
+                            // This commit becomes a shallow boundary
+                            if (!result.shallowCommits.includes(lowerSha)) {
+                                result.shallowCommits.push(lowerSha);
+                            }
+                            continue;
+                        }
+                        // Check deepen-since timestamp
+                        if (deepenSince !== undefined) {
+                            const parentObj = await store.getObject(parentSha);
+                            if (parentObj && parentObj.type === 'commit') {
+                                const timestamp = extractCommitterTimestamp(parentObj.data);
+                                if (timestamp !== null && timestamp < deepenSince) {
+                                    // Parent is before the timestamp boundary, this commit becomes shallow
+                                    if (!result.shallowCommits.includes(lowerSha)) {
+                                        result.shallowCommits.push(lowerSha);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        next.push(parentSha);
+                    }
+                }
+                current = next;
+                currentDepth++;
+            }
+            // Commits at depth boundary become shallow (only if using depth limit)
+            if (depth !== undefined) {
+                for (const sha of current) {
+                    const lowerSha = sha.toLowerCase();
+                    if (!result.shallowCommits.includes(lowerSha)) {
+                        result.shallowCommits.push(lowerSha);
+                    }
+                }
+            }
+        }
     }
     // Detect unshallow commits (previously shallow, now not)
     for (const sha of previouslyShallow) {
@@ -838,14 +993,10 @@ export async function generatePackfile(store, wants, haves, options) {
     const onProgress = options?.onProgress;
     // Handle empty wants
     if (wants.length === 0) {
-        // Return minimal empty packfile
-        const emptyPack = createPackfileHeader(0);
-        const checksum = await sha1(emptyPack);
-        const result = new Uint8Array(emptyPack.length + 20);
-        result.set(emptyPack);
-        result.set(checksum, emptyPack.length);
+        // Return minimal empty packfile (header + checksum only)
+        const emptyPackfile = generatePackfileFromObjects([]);
         return {
-            packfile: result,
+            packfile: emptyPackfile,
             objectCount: 0,
             includedObjects: []
         };
@@ -854,8 +1005,8 @@ export async function generatePackfile(store, wants, haves, options) {
     if (onProgress) {
         onProgress('Counting objects...');
     }
-    // Calculate objects to include
-    const missingObjects = await calculateMissingObjects(store, wants, haves);
+    // Calculate objects to include (respecting shallow boundaries)
+    const missingObjects = await calculateMissingObjects(store, wants, haves, options?.shallowCommits);
     const objectShas = Array.from(missingObjects);
     if (onProgress) {
         onProgress(`Counting objects: ${objectShas.length}, done.`);
@@ -926,103 +1077,32 @@ export async function generateThinPack(store, objects, clientHasObjects) {
 // Packfile Building Helpers
 // ============================================================================
 /**
- * Object type to packfile type number mapping.
- * @internal
- */
-const OBJECT_TYPE_MAP = {
-    commit: 1,
-    tree: 2,
-    blob: 3,
-    tag: 4
-};
-/**
- * Create packfile header.
- * @internal
- */
-function createPackfileHeader(objectCount) {
-    const header = new Uint8Array(12);
-    // PACK signature
-    header[0] = 0x50; // P
-    header[1] = 0x41; // A
-    header[2] = 0x43; // C
-    header[3] = 0x4b; // K
-    // Version 2
-    header[4] = 0;
-    header[5] = 0;
-    header[6] = 0;
-    header[7] = 2;
-    // Object count (big-endian 32-bit)
-    header[8] = (objectCount >> 24) & 0xff;
-    header[9] = (objectCount >> 16) & 0xff;
-    header[10] = (objectCount >> 8) & 0xff;
-    header[11] = objectCount & 0xff;
-    return header;
-}
-/**
- * Encode object header in packfile format.
- * @internal
- */
-function encodePackfileObjectHeader(type, size) {
-    const bytes = [];
-    // First byte: type (bits 4-6) and size (bits 0-3)
-    let byte = ((type & 0x7) << 4) | (size & 0x0f);
-    size >>= 4;
-    while (size > 0) {
-        bytes.push(byte | 0x80); // Set MSB to indicate more bytes
-        byte = size & 0x7f;
-        size >>= 7;
-    }
-    bytes.push(byte);
-    return new Uint8Array(bytes);
-}
-/**
  * Build complete packfile from objects.
+ *
+ * @description
+ * Assembles a complete Git packfile from the given objects using the
+ * pack generation module. The packfile includes:
+ * 1. 12-byte header (signature + version + count)
+ * 2. Each object encoded with type/size header + zlib-compressed data
+ * 3. 20-byte SHA-1 checksum of all preceding data
+ *
+ * @param objects - Array of objects to include in the packfile
+ * @param _onProgress - Progress callback (reserved for future delta compression progress)
+ * @param _clientHasObjects - Objects client has (reserved for future thin pack support)
+ * @returns Complete packfile as Uint8Array
+ *
  * @internal
  */
 async function buildPackfile(objects, _onProgress, _clientHasObjects) {
-    const parts = [];
-    // Header
-    parts.push(createPackfileHeader(objects.length));
-    // Objects
-    for (let i = 0; i < objects.length; i++) {
-        const obj = objects[i];
-        const typeNum = OBJECT_TYPE_MAP[obj.type];
-        // Compress data using zlib
-        const compressed = pako.deflate(obj.data);
-        // Object header
-        const header = encodePackfileObjectHeader(typeNum, obj.data.length);
-        parts.push(header);
-        parts.push(compressed);
-    }
-    // Concatenate all parts (without checksum yet)
-    let totalLength = 0;
-    for (const part of parts) {
-        totalLength += part.length;
-    }
-    const packData = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const part of parts) {
-        packData.set(part, offset);
-        offset += part.length;
-    }
-    // Calculate SHA-1 checksum of pack data
-    const checksum = await sha1(packData);
-    // Final packfile with checksum
-    const result = new Uint8Array(packData.length + 20);
-    result.set(packData);
-    result.set(checksum, packData.length);
-    return result;
-}
-/**
- * Calculate SHA-1 hash using Web Crypto API.
- * @internal
- */
-async function sha1(data) {
-    // Create a copy as ArrayBuffer to satisfy BufferSource type
-    const buffer = new ArrayBuffer(data.length);
-    new Uint8Array(buffer).set(data);
-    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
-    return new Uint8Array(hashBuffer);
+    // Convert to pack generation module's PackableObject format
+    const packObjects = objects.map(obj => ({
+        sha: obj.sha,
+        type: stringToPackObjectType(obj.type),
+        data: obj.data,
+    }));
+    // Use the pack generation module to produce the complete packfile
+    // (header + compressed objects + SHA-1 checksum)
+    return generatePackfileFromObjects(packObjects);
 }
 // ============================================================================
 // Full Fetch Handler
@@ -1059,6 +1139,8 @@ export async function handleFetch(session, request, store) {
     let depth;
     let done = false;
     let sideBand = false;
+    let deepenSince;
+    const deepenNot = [];
     // Parse request
     for (const line of lines) {
         const trimmed = line.trim();
@@ -1081,6 +1163,12 @@ export async function handleFetch(session, request, store) {
         else if (trimmed.startsWith('deepen ')) {
             depth = parseInt(trimmed.slice(7), 10);
         }
+        else if (trimmed.startsWith('deepen-since ')) {
+            deepenSince = parseInt(trimmed.slice(13), 10);
+        }
+        else if (trimmed.startsWith('deepen-not ')) {
+            deepenNot.push(trimmed.slice(11));
+        }
         else if (trimmed === 'done') {
             done = true;
         }
@@ -1088,8 +1176,8 @@ export async function handleFetch(session, request, store) {
     // Process wants
     await processWants(session, wants, store);
     // Process shallow if present
-    if (shallowLines.length > 0 || depth !== undefined) {
-        const shallowInfo = await processShallow(session, shallowLines, depth, undefined, undefined, store);
+    if (shallowLines.length > 0 || depth !== undefined || deepenSince !== undefined || deepenNot.length > 0) {
+        const shallowInfo = await processShallow(session, shallowLines, depth, deepenSince, deepenNot.length > 0 ? deepenNot : undefined, store);
         const shallowResponse = formatShallowResponse(shallowInfo);
         if (shallowResponse) {
             parts.push(encoder.encode(shallowResponse));
@@ -1111,7 +1199,8 @@ export async function handleFetch(session, request, store) {
         const packResult = await generatePackfile(store, session.wants, session.commonAncestors, {
             onProgress: sideBand ? undefined : undefined,
             thinPack: session.capabilities.thinPack,
-            clientHasObjects: session.commonAncestors
+            clientHasObjects: session.commonAncestors,
+            shallowCommits: session.shallowCommits
         });
         // Add packfile data
         if (sideBand) {
@@ -1125,17 +1214,7 @@ export async function handleFetch(session, request, store) {
             parts.push(packResult.packfile);
         }
     }
-    // Concatenate all parts
-    let totalLength = 0;
-    for (const part of parts) {
-        totalLength += part.length;
-    }
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const part of parts) {
-        result.set(part, offset);
-        offset += part.length;
-    }
-    return result;
+    // Concatenate all response parts
+    return concatenateBuffers(parts);
 }
 //# sourceMappingURL=upload-pack.js.map

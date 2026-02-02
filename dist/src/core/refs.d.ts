@@ -46,13 +46,8 @@ export declare const REF_PREFIXES: {
     readonly STASH: "refs/stash";
     readonly NOTES: "refs/notes/";
 };
-/**
- * Validation result type.
- */
-export interface ValidationResult {
-    isValid: boolean;
-    error?: string;
-}
+import type { ValidationResult } from '../types/storage';
+export type { ValidationResult };
 /**
  * Validate a ref name according to Git rules.
  */

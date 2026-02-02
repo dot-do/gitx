@@ -34,6 +34,7 @@
  *
  * @module ops/blame
  */
+import { BINARY_CHECK_BYTES } from '../constants';
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -50,8 +51,8 @@ const decoder = new TextDecoder();
  * @internal
  */
 function isBinaryContent(data) {
-    // Check first 8000 bytes or entire file if smaller
-    const checkLength = Math.min(data.length, 8000);
+    // Check first BINARY_CHECK_BYTES bytes or entire file if smaller
+    const checkLength = Math.min(data.length, BINARY_CHECK_BYTES);
     for (let i = 0; i < checkLength; i++) {
         // Null byte is a strong indicator of binary
         if (data[i] === 0)
@@ -167,10 +168,17 @@ function computeLineMapping(oldLines, newLines, ignoreWhitespace = false) {
     for (let i = 1; i <= m; i++) {
         for (let j = 1; j <= n; j++) {
             if (normalizedOld[i - 1] === normalizedNew[j - 1]) {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
+                const row = dp[i - 1];
+                const cell = row?.[j - 1] ?? 0;
+                const currRow = dp[i];
+                if (currRow)
+                    currRow[j] = cell + 1;
             }
             else {
-                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+                const prevRow = dp[i - 1];
+                const currRow = dp[i];
+                if (currRow)
+                    currRow[j] = Math.max(prevRow?.[j] ?? 0, currRow[j - 1] ?? 0);
             }
         }
     }
@@ -182,7 +190,7 @@ function computeLineMapping(oldLines, newLines, ignoreWhitespace = false) {
             i--;
             j--;
         }
-        else if (dp[i - 1][j] > dp[i][j - 1]) {
+        else if ((dp[i - 1]?.[j] ?? 0) > (dp[i]?.[j - 1] ?? 0)) {
             i--;
         }
         else {
@@ -211,36 +219,43 @@ function parseLineRange(lineRange, lines) {
     if (lineRange.startsWith('/')) {
         const parts = lineRange.match(/^\/(.+)\/,\/(.+)\/$/);
         if (parts) {
-            const startPattern = new RegExp(parts[1]);
-            const endPattern = new RegExp(parts[2]);
-            let start = -1;
-            let end = -1;
-            for (let i = 0; i < lines.length; i++) {
-                if (start === -1 && startPattern.test(lines[i])) {
-                    start = i + 1; // 1-indexed
+            const startPatternStr = parts[1];
+            const endPatternStr = parts[2];
+            if (startPatternStr && endPatternStr) {
+                const startPattern = new RegExp(startPatternStr);
+                const endPattern = new RegExp(endPatternStr);
+                let start = -1;
+                let end = -1;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (line === undefined)
+                        continue;
+                    if (start === -1 && startPattern.test(line)) {
+                        start = i + 1; // 1-indexed
+                    }
+                    if (start !== -1 && endPattern.test(line)) {
+                        end = i + 1; // 1-indexed
+                        break;
+                    }
                 }
-                if (start !== -1 && endPattern.test(lines[i])) {
-                    end = i + 1; // 1-indexed
-                    break;
-                }
+                if (start === -1)
+                    start = 1;
+                if (end === -1)
+                    end = totalLines;
+                return { start, end };
             }
-            if (start === -1)
-                start = 1;
-            if (end === -1)
-                end = totalLines;
-            return { start, end };
         }
     }
     // Handle numeric ranges like "2,4" or "2,+3"
     const [startStr, endStr] = lineRange.split(',');
-    const start = parseInt(startStr, 10);
+    const start = parseInt(startStr ?? '1', 10);
     let end;
-    if (endStr.startsWith('+')) {
+    if (endStr && endStr.startsWith('+')) {
         // Relative offset: start + offset lines
         end = start + parseInt(endStr.slice(1), 10);
     }
     else {
-        end = parseInt(endStr, 10);
+        end = parseInt(endStr ?? String(totalLines), 10);
     }
     return { start, end };
 }
@@ -373,12 +388,13 @@ export async function blame(storage, path, commit, options) {
     // Track commits for the result
     const commitsMap = new Map();
     // Add current commit info
+    const commitSummary = commitObj.message.split('\n')[0];
     commitsMap.set(commit, {
         sha: commit,
         author: commitObj.author.name,
         email: commitObj.author.email,
         timestamp: commitObj.author.timestamp,
-        summary: commitObj.message.split('\n')[0],
+        summary: commitSummary ?? '',
         boundary: commitObj.parents.length === 0
     });
     // Walk through commit history
@@ -467,12 +483,13 @@ export async function blame(storage, path, commit, options) {
         const mapping = computeLineMapping(parentLines, childLines, opts.ignoreWhitespace ?? false);
         // Add commit info
         if (!commitsMap.has(parentSha)) {
+            const summaryLine = parentCommitObj.message.split('\n')[0];
             commitsMap.set(parentSha, {
                 sha: parentSha,
                 author: parentCommitObj.author.name,
                 email: parentCommitObj.author.email,
                 timestamp: parentCommitObj.author.timestamp,
-                summary: parentCommitObj.message.split('\n')[0],
+                summary: summaryLine ?? '',
                 boundary: parentCommitObj.parents.length === 0
             });
         }
@@ -481,15 +498,16 @@ export async function blame(storage, path, commit, options) {
         for (const [parentIdx, childIdx] of mapping) {
             // Convert childIdx to original index
             for (const [origIdx, mappedChildIdx] of childToOriginal) {
-                if (mappedChildIdx === childIdx && lineNeedsAttribution[origIdx]) {
+                const blameEntry = blameInfo[origIdx];
+                if (mappedChildIdx === childIdx && lineNeedsAttribution[origIdx] && blameEntry) {
                     // This line exists in parent - attribute to parent
-                    blameInfo[origIdx].commitSha = parentSha;
-                    blameInfo[origIdx].author = parentCommitObj.author.name;
-                    blameInfo[origIdx].email = parentCommitObj.author.email;
-                    blameInfo[origIdx].timestamp = parentCommitObj.author.timestamp;
-                    blameInfo[origIdx].originalLineNumber = parentIdx + 1;
+                    blameEntry.commitSha = parentSha;
+                    blameEntry.author = parentCommitObj.author.name;
+                    blameEntry.email = parentCommitObj.author.email;
+                    blameEntry.timestamp = parentCommitObj.author.timestamp;
+                    blameEntry.originalLineNumber = parentIdx + 1;
                     if (pathInParent !== childPath) {
-                        blameInfo[origIdx].originalPath = pathInParent;
+                        blameEntry.originalPath = pathInParent;
                     }
                 }
             }
@@ -576,7 +594,11 @@ export async function blameLine(storage, path, lineNumber, commit, options) {
     if (lineNumber > result.lines.length) {
         throw new Error(`Invalid line number: ${lineNumber}. File has ${result.lines.length} lines.`);
     }
-    return result.lines[lineNumber - 1];
+    const lineInfo = result.lines[lineNumber - 1];
+    if (!lineInfo) {
+        throw new Error(`Could not find line ${lineNumber} in blame result.`);
+    }
+    return lineInfo;
 }
 /**
  * Gets blame for a specific line range.
@@ -828,7 +850,7 @@ export async function buildBlameHistory(storage, path, lineNumber, commit, optio
             break;
         history.push({
             commitSha: currentCommitSha,
-            content: lines[currentLineNumber - 1],
+            content: lines[currentLineNumber - 1] ?? '',
             lineNumber: currentLineNumber,
             author: commitObj.author.name,
             timestamp: commitObj.author.timestamp
@@ -837,6 +859,8 @@ export async function buildBlameHistory(storage, path, lineNumber, commit, optio
         if (commitObj.parents.length === 0)
             break;
         const parentSha = commitObj.parents[0];
+        if (!parentSha)
+            break;
         const parentCommitObj = await storage.getCommit(parentSha);
         if (!parentCommitObj)
             break;
@@ -981,9 +1005,9 @@ export function parseBlameOutput(output) {
             i++;
             continue;
         }
-        const commitSha = headerMatch[1];
-        const originalLineNumber = parseInt(headerMatch[2], 10);
-        const lineNumber = parseInt(headerMatch[3], 10);
+        const commitSha = headerMatch[1] ?? '';
+        const originalLineNumber = parseInt(headerMatch[2] ?? '0', 10);
+        const lineNumber = parseInt(headerMatch[3] ?? '0', 10);
         // Parse metadata lines until we hit the content line (starts with tab)
         let author = '';
         let email = '';
@@ -992,6 +1016,8 @@ export function parseBlameOutput(output) {
         i++;
         while (i < outputLines.length) {
             const metaLine = outputLines[i];
+            if (metaLine === undefined)
+                break;
             if (metaLine.startsWith('\t')) {
                 content = metaLine.substring(1);
                 i++;

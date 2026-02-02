@@ -121,12 +121,10 @@ export interface LogResult {
  *
  * @param ctx - Command context with cwd, options, and I/O functions
  *
- * @throws {Error} Not implemented - placeholder for CLI integration
- *
  * @example
  * await logCommand({ cwd: '/repo', options: { n: 10 }, ... })
  */
-export declare function logCommand(_ctx: CommandContext): Promise<void>;
+export declare function logCommand(ctx: CommandContext): Promise<void>;
 /**
  * Get log entries from repository.
  *
@@ -165,7 +163,7 @@ export declare function getLog(adapter: FSAdapter, options?: LogOptions): Promis
  * // Full format
  * console.log(formatLogEntry(entry))
  * // commit abc1234def...
- * // Author: John Doe <john@example.com>
+ * // Author: John Doe <john@example.com.ai>
  * // Date:   Mon Jan 15 10:00:00 2024 +0000
  * //
  * //     Initial commit

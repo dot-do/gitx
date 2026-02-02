@@ -53,6 +53,33 @@
  * ```
  */
 /**
+ * Length prefix size in bytes.
+ *
+ * @description
+ * Every pkt-line starts with a 4-character hexadecimal length prefix
+ * that indicates the total packet size (including the prefix itself).
+ */
+export declare const PKT_LINE_LENGTH_SIZE = 4;
+/**
+ * Maximum total packet size in bytes.
+ *
+ * @description
+ * The maximum size of a complete pkt-line packet (prefix + data) is 65520 bytes.
+ * This limit is defined by the Git protocol specification.
+ */
+export declare const MAX_PKT_LINE_SIZE = 65520;
+/**
+ * Maximum pkt-line data size in bytes.
+ *
+ * @description
+ * The maximum data that can be included in a single pkt-line is 65516 bytes.
+ * This is calculated as: MAX_PKT_LINE_SIZE (65520) - PKT_LINE_LENGTH_SIZE (4) = 65516.
+ *
+ * Attempting to encode data larger than this will result in an error
+ * or require splitting into multiple packets.
+ */
+export declare const MAX_PKT_LINE_DATA: number;
+/**
  * Flush packet - indicates end of a message section.
  *
  * @description
@@ -92,16 +119,22 @@ export declare const FLUSH_PKT = "0000";
  */
 export declare const DELIM_PKT = "0001";
 /**
- * Maximum pkt-line data size in bytes.
+ * Response-end packet - used in protocol v2.
  *
  * @description
- * The maximum data that can be included in a single pkt-line is 65516 bytes.
- * This is calculated as: 65520 (max packet) - 4 (length prefix) = 65516.
+ * The response-end packet `0002` is used in Git protocol v2 to indicate
+ * the end of a response in stateless connections. It signals that no
+ * more data will follow for this response.
  *
- * Attempting to encode data larger than this will result in an error
- * or require splitting into multiple packets.
+ * @example
+ * ```typescript
+ * // Protocol v2 response ending
+ * let response = encodePktLine('acknowledgments\n')
+ * response += encodePktLine('ACK abc123\n')
+ * response += RESPONSE_END_PKT  // End of response
+ * ```
  */
-export declare const MAX_PKT_LINE_DATA = 65516;
+export declare const RESPONSE_END_PKT = "0002";
 /**
  * Input type for pkt-line encoding/decoding functions.
  *
@@ -110,18 +143,18 @@ export declare const MAX_PKT_LINE_DATA = 65516;
  * - `string`: Used for text-based protocol messages
  * - `Uint8Array`: Used for binary data like packfiles
  */
-type PktLineInput = string | Uint8Array;
+export type PktLineInput = string | Uint8Array;
 /**
  * Result of decoding a single pkt-line.
  *
  * @description
  * Contains the decoded data and metadata about the packet:
  * - For data packets: `data` contains the payload, `bytesRead` is the packet size
- * - For flush packets: `data` is null, `type` is 'flush', `bytesRead` is 4
- * - For delimiter packets: `data` is null, `type` is 'delim', `bytesRead` is 4
+ * - For flush packets: `data` is null, `type` is 'flush', `bytesRead` is PKT_LINE_LENGTH_SIZE
+ * - For delimiter packets: `data` is null, `type` is 'delim', `bytesRead` is PKT_LINE_LENGTH_SIZE
  * - For incomplete data: `data` is null, `type` is 'incomplete', `bytesRead` is 0
  */
-interface DecodedPktLine {
+export interface DecodedPktLine {
     /** The decoded data payload, or null for special/incomplete packets */
     data: string | null;
     /** Packet type for special packets: 'flush', 'delim', or 'incomplete' */
@@ -138,7 +171,7 @@ interface DecodedPktLine {
  * - `flush`: Special packet with `type: 'flush'` and null `data`
  * - `delim`: Special packet with `type: 'delim'` and null `data`
  */
-interface StreamPacket {
+export interface StreamPacket {
     /** The packet data, or null for special packets */
     data: string | null;
     /** The packet type */
@@ -152,7 +185,7 @@ interface StreamPacket {
  * The `remaining` field is useful for streaming scenarios where data arrives
  * in chunks and a packet might be split across chunks.
  */
-interface PktLineStreamResult {
+export interface PktLineStreamResult {
     /** Array of parsed packets */
     packets: StreamPacket[];
     /** Any remaining unparsed data (incomplete packet) */
@@ -211,7 +244,7 @@ export declare function encodePktLine(data: PktLineInput): string | Uint8Array;
  * @param input - The input to decode (string or Uint8Array)
  * @returns Object with decoded data, packet type (if special), and bytes consumed
  *
- * @throws {Error} If packet size exceeds MAX_PKT_LINE_DATA + 4
+ * @throws {Error} If packet size exceeds MAX_PKT_LINE_SIZE (65520 bytes)
  *
  * @example Decoding a data packet
  * ```typescript
@@ -280,6 +313,24 @@ export declare function encodeFlushPkt(): string;
  */
 export declare function encodeDelimPkt(): string;
 /**
+ * Create a response-end-pkt (0002).
+ *
+ * @description
+ * Returns the response-end packet constant. The response-end packet is used
+ * in Git protocol v2 to indicate the end of a response in stateless connections.
+ *
+ * @returns The response-end packet string '0002'
+ *
+ * @example
+ * ```typescript
+ * // Protocol v2 response ending
+ * let response = encodePktLine('acknowledgments\n')
+ * response += encodePktLine('ACK abc123\n')
+ * response += encodeResponseEndPkt()  // End of response
+ * ```
+ */
+export declare function encodeResponseEndPkt(): string;
+/**
  * Parse a stream of pkt-lines.
  *
  * @description
@@ -341,5 +392,4 @@ export declare function encodeDelimPkt(): string;
  * ```
  */
 export declare function pktLineStream(input: PktLineInput): PktLineStreamResult;
-export {};
 //# sourceMappingURL=pkt-line.d.ts.map

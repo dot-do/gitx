@@ -25,7 +25,8 @@
  * const commit = await adapter.getObject(head.target)
  * ```
  */
-import type { ObjectType } from '../types/objects';
+import type { ObjectType, TreeEntry as CoreTreeEntry } from '../types/objects';
+export type { CoreTreeEntry };
 /**
  * Type of git reference.
  */
@@ -96,10 +97,14 @@ export interface IndexEntry {
     };
 }
 /**
- * Tree entry from a tree object.
+ * Tree entry for CLI operations with numeric mode.
+ *
+ * Note: This differs from the canonical TreeEntry in types/objects which
+ * uses string mode. This format is used for CLI-specific operations where
+ * numeric mode is more convenient.
  */
-export interface TreeEntry {
-    /** File/directory mode */
+export interface CLITreeEntry {
+    /** File/directory mode as number */
     mode: number;
     /** Name of the entry */
     name: string;
@@ -108,6 +113,8 @@ export interface TreeEntry {
     /** Whether this is a tree (directory) or blob (file) */
     type: 'tree' | 'blob';
 }
+/** @deprecated Use CLITreeEntry or CoreTreeEntry from types/objects */
+export type TreeEntry = CLITreeEntry;
 /**
  * Parsed commit object.
  */

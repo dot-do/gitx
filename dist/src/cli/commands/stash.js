@@ -210,7 +210,7 @@ function generateSha() {
     const hex = '0123456789abcdef';
     let sha = '';
     for (let i = 0; i < 40; i++) {
-        sha += hex[Math.floor(Math.random() * 16)];
+        sha += hex[Math.floor(Math.random() * 16)] ?? '0';
     }
     return sha;
 }
@@ -550,9 +550,9 @@ export async function stashClear(cwd) {
 export async function stashCommand(context) {
     const { cwd, args, options, stdout, stderr } = context;
     // Parse subcommand
-    const subcommand = args[0] || 'push';
+    const subcommand = args[0] ?? 'push';
     // Handle --help
-    if (options.help || options.h) {
+    if (options['help'] || options['h']) {
         stdout(`gitx stash - Stash changes in a dirty working directory
 
 Usage: gitx stash [push [-m <message>]] [-u|--include-untracked]
@@ -576,13 +576,17 @@ Subcommands:
     try {
         switch (subcommand) {
             case 'push': {
-                const message = options.m || options.message;
-                const result = await stashPush(cwd, {
-                    message,
-                    includeUntracked: options.u || options.includeUntracked,
-                    keepIndex: options.keepIndex,
-                    all: options.all || options.a
-                });
+                const message = options['m'] || options['message'];
+                const pushOpts = {};
+                if (message !== undefined && typeof message === 'string')
+                    pushOpts.message = message;
+                if (options['u'] || options['includeUntracked'])
+                    pushOpts.includeUntracked = true;
+                if (options['keepIndex'])
+                    pushOpts.keepIndex = true;
+                if (options['all'] || options['a'])
+                    pushOpts.all = true;
+                const result = await stashPush(cwd, pushOpts);
                 stdout(`Saved working directory and index state ${result.message}`);
                 break;
             }
@@ -603,7 +607,12 @@ Subcommands:
             }
             case 'apply': {
                 const ref = args[1];
-                const result = await stashApply(cwd, { ref, index: options.index });
+                const applyOpts = {};
+                if (ref !== undefined)
+                    applyOpts.ref = ref;
+                if (options['index'])
+                    applyOpts.index = true;
+                const result = await stashApply(cwd, applyOpts);
                 if (result.success) {
                     stdout(`Applied ${result.appliedRef}`);
                 }
@@ -611,7 +620,12 @@ Subcommands:
             }
             case 'pop': {
                 const ref = args[1];
-                const result = await stashPop(cwd, { ref, index: options.index });
+                const popOpts = {};
+                if (ref !== undefined)
+                    popOpts.ref = ref;
+                if (options['index'])
+                    popOpts.index = true;
+                const result = await stashPop(cwd, popOpts);
                 if (result.success) {
                     stdout(`Dropped ${result.appliedRef}`);
                 }
@@ -631,13 +645,17 @@ Subcommands:
                 // Check if it might be an option like -m
                 if (subcommand.startsWith('-')) {
                     // Treat as push with options
-                    const message = options.m || options.message;
-                    const result = await stashPush(cwd, {
-                        message,
-                        includeUntracked: options.u || options.includeUntracked,
-                        keepIndex: options.keepIndex,
-                        all: options.all || options.a
-                    });
+                    const message = options['m'] || options['message'];
+                    const defaultPushOpts = {};
+                    if (message !== undefined && typeof message === 'string')
+                        defaultPushOpts.message = message;
+                    if (options['u'] || options['includeUntracked'])
+                        defaultPushOpts.includeUntracked = true;
+                    if (options['keepIndex'])
+                        defaultPushOpts.keepIndex = true;
+                    if (options['all'] || options['a'])
+                        defaultPushOpts.all = true;
+                    const result = await stashPush(cwd, defaultPushOpts);
                     stdout(`Saved working directory and index state ${result.message}`);
                 }
                 else {

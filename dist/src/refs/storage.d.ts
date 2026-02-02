@@ -683,6 +683,9 @@ export declare class RefStorage {
      * Sets HEAD to point to a branch (symbolic) or commit (detached).
      * Uses locking to ensure atomic updates to HEAD.
      *
+     * For reflog integration, use the `updateHeadWithReflog` method instead,
+     * or use this method with a ReflogManager externally.
+     *
      * @param target - Branch ref name (symbolic) or SHA (detached)
      * @param symbolic - If true, create symbolic ref; if false, direct ref
      * @returns The updated HEAD ref
@@ -697,6 +700,60 @@ export declare class RefStorage {
      * ```
      */
     updateHead(target: string, symbolic?: boolean): Promise<Ref>;
+    /**
+     * Get the current HEAD SHA (resolving symbolic refs).
+     *
+     * @description
+     * Returns the SHA that HEAD ultimately points to, following
+     * any symbolic ref chain. Returns null if HEAD doesn't exist
+     * or points to an unborn branch.
+     *
+     * This is useful for obtaining the "old" value before a HEAD update,
+     * which is needed for reflog entries.
+     *
+     * @returns The resolved SHA or null
+     *
+     * @example
+     * ```typescript
+     * const oldSha = await storage.getHeadSha()
+     * // Update HEAD
+     * await storage.updateHead(newSha, false)
+     * // Record in reflog
+     * await reflog.recordHeadUpdate(oldSha ?? ZERO_SHA, newSha, 'checkout: ...')
+     * ```
+     */
+    getHeadSha(): Promise<string | null>;
+    /**
+     * Update HEAD with reflog support.
+     *
+     * @description
+     * Updates HEAD and returns information needed for reflog entry.
+     * The caller is responsible for actually writing to the reflog.
+     *
+     * This method provides the old SHA, new SHA, and operation type
+     * which can be used with a ReflogManager.
+     *
+     * @param target - Branch ref name (symbolic) or SHA (detached)
+     * @param symbolic - If true, create symbolic ref; if false, direct ref
+     * @returns Object with ref, oldSha, newSha, and operation type
+     *
+     * @example
+     * ```typescript
+     * const result = await storage.updateHeadWithInfo('refs/heads/feature', true)
+     * await reflogManager.recordHeadUpdate(
+     *   result.oldSha,
+     *   result.newSha,
+     *   `checkout: moving from ${result.fromBranch} to feature`
+     * )
+     * ```
+     */
+    updateHeadWithInfo(target: string, symbolic?: boolean): Promise<{
+        ref: Ref;
+        oldSha: string;
+        newSha: string;
+        oldTarget: string | null;
+        operation: 'checkout' | 'reset' | 'commit' | 'merge' | 'rebase' | 'other';
+    }>;
     /**
      * Check if HEAD is detached.
      *
@@ -758,6 +815,104 @@ export declare class RefStorage {
      * ```
      */
     acquireLock(name: string, timeout?: number): Promise<RefLock>;
+    /**
+     * Options for retry-enabled ref updates.
+     */
+    private static readonly DEFAULT_RETRY_OPTIONS;
+    /**
+     * Update a ref with automatic retry on concurrent conflicts.
+     *
+     * @description
+     * Performs an atomic update with automatic retry logic for handling
+     * concurrent modifications. Uses compare-and-swap (CAS) semantics
+     * internally to detect conflicts and retry with fresh data.
+     *
+     * This is useful when multiple processes may be updating the same ref
+     * simultaneously and you want optimistic concurrency control.
+     *
+     * @param name - Full ref name to update
+     * @param updateFn - Function that receives current SHA and returns new SHA
+     * @param options - Retry options
+     * @returns The updated ref
+     * @throws RefError if max retries exceeded or other non-retriable error
+     *
+     * @example
+     * ```typescript
+     * // Optimistic update with retry
+     * const ref = await storage.updateRefWithRetry(
+     *   'refs/heads/main',
+     *   async (currentSha) => {
+     *     // Compute new SHA based on current state
+     *     return computeNewCommit(currentSha)
+     *   },
+     *   { maxRetries: 5 }
+     * )
+     * ```
+     */
+    updateRefWithRetry(name: string, updateFn: (currentSha: string | null) => Promise<string>, options?: {
+        maxRetries?: number;
+        retryDelayMs?: number;
+        exponentialBackoff?: boolean;
+    }): Promise<Ref>;
+    /**
+     * Atomically update multiple refs (batch update).
+     *
+     * @description
+     * Updates multiple refs in a single atomic transaction. If any update
+     * fails, all updates are rolled back (all-or-nothing semantics).
+     *
+     * Uses a two-phase approach:
+     * 1. Acquire locks on all refs
+     * 2. Verify all preconditions (oldValue checks)
+     * 3. Apply all updates
+     * 4. Release all locks
+     *
+     * @param updates - Array of ref updates to apply
+     * @returns Array of updated refs
+     * @throws RefError if any precondition fails (transaction aborted)
+     *
+     * @example
+     * ```typescript
+     * // Update main and develop atomically
+     * const refs = await storage.batchUpdateRefs([
+     *   { name: 'refs/heads/main', sha: newMainSha, oldValue: currentMainSha },
+     *   { name: 'refs/heads/develop', sha: newDevSha, oldValue: currentDevSha }
+     * ])
+     * ```
+     */
+    batchUpdateRefs(updates: Array<{
+        name: string;
+        sha: string;
+        oldValue?: string | null;
+        create?: boolean;
+    }>): Promise<Ref[]>;
+    /**
+     * Compare-and-swap update for a ref.
+     *
+     * @description
+     * Low-level CAS operation for atomic ref updates. Updates the ref
+     * only if its current value matches the expected value.
+     *
+     * @param name - Full ref name
+     * @param expectedOld - Expected current SHA (null for create-only)
+     * @param newSha - New SHA to set
+     * @returns True if update succeeded, false if CAS failed
+     * @throws RefError for invalid name/SHA
+     *
+     * @example
+     * ```typescript
+     * // Only update if value is what we expect
+     * const success = await storage.compareAndSwap(
+     *   'refs/heads/main',
+     *   currentSha,
+     *   newSha
+     * )
+     * if (!success) {
+     *   console.log('Concurrent modification detected')
+     * }
+     * ```
+     */
+    compareAndSwap(name: string, expectedOld: string | null, newSha: string): Promise<boolean>;
     /**
      * Pack loose refs into packed-refs file.
      *

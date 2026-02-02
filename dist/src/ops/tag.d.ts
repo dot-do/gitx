@@ -36,7 +36,7 @@
  *   name: 'v2.0.0',
  *   target: commitSha,
  *   message: 'Release version 2.0.0',
- *   tagger: { name: 'John Doe', email: 'john@example.com' }
+ *   tagger: { name: 'John Doe', email: 'john@example.com.ai' }
  * })
  *
  * // List tags matching pattern

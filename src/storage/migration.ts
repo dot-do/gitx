@@ -37,7 +37,6 @@
  */
 
 import type { DurableObjectStorage } from './types'
-import type { ObjectLocation, StorageTier, RecordLocationOptions } from './object-index'
 import { ObjectIndex } from './object-index'
 import {
   BundleObjectType,
@@ -415,10 +414,12 @@ function extractShaFromKey(key: string, prefix: string): string | null {
   }
   const path = key.slice(prefix.length)
   const parts = path.split('/')
-  if (parts.length !== 2 || parts[0].length !== 2 || parts[1].length !== 38) {
+  const part0 = parts[0]
+  const part1 = parts[1]
+  if (parts.length !== 2 || !part0 || part0.length !== 2 || !part1 || part1.length !== 38) {
     return null
   }
-  return parts[0] + parts[1]
+  return part0 + part1
 }
 
 /**
@@ -490,7 +491,8 @@ export class LooseToBundleMigrator {
     this.objectIndex = new ObjectIndex(storage)
 
     // Merge config with defaults
-    this.config = {
+    const mergedConfig: Required<Omit<MigrationConfig, 'onProgress' | 'onError'>> &
+      Pick<MigrationConfig, 'onProgress' | 'onError'> = {
       maxBundleSize: config.maxBundleSize ?? DEFAULT_MAX_BUNDLE_SIZE,
       batchSize: config.batchSize ?? DEFAULT_BATCH_SIZE,
       looseObjectPrefix: config.looseObjectPrefix ?? DEFAULT_LOOSE_PREFIX,
@@ -499,9 +501,14 @@ export class LooseToBundleMigrator {
       verify: config.verify ?? true,
       cleanup: config.cleanup ?? false,
       concurrency: config.concurrency ?? DEFAULT_CONCURRENCY,
-      onProgress: config.onProgress,
-      onError: config.onError
     }
+    if (config.onProgress !== undefined) {
+      mergedConfig.onProgress = config.onProgress
+    }
+    if (config.onError !== undefined) {
+      mergedConfig.onError = config.onError
+    }
+    this.config = mergedConfig
   }
 
   /**
@@ -589,8 +596,10 @@ export class LooseToBundleMigrator {
             const error: MigrationObjectError = {
               sha: obj.sha,
               message: err instanceof Error ? err.message : String(err),
-              cause: err instanceof Error ? err : undefined,
               recoverable: true
+            }
+            if (err instanceof Error) {
+              error.cause = err
             }
             this.failedObjects.set(obj.sha, error)
             errors.push(error)
@@ -616,11 +625,13 @@ export class LooseToBundleMigrator {
       }
 
       // Flush any remaining objects in the current bundle
-      if (this.currentBundle && this.currentBundle.objects.length > 0) {
+      // TypeScript control-flow analysis doesn't track changes through async migrateObject
+      const remainingBundle = this.currentBundle as PendingBundle | null
+      if (remainingBundle !== null && remainingBundle.objects.length > 0) {
         if (!config.dryRun) {
           await this.flushCurrentBundle()
         } else {
-          this.createdBundleIds.push(this.currentBundle.id)
+          this.createdBundleIds.push(remainingBundle.id)
         }
       }
 
@@ -764,10 +775,13 @@ export class LooseToBundleMigrator {
     let cursor: string | undefined
 
     do {
-      const result = await this.r2.list({
+      const listOptions: { prefix: string; cursor?: string } = {
         prefix: this.config.looseObjectPrefix,
-        cursor
-      })
+      }
+      if (cursor !== undefined) {
+        listOptions.cursor = cursor
+      }
+      const result = await this.r2.list(listOptions)
 
       for (const obj of result.objects) {
         const sha = extractShaFromKey(obj.key, this.config.looseObjectPrefix)
@@ -813,7 +827,8 @@ export class LooseToBundleMigrator {
       )
     }
     const header = decoder.decode(data.slice(0, nullIndex))
-    const [type] = header.split(' ')
+    const headerParts = header.split(' ')
+    const type = headerParts[0] ?? 'blob'
 
     // Initialize bundle if needed
     if (!this.currentBundle) {
@@ -933,12 +948,15 @@ export class LooseToBundleMigrator {
           })
         }
       } catch (err) {
-        errors.push({
+        const verifyError: MigrationObjectError = {
           sha: obj.sha,
           message: `Verification failed: ${err instanceof Error ? err.message : String(err)}`,
-          cause: err instanceof Error ? err : undefined,
           recoverable: true
-        })
+        }
+        if (err instanceof Error) {
+          verifyError.cause = err
+        }
+        errors.push(verifyError)
       }
     }
 
@@ -958,12 +976,15 @@ export class LooseToBundleMigrator {
           cleaned++
         } catch (err) {
           // Log but don't fail on cleanup errors
-          this.config.onError?.({
+          const cleanupError: MigrationObjectError = {
             sha: obj.sha,
             message: `Failed to delete loose object: ${err instanceof Error ? err.message : String(err)}`,
-            cause: err instanceof Error ? err : undefined,
             recoverable: true
-          })
+          }
+          if (err instanceof Error) {
+            cleanupError.cause = err
+          }
+          this.config.onError?.(cleanupError)
         }
       }
     }
@@ -1001,10 +1022,11 @@ export class LooseToBundleMigrator {
       migrationId
     )
     const rows = result.toArray() as Array<{ data: string }>
-    if (rows.length === 0) {
+    const firstRow = rows[0]
+    if (rows.length === 0 || !firstRow) {
       return null
     }
-    return JSON.parse(rows[0].data) as MigrationCheckpoint
+    return JSON.parse(firstRow.data) as MigrationCheckpoint
   }
 
   /**
@@ -1060,15 +1082,17 @@ export async function runMigrationCLI(
     verify: options.verify ?? true,
     cleanup: options.cleanup ?? false,
     maxBundleSize: options.maxBundleSize ?? DEFAULT_MAX_BUNDLE_SIZE,
-    onProgress: options.verbose ? (p) => {
+  }
+  if (options.verbose) {
+    config.onProgress = (p) => {
       console.log(
         `[${p.phase}] ${p.processedObjects}/${p.totalObjects} objects, ` +
         `${p.bundlesCreated} bundles, ${formatBytes(p.bytesProcessed)} processed`
       )
-    } : undefined,
-    onError: options.verbose ? (e) => {
+    }
+    config.onError = (e) => {
       console.error(`Error migrating ${e.sha}: ${e.message}`)
-    } : undefined
+    }
   }
 
   const migrator = new LooseToBundleMigrator(storage, r2, config)

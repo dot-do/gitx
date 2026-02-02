@@ -219,7 +219,9 @@ export function parseRefAdvertisements(lines) {
         const match = line.match(/^([0-9a-f]{40})\s+(.+)$/);
         if (match) {
             const sha = match[1];
-            let name = match[2];
+            const name = match[2];
+            if (sha === undefined || name === undefined)
+                continue;
             if (name.endsWith('^{}')) {
                 const baseName = name.slice(0, -3);
                 const tagRef = refs.find(r => r.name === baseName);

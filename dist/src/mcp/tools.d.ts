@@ -43,7 +43,7 @@
  * })
  */
 import { RefStore } from '../ops/branch';
-import type { CommitObject, TreeObject } from '../types/objects';
+import type { CommitObject, TreeObject, ObjectType } from '../types/objects';
 /**
  * Repository context for MCP tool operations.
  *
@@ -84,7 +84,7 @@ export interface RepositoryContext {
          * @returns The object with its type and data, or null if not found
          */
         getObject(sha: string): Promise<{
-            type: string;
+            type: ObjectType;
             data: Uint8Array;
         } | null>;
         /**
@@ -111,7 +111,7 @@ export interface RepositoryContext {
          * @param data - The raw object data
          * @returns The SHA of the stored object
          */
-        storeObject(type: string, data: Uint8Array): Promise<string>;
+        storeObject(type: ObjectType, data: Uint8Array): Promise<string>;
         /**
          * Check if an object exists.
          * @param sha - The object SHA to check
@@ -545,4 +545,20 @@ export declare function listTools(): Array<Omit<MCPTool, 'handler'>>;
  * }
  */
 export declare function getTool(name: string): MCPTool | undefined;
+import type { GitBinding } from './tools/do';
+import { createGitTools } from './tools/index';
+export type { GitBinding };
+export { createGitTools };
+/**
+ * Create a GitBinding from a RepositoryContext.
+ *
+ * This bridges the old per-tool handler pattern to the new search/fetch/do
+ * surface by implementing the GitBinding interface on top of RepositoryContext.
+ * Each GitBinding method delegates to the same underlying operations that the
+ * individual git_* tool handlers use.
+ *
+ * @param ctx - The repository context providing object store, ref store, etc.
+ * @returns A GitBinding suitable for use with createGitTools()
+ */
+export declare function createGitBindingFromContext(ctx: RepositoryContext): GitBinding;
 //# sourceMappingURL=tools.d.ts.map

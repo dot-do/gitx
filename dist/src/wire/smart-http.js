@@ -35,7 +35,7 @@
  * })
  * ```
  */
-import { encodePktLine, pktLineStream, FLUSH_PKT } from './pkt-line';
+import { encodePktLine, pktLineStream, FLUSH_PKT, MAX_PKT_LINE_DATA } from './pkt-line';
 /**
  * Content-Type for git-upload-pack advertisement response.
  * @see {@link https://git-scm.com/docs/http-protocol#_smart_server_response}
@@ -82,6 +82,27 @@ export const CONTENT_TYPE_RECEIVE_PACK_RESULT = 'application/x-git-receive-pack-
 export const ZERO_SHA = '0000000000000000000000000000000000000000';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+// =============================================================================
+// Internal Helper Functions
+// =============================================================================
+/**
+ * HTTP status code to status text mapping.
+ * @internal
+ */
+const HTTP_STATUS_TEXT = {
+    200: 'OK',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    415: 'Unsupported Media Type',
+    500: 'Internal Server Error',
+};
+/**
+ * Regular expression for validating SHA-1 hashes (40 hexadecimal characters).
+ * @internal
+ */
+const SHA1_REGEX = /^[0-9a-f]{40}$/i;
 /**
  * Get HTTP status text from status code.
  *
@@ -91,16 +112,7 @@ const decoder = new TextDecoder();
  * @internal
  */
 function getStatusText(statusCode) {
-    const statusTexts = {
-        200: 'OK',
-        400: 'Bad Request',
-        401: 'Unauthorized',
-        403: 'Forbidden',
-        404: 'Not Found',
-        415: 'Unsupported Media Type',
-        500: 'Internal Server Error',
-    };
-    return statusTexts[statusCode] || 'Unknown';
+    return HTTP_STATUS_TEXT[statusCode] || 'Unknown';
 }
 /**
  * Check if a string is a valid SHA-1 hex string (40 characters).
@@ -111,7 +123,58 @@ function getStatusText(statusCode) {
  * @internal
  */
 function isValidSha(sha) {
-    return /^[0-9a-f]{40}$/i.test(sha);
+    return SHA1_REGEX.test(sha);
+}
+/**
+ * Validates an array of SHA strings and returns an error response if any are invalid.
+ *
+ * @param shas - Array of SHA strings to validate
+ * @param fieldName - Name of the field for error message (e.g., 'want', 'have')
+ * @returns Error response if validation fails, undefined if all valid
+ *
+ * @internal
+ */
+function validateShaArray(shas, fieldName) {
+    for (const sha of shas) {
+        if (!isValidSha(sha)) {
+            return createErrorResponse(400, `Invalid SHA format in ${fieldName}`);
+        }
+    }
+    return undefined;
+}
+/**
+ * Validates that a request has a body.
+ *
+ * @param body - Request body to validate
+ * @returns Error response if body is missing, undefined if present
+ *
+ * @internal
+ */
+function validateRequestBody(body) {
+    if (!body) {
+        return createErrorResponse(400, 'Missing request body');
+    }
+    return undefined;
+}
+/**
+ * Checks repository existence and permission for a given service.
+ *
+ * @param repository - Repository provider
+ * @param service - Git service to check permission for
+ * @returns Error response if checks fail, undefined if all checks pass
+ *
+ * @internal
+ */
+async function validateRepositoryAccess(repository, service) {
+    const exists = await repository.exists();
+    if (!exists) {
+        return createErrorResponse(404, 'Repository not found');
+    }
+    const hasPermission = await repository.hasPermission(service);
+    if (!hasPermission) {
+        return createErrorResponse(403, 'Permission denied');
+    }
+    return undefined;
 }
 /**
  * Handle GET /info/refs requests for ref discovery.
@@ -157,40 +220,71 @@ function isValidSha(sha) {
  * ```
  */
 export async function handleInfoRefs(request, repository, capabilities) {
-    // Check service parameter
+    // Validate service parameter
     const service = request.query.service;
     if (!service) {
         return createErrorResponse(400, 'Missing service parameter');
     }
-    if (service !== 'git-upload-pack' && service !== 'git-receive-pack') {
+    if (!isValidGitService(service)) {
         return createErrorResponse(400, 'Invalid service parameter');
     }
-    // Check if repository exists
-    const exists = await repository.exists();
-    if (!exists) {
-        return createErrorResponse(404, 'Repository not found');
+    // Validate repository access
+    const accessError = await validateRepositoryAccess(repository, service);
+    if (accessError) {
+        return accessError;
     }
-    // Check permission
-    const hasPermission = await repository.hasPermission(service);
-    if (!hasPermission) {
-        return createErrorResponse(403, 'Permission denied');
-    }
-    // Get refs
+    // Generate response
     const refs = await repository.getRefs();
-    // Format response
     const body = formatRefAdvertisement(service, refs, capabilities);
-    // Get content type
-    const contentType = service === 'git-upload-pack'
+    const contentType = getContentTypeForAdvertisement(service);
+    return createSuccessResponse(body, contentType, { noCache: true });
+}
+/**
+ * Check if a string is a valid Git service name.
+ *
+ * @param service - Service name to validate
+ * @returns True if the service is valid
+ *
+ * @internal
+ */
+function isValidGitService(service) {
+    return service === 'git-upload-pack' || service === 'git-receive-pack';
+}
+/**
+ * Get the Content-Type header for ref advertisement based on service.
+ *
+ * @param service - Git service
+ * @returns Appropriate Content-Type header value
+ *
+ * @internal
+ */
+function getContentTypeForAdvertisement(service) {
+    return service === 'git-upload-pack'
         ? CONTENT_TYPE_UPLOAD_PACK_ADVERTISEMENT
         : CONTENT_TYPE_RECEIVE_PACK_ADVERTISEMENT;
+}
+/**
+ * Create a successful HTTP response.
+ *
+ * @param body - Response body
+ * @param contentType - Content-Type header value
+ * @param options - Additional response options
+ * @returns SmartHTTPResponse object
+ *
+ * @internal
+ */
+function createSuccessResponse(body, contentType, options) {
+    const headers = {
+        'Content-Type': contentType,
+    };
+    if (options?.noCache) {
+        headers['Cache-Control'] = 'no-cache';
+        headers['Pragma'] = 'no-cache';
+    }
     return {
         status: 200,
         statusText: 'OK',
-        headers: {
-            'Content-Type': contentType,
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-        },
+        headers,
         body,
     };
 }
@@ -231,54 +325,84 @@ export async function handleInfoRefs(request, repository, capabilities) {
  * ```
  */
 export async function handleUploadPack(request, repository) {
-    // Check content type
-    const contentType = request.headers['Content-Type'];
-    if (!validateContentType(contentType, CONTENT_TYPE_UPLOAD_PACK_REQUEST)) {
-        return createErrorResponse(415, 'Invalid content type');
+    // Validate content type
+    const contentTypeError = validateExpectedContentType(request.headers['Content-Type'], CONTENT_TYPE_UPLOAD_PACK_REQUEST);
+    if (contentTypeError) {
+        return contentTypeError;
     }
-    // Check body
-    if (!request.body) {
-        return createErrorResponse(400, 'Missing request body');
+    // Validate request body
+    const bodyError = validateRequestBody(request.body);
+    if (bodyError) {
+        return bodyError;
     }
-    // Check permission
-    const hasPermission = await repository.hasPermission('git-upload-pack');
-    if (!hasPermission) {
-        return createErrorResponse(403, 'Permission denied');
+    // Validate permission
+    const permissionError = await validatePermission(repository, 'git-upload-pack');
+    if (permissionError) {
+        return permissionError;
     }
     // Parse request
     let parsed;
     try {
         parsed = parseUploadPackRequest(request.body);
     }
-    catch (e) {
+    catch {
         return createErrorResponse(400, 'Malformed request');
     }
-    // Validate SHA format
-    for (const want of parsed.wants) {
-        if (!isValidSha(want)) {
-            return createErrorResponse(400, 'Invalid SHA format in want');
-        }
-    }
-    for (const have of parsed.haves) {
-        if (!isValidSha(have)) {
-            return createErrorResponse(400, 'Invalid SHA format in have');
-        }
-    }
-    // Check for side-band capability
-    const useSideBand = parsed.capabilities.includes('side-band-64k') || parsed.capabilities.includes('side-band');
-    // Get packfile from repository
+    // Validate SHA formats
+    const wantError = validateShaArray(parsed.wants, 'want');
+    if (wantError)
+        return wantError;
+    const haveError = validateShaArray(parsed.haves, 'have');
+    if (haveError)
+        return haveError;
+    // Generate packfile response
+    const useSideBand = hasSideBandCapability(parsed.capabilities);
     const packData = await repository.uploadPack(parsed.wants, parsed.haves, parsed.capabilities);
-    // Format response (with ACK if there are haves, NAK otherwise)
     const hasCommonObjects = parsed.haves.length > 0;
     const body = formatUploadPackResponse(packData, useSideBand, hasCommonObjects, parsed.haves);
-    return {
-        status: 200,
-        statusText: 'OK',
-        headers: {
-            'Content-Type': CONTENT_TYPE_UPLOAD_PACK_RESULT,
-        },
-        body,
-    };
+    return createSuccessResponse(body, CONTENT_TYPE_UPLOAD_PACK_RESULT);
+}
+/**
+ * Validates the Content-Type header matches the expected type.
+ *
+ * @param contentType - Actual Content-Type header value
+ * @param expectedType - Expected Content-Type
+ * @returns Error response if validation fails, undefined if valid
+ *
+ * @internal
+ */
+function validateExpectedContentType(contentType, expectedType) {
+    if (!validateContentType(contentType, expectedType)) {
+        return createErrorResponse(415, 'Invalid content type');
+    }
+    return undefined;
+}
+/**
+ * Validates permission for a Git service.
+ *
+ * @param repository - Repository provider
+ * @param service - Git service to check
+ * @returns Error response if permission denied, undefined if granted
+ *
+ * @internal
+ */
+async function validatePermission(repository, service) {
+    const hasPermission = await repository.hasPermission(service);
+    if (!hasPermission) {
+        return createErrorResponse(403, 'Permission denied');
+    }
+    return undefined;
+}
+/**
+ * Check if the capabilities list includes side-band support.
+ *
+ * @param capabilities - List of capability strings
+ * @returns True if side-band or side-band-64k is present
+ *
+ * @internal
+ */
+function hasSideBandCapability(capabilities) {
+    return capabilities.includes('side-band-64k') || capabilities.includes('side-band');
 }
 /**
  * Handle POST /git-receive-pack requests for push data transfer.
@@ -317,47 +441,59 @@ export async function handleUploadPack(request, repository) {
  * ```
  */
 export async function handleReceivePack(request, repository) {
-    // Check content type
-    const contentType = request.headers['Content-Type'];
-    if (!validateContentType(contentType, CONTENT_TYPE_RECEIVE_PACK_REQUEST)) {
-        return createErrorResponse(415, 'Invalid content type');
+    // Validate content type
+    const contentTypeError = validateExpectedContentType(request.headers['Content-Type'], CONTENT_TYPE_RECEIVE_PACK_REQUEST);
+    if (contentTypeError) {
+        return contentTypeError;
     }
-    // Check body
-    if (!request.body) {
-        return createErrorResponse(400, 'Missing request body');
+    // Validate request body
+    const bodyError = validateRequestBody(request.body);
+    if (bodyError) {
+        return bodyError;
     }
-    // Check permission
-    const hasPermission = await repository.hasPermission('git-receive-pack');
-    if (!hasPermission) {
-        return createErrorResponse(403, 'Permission denied');
+    // Validate permission
+    const permissionError = await validatePermission(repository, 'git-receive-pack');
+    if (permissionError) {
+        return permissionError;
     }
     // Parse request
     let parsed;
     try {
         parsed = parseReceivePackRequest(request.body);
     }
-    catch (e) {
+    catch {
         return createErrorResponse(400, 'Malformed request');
     }
     // Validate SHA format in commands
-    for (const cmd of parsed.commands) {
-        if (!isValidSha(cmd.oldSha) || !isValidSha(cmd.newSha)) {
-            return createErrorResponse(400, 'Invalid SHA format in command');
-        }
+    const commandError = validateRefUpdateCommands(parsed.commands);
+    if (commandError) {
+        return commandError;
     }
     // Process the push
     const result = await repository.receivePack(parsed.packfile, parsed.commands);
     // Format response
     const body = formatReceivePackResponse(result);
-    return {
-        status: 200,
-        statusText: 'OK',
-        headers: {
-            'Content-Type': CONTENT_TYPE_RECEIVE_PACK_RESULT,
-        },
-        body,
-    };
+    return createSuccessResponse(body, CONTENT_TYPE_RECEIVE_PACK_RESULT);
 }
+/**
+ * Validates SHA format in all ref update commands.
+ *
+ * @param commands - Array of ref update commands
+ * @returns Error response if validation fails, undefined if all valid
+ *
+ * @internal
+ */
+function validateRefUpdateCommands(commands) {
+    for (const cmd of commands) {
+        if (!isValidSha(cmd.oldSha) || !isValidSha(cmd.newSha)) {
+            return createErrorResponse(400, 'Invalid SHA format in command');
+        }
+    }
+    return undefined;
+}
+// =============================================================================
+// Response Formatting Functions
+// =============================================================================
 /**
  * Format ref advertisement for info/refs response.
  *
@@ -390,45 +526,86 @@ export async function handleReceivePack(request, repository) {
  * ```
  */
 export function formatRefAdvertisement(service, refs, capabilities) {
-    let output = '';
-    // Service announcement
-    output += encodePktLine(`# service=${service}\n`);
-    output += FLUSH_PKT;
-    // Capabilities string
-    const capStrings = capabilities ? capabilitiesToStrings(capabilities) : [];
-    const capLine = capStrings.length > 0 ? capStrings.join(' ') : '';
+    const lines = [];
+    // Service announcement section
+    lines.push(encodePktLine(`# service=${service}\n`));
+    lines.push(FLUSH_PKT);
+    // Build capabilities string
+    const capabilitiesString = buildCapabilitiesString(capabilities);
+    // Refs section
     if (refs.length === 0) {
-        // Empty repo - send capabilities with zero SHA
-        if (capLine) {
-            output += encodePktLine(`${ZERO_SHA} capabilities^{}\x00${capLine}\n`);
-        }
-        else {
-            output += encodePktLine(`${ZERO_SHA} capabilities^{}\n`);
-        }
+        // Empty repository - send capabilities with zero SHA placeholder
+        lines.push(formatRefLineWithCapabilities(ZERO_SHA, 'capabilities^{}', capabilitiesString));
     }
     else {
         // First ref includes capabilities
-        const firstRef = refs[0];
-        if (capLine) {
-            output += encodePktLine(`${firstRef.sha} ${firstRef.name}\x00${capLine}\n`);
-        }
-        else {
-            output += encodePktLine(`${firstRef.sha} ${firstRef.name}\n`);
-        }
-        // Remaining refs
+        lines.push(formatRefLineWithCapabilities(refs[0].sha, refs[0].name, capabilitiesString));
+        // Remaining refs (without capabilities)
         for (let i = 1; i < refs.length; i++) {
-            const ref = refs[i];
-            output += encodePktLine(`${ref.sha} ${ref.name}\n`);
+            lines.push(formatRefLine(refs[i].sha, refs[i].name));
         }
-        // Add peeled refs for annotated tags
-        for (const ref of refs) {
-            if (ref.peeled) {
-                output += encodePktLine(`${ref.peeled} ${ref.name}^{}\n`);
-            }
+        // Peeled refs for annotated tags
+        lines.push(...formatPeeledRefs(refs));
+    }
+    lines.push(FLUSH_PKT);
+    return encoder.encode(lines.join(''));
+}
+/**
+ * Build a capabilities string from ServerCapabilities object.
+ *
+ * @param capabilities - Server capabilities
+ * @returns Space-separated capabilities string, or empty string if none
+ *
+ * @internal
+ */
+function buildCapabilitiesString(capabilities) {
+    if (!capabilities)
+        return '';
+    const capStrings = capabilitiesToStrings(capabilities);
+    return capStrings.length > 0 ? capStrings.join(' ') : '';
+}
+/**
+ * Format a ref line with capabilities (NUL-separated).
+ *
+ * @param sha - Object SHA
+ * @param refName - Reference name
+ * @param capabilitiesString - Capabilities string (may be empty)
+ * @returns Formatted pkt-line string
+ *
+ * @internal
+ */
+function formatRefLineWithCapabilities(sha, refName, capabilitiesString) {
+    const capPart = capabilitiesString ? `\x00${capabilitiesString}` : '';
+    return encodePktLine(`${sha} ${refName}${capPart}\n`);
+}
+/**
+ * Format a simple ref line without capabilities.
+ *
+ * @param sha - Object SHA
+ * @param refName - Reference name
+ * @returns Formatted pkt-line string
+ *
+ * @internal
+ */
+function formatRefLine(sha, refName) {
+    return encodePktLine(`${sha} ${refName}\n`);
+}
+/**
+ * Format peeled ref lines for annotated tags.
+ *
+ * @param refs - Array of refs
+ * @returns Array of pkt-line strings for peeled refs
+ *
+ * @internal
+ */
+function formatPeeledRefs(refs) {
+    const peeledLines = [];
+    for (const ref of refs) {
+        if (ref.peeled) {
+            peeledLines.push(encodePktLine(`${ref.peeled} ${ref.name}^{}\n`));
         }
     }
-    output += FLUSH_PKT;
-    return encoder.encode(output);
+    return peeledLines;
 }
 /**
  * Parse upload-pack request body.
@@ -637,54 +814,66 @@ export function parseReceivePackRequest(body) {
  * ```
  */
 export function formatUploadPackResponse(packData, useSideBand, hasCommonObjects, haves) {
-    let output = '';
+    // Collect all output parts
+    const parts = [];
     // Send ACK or NAK
     if (hasCommonObjects && haves && haves.length > 0) {
         // ACK the first have
-        output += encodePktLine(`ACK ${haves[0]}\n`);
+        parts.push(encoder.encode(encodePktLine(`ACK ${haves[0]}\n`)));
     }
     else {
-        output += encodePktLine('NAK\n');
+        parts.push(encoder.encode(encodePktLine('NAK\n')));
     }
     if (useSideBand) {
         // Side-band format: data on channel 1, progress on channel 2, error on channel 3
         // Each sideband packet: length (4 hex) + channel byte + data
-        const channel1 = new Uint8Array(1 + packData.length);
-        channel1[0] = 1; // Channel 1 for pack data
-        channel1.set(packData, 1);
-        // Encode as pkt-line
-        const pktLine = encodePktLine(channel1);
-        if (typeof pktLine === 'string') {
-            output += pktLine;
-        }
-        else {
-            // Binary data - need to handle differently
-            const headerBytes = encoder.encode(output);
-            const result = new Uint8Array(headerBytes.length + pktLine.length + 4);
-            result.set(headerBytes, 0);
-            result.set(pktLine, headerBytes.length);
-            result.set(encoder.encode(FLUSH_PKT), headerBytes.length + pktLine.length);
-            return result;
+        // For large pack data, we need to split into multiple pkt-line packets
+        // Maximum data per sideband packet: MAX_PKT_LINE_DATA - 1 (for channel byte)
+        const maxChunkSize = MAX_PKT_LINE_DATA - 1;
+        let offset = 0;
+        while (offset < packData.length) {
+            const chunkSize = Math.min(maxChunkSize, packData.length - offset);
+            const chunk = new Uint8Array(1 + chunkSize);
+            chunk[0] = 1; // Channel 1 for pack data
+            chunk.set(packData.subarray(offset, offset + chunkSize), 1);
+            const pktLine = encodePktLine(chunk);
+            if (typeof pktLine === 'string') {
+                parts.push(encoder.encode(pktLine));
+            }
+            else {
+                parts.push(pktLine);
+            }
+            offset += chunkSize;
         }
     }
     else {
         // No side-band - include pack data directly
-        // Pack data is binary, so encode it as pkt-line
-        const pktLine = encodePktLine(packData);
-        if (typeof pktLine === 'string') {
-            output += pktLine;
-        }
-        else {
-            const headerBytes = encoder.encode(output);
-            const result = new Uint8Array(headerBytes.length + pktLine.length + 4);
-            result.set(headerBytes, 0);
-            result.set(pktLine, headerBytes.length);
-            result.set(encoder.encode(FLUSH_PKT), headerBytes.length + pktLine.length);
-            return result;
+        // For large pack data, we need to split into multiple pkt-line packets
+        let offset = 0;
+        while (offset < packData.length) {
+            const chunkSize = Math.min(MAX_PKT_LINE_DATA, packData.length - offset);
+            const chunk = packData.subarray(offset, offset + chunkSize);
+            const pktLine = encodePktLine(chunk);
+            if (typeof pktLine === 'string') {
+                parts.push(encoder.encode(pktLine));
+            }
+            else {
+                parts.push(pktLine);
+            }
+            offset += chunkSize;
         }
     }
-    output += FLUSH_PKT;
-    return encoder.encode(output);
+    // Add flush packet
+    parts.push(encoder.encode(FLUSH_PKT));
+    // Combine all parts into single Uint8Array
+    const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+    const result = new Uint8Array(totalLength);
+    let resultOffset = 0;
+    for (const part of parts) {
+        result.set(part, resultOffset);
+        resultOffset += part.length;
+    }
+    return result;
 }
 /**
  * Format receive-pack response.
@@ -735,6 +924,42 @@ export function formatReceivePackResponse(result) {
     output += FLUSH_PKT;
     return encoder.encode(output);
 }
+// =============================================================================
+// Capability Conversion Utilities
+// =============================================================================
+/**
+ * Mapping from ServerCapabilities property names to wire protocol capability strings.
+ * Used for converting between object form and string form.
+ * @internal
+ */
+const CAPABILITY_PROPERTY_TO_WIRE = [
+    ['multiAck', 'multi_ack'],
+    ['multiAckDetailed', 'multi_ack_detailed'],
+    ['thinPack', 'thin-pack'],
+    ['sideBand', 'side-band'],
+    ['sideBand64k', 'side-band-64k'],
+    ['ofsDelta', 'ofs-delta'],
+    ['shallow', 'shallow'],
+    ['deepenSince', 'deepen-since'],
+    ['deepenNot', 'deepen-not'],
+    ['deepenRelative', 'deepen-relative'],
+    ['noProgress', 'no-progress'],
+    ['includeTag', 'include-tag'],
+    ['reportStatus', 'report-status'],
+    ['reportStatusV2', 'report-status-v2'],
+    ['deleteRefs', 'delete-refs'],
+    ['quiet', 'quiet'],
+    ['atomic', 'atomic'],
+    ['pushOptions', 'push-options'],
+    ['allowTipSha1InWant', 'allow-tip-sha1-in-want'],
+    ['allowReachableSha1InWant', 'allow-reachable-sha1-in-want'],
+    ['filter', 'filter'],
+];
+/**
+ * Mapping from wire protocol capability strings to ServerCapabilities property names.
+ * @internal
+ */
+const CAPABILITY_WIRE_TO_PROPERTY = new Map(CAPABILITY_PROPERTY_TO_WIRE.map(([prop, wire]) => [wire, prop]));
 /**
  * Convert ServerCapabilities to capability string list.
  *
@@ -760,52 +985,19 @@ export function formatReceivePackResponse(result) {
  */
 export function capabilitiesToStrings(capabilities) {
     const result = [];
-    if (capabilities.multiAck)
-        result.push('multi_ack');
-    if (capabilities.multiAckDetailed)
-        result.push('multi_ack_detailed');
-    if (capabilities.thinPack)
-        result.push('thin-pack');
-    if (capabilities.sideBand)
-        result.push('side-band');
-    if (capabilities.sideBand64k)
-        result.push('side-band-64k');
-    if (capabilities.ofsDelta)
-        result.push('ofs-delta');
-    if (capabilities.shallow)
-        result.push('shallow');
-    if (capabilities.deepenSince)
-        result.push('deepen-since');
-    if (capabilities.deepenNot)
-        result.push('deepen-not');
-    if (capabilities.deepenRelative)
-        result.push('deepen-relative');
-    if (capabilities.noProgress)
-        result.push('no-progress');
-    if (capabilities.includeTag)
-        result.push('include-tag');
-    if (capabilities.reportStatus)
-        result.push('report-status');
-    if (capabilities.reportStatusV2)
-        result.push('report-status-v2');
-    if (capabilities.deleteRefs)
-        result.push('delete-refs');
-    if (capabilities.quiet)
-        result.push('quiet');
-    if (capabilities.atomic)
-        result.push('atomic');
-    if (capabilities.pushOptions)
-        result.push('push-options');
-    if (capabilities.allowTipSha1InWant)
-        result.push('allow-tip-sha1-in-want');
-    if (capabilities.allowReachableSha1InWant)
-        result.push('allow-reachable-sha1-in-want');
-    if (capabilities.filter)
-        result.push('filter');
-    if (capabilities.agent)
+    // Process boolean capabilities
+    for (const [propName, wireName] of CAPABILITY_PROPERTY_TO_WIRE) {
+        if (capabilities[propName]) {
+            result.push(wireName);
+        }
+    }
+    // Process value capabilities (agent and objectFormat)
+    if (capabilities.agent) {
         result.push(`agent=${capabilities.agent}`);
-    if (capabilities.objectFormat)
+    }
+    if (capabilities.objectFormat) {
         result.push(`object-format=${capabilities.objectFormat}`);
+    }
     return result;
 }
 /**
@@ -830,52 +1022,21 @@ export function capabilitiesToStrings(capabilities) {
 export function parseCapabilities(capStrings) {
     const result = {};
     for (const cap of capStrings) {
-        if (cap === 'multi_ack')
-            result.multiAck = true;
-        else if (cap === 'multi_ack_detailed')
-            result.multiAckDetailed = true;
-        else if (cap === 'thin-pack')
-            result.thinPack = true;
-        else if (cap === 'side-band')
-            result.sideBand = true;
-        else if (cap === 'side-band-64k')
-            result.sideBand64k = true;
-        else if (cap === 'ofs-delta')
-            result.ofsDelta = true;
-        else if (cap === 'shallow')
-            result.shallow = true;
-        else if (cap === 'deepen-since')
-            result.deepenSince = true;
-        else if (cap === 'deepen-not')
-            result.deepenNot = true;
-        else if (cap === 'deepen-relative')
-            result.deepenRelative = true;
-        else if (cap === 'no-progress')
-            result.noProgress = true;
-        else if (cap === 'include-tag')
-            result.includeTag = true;
-        else if (cap === 'report-status')
-            result.reportStatus = true;
-        else if (cap === 'report-status-v2')
-            result.reportStatusV2 = true;
-        else if (cap === 'delete-refs')
-            result.deleteRefs = true;
-        else if (cap === 'quiet')
-            result.quiet = true;
-        else if (cap === 'atomic')
-            result.atomic = true;
-        else if (cap === 'push-options')
-            result.pushOptions = true;
-        else if (cap === 'allow-tip-sha1-in-want')
-            result.allowTipSha1InWant = true;
-        else if (cap === 'allow-reachable-sha1-in-want')
-            result.allowReachableSha1InWant = true;
-        else if (cap === 'filter')
-            result.filter = true;
-        else if (cap.startsWith('agent='))
+        // Check for value capabilities first (agent=value, object-format=value)
+        if (cap.startsWith('agent=')) {
             result.agent = cap.slice(6);
-        else if (cap.startsWith('object-format='))
+            continue;
+        }
+        if (cap.startsWith('object-format=')) {
             result.objectFormat = cap.slice(14);
+            continue;
+        }
+        // Check for boolean capabilities using the mapping
+        const propName = CAPABILITY_WIRE_TO_PROPERTY.get(cap);
+        if (propName) {
+            ;
+            result[propName] = true;
+        }
         // Unknown capabilities are ignored
     }
     return result;

@@ -772,4 +772,285 @@ export async function isRefLocked(refName, backend) {
     }
     return false;
 }
+/**
+ * Zero SHA used for ref creation/deletion in reflog.
+ */
+export const ZERO_SHA = '0000000000000000000000000000000000000000';
+/**
+ * Parse a single reflog line.
+ *
+ * Format: <old-sha> <new-sha> <committer> <timestamp> <tz> <tab><message>
+ * Example: abc123... def456... John Doe <john@example.com> 1234567890 -0500	commit: message
+ */
+export function parseReflogLine(line) {
+    const trimmed = line.trim();
+    if (!trimmed)
+        return null;
+    // Match: oldSha newSha name <email> timestamp tz\tmessage
+    const match = trimmed.match(/^([0-9a-f]{40})\s+([0-9a-f]{40})\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})\t(.*)$/);
+    if (!match) {
+        // Try alternate format without tab (some implementations)
+        const altMatch = trimmed.match(/^([0-9a-f]{40})\s+([0-9a-f]{40})\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})\s+(.*)$/);
+        if (!altMatch)
+            return null;
+        const [, oldSha, newSha, name, email, ts, tz, message] = altMatch;
+        // These are guaranteed to exist by the regex match
+        if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined)
+            return null;
+        return {
+            oldSha: oldSha.toLowerCase(),
+            newSha: newSha.toLowerCase(),
+            committer: { name, email },
+            timestamp: parseInt(ts, 10),
+            timezoneOffset: parseTimezoneOffset(tz),
+            message,
+        };
+    }
+    const [, oldSha, newSha, name, email, ts, tz, message] = match;
+    // These are guaranteed to exist by the regex match
+    if (!oldSha || !newSha || !name || !email || !ts || !tz || message === undefined)
+        return null;
+    return {
+        oldSha: oldSha.toLowerCase(),
+        newSha: newSha.toLowerCase(),
+        committer: { name, email },
+        timestamp: parseInt(ts, 10),
+        timezoneOffset: parseTimezoneOffset(tz),
+        message,
+    };
+}
+/**
+ * Parse timezone offset string (+0500 or -0800) to minutes.
+ */
+function parseTimezoneOffset(tz) {
+    const sign = tz.startsWith('-') ? -1 : 1;
+    const hours = parseInt(tz.slice(1, 3), 10);
+    const minutes = parseInt(tz.slice(3, 5), 10);
+    return sign * (hours * 60 + minutes);
+}
+/**
+ * Format timezone offset in minutes to string (+0500 or -0800).
+ */
+function formatTimezoneOffset(offset) {
+    const sign = offset >= 0 ? '+' : '-';
+    const abs = Math.abs(offset);
+    const hours = Math.floor(abs / 60);
+    const minutes = abs % 60;
+    return `${sign}${hours.toString().padStart(2, '0')}${minutes.toString().padStart(2, '0')}`;
+}
+/**
+ * Serialize a reflog entry to a line.
+ */
+export function serializeReflogEntry(entry) {
+    const { oldSha, newSha, committer, timestamp, timezoneOffset, message } = entry;
+    const tz = formatTimezoneOffset(timezoneOffset);
+    return `${oldSha} ${newSha} ${committer.name} <${committer.email}> ${timestamp} ${tz}\t${message}\n`;
+}
+/**
+ * Parse a complete reflog file.
+ *
+ * Returns entries in reverse chronological order (newest first),
+ * which is the standard Git reflog display order.
+ */
+export function parseReflogFile(content) {
+    const lines = content.split(/\r?\n/);
+    const entries = [];
+    for (const line of lines) {
+        const entry = parseReflogLine(line);
+        if (entry) {
+            entries.push(entry);
+        }
+    }
+    // Return in reverse order (newest first) for display
+    return entries.reverse();
+}
+/**
+ * Serialize reflog entries to file content.
+ *
+ * Entries should be in chronological order (oldest first) for storage.
+ */
+export function serializeReflogFile(entries) {
+    // Store in chronological order (oldest first)
+    return entries.map(serializeReflogEntry).join('');
+}
+/**
+ * Create a reflog entry for a ref update.
+ *
+ * @param oldSha - Previous SHA (use ZERO_SHA for creation)
+ * @param newSha - New SHA (use ZERO_SHA for deletion)
+ * @param committer - Who made the change
+ * @param message - Description of the change
+ */
+export function createReflogEntry(oldSha, newSha, committer, message) {
+    const now = new Date();
+    return {
+        oldSha: oldSha.toLowerCase(),
+        newSha: newSha.toLowerCase(),
+        committer,
+        timestamp: Math.floor(now.getTime() / 1000),
+        timezoneOffset: -now.getTimezoneOffset(), // Note: getTimezoneOffset returns opposite sign
+        message,
+    };
+}
+/**
+ * In-memory reflog backend for testing and simple use cases.
+ */
+export class InMemoryReflogBackend {
+    reflogs = new Map();
+    async appendEntry(refName, entry) {
+        const entries = this.reflogs.get(refName) ?? [];
+        entries.push(entry);
+        this.reflogs.set(refName, entries);
+    }
+    async readEntries(refName) {
+        const entries = this.reflogs.get(refName) ?? [];
+        // Return in reverse chronological order (newest first)
+        return [...entries].reverse();
+    }
+    async deleteReflog(refName) {
+        this.reflogs.delete(refName);
+    }
+    async reflogExists(refName) {
+        return this.reflogs.has(refName) && (this.reflogs.get(refName)?.length ?? 0) > 0;
+    }
+    /**
+     * Get raw entries in chronological order (for testing).
+     */
+    getRawEntries(refName) {
+        return [...(this.reflogs.get(refName) ?? [])];
+    }
+    /**
+     * Clear all reflogs (for testing).
+     */
+    clear() {
+        this.reflogs.clear();
+    }
+}
+/**
+ * Reflog manager for tracking ref changes.
+ *
+ * The reflog is Git's safety net - it records every change to refs,
+ * allowing recovery of "lost" commits and understanding ref history.
+ *
+ * @example
+ * ```typescript
+ * const reflog = new ReflogManager(backend)
+ *
+ * // Record a commit
+ * await reflog.recordUpdate('HEAD', oldSha, newSha, 'commit: Add feature')
+ *
+ * // View history
+ * const history = await reflog.getHistory('HEAD', { limit: 10 })
+ * ```
+ */
+export class ReflogManager {
+    backend;
+    defaultCommitter;
+    constructor(backend, defaultCommitter = {
+        name: 'Unknown',
+        email: 'unknown@unknown',
+    }) {
+        this.backend = backend;
+        this.defaultCommitter = defaultCommitter;
+    }
+    /**
+     * Record a ref update in the reflog.
+     *
+     * @param refName - The ref being updated (e.g., 'HEAD', 'refs/heads/main')
+     * @param oldSha - Previous SHA (use ZERO_SHA for creation)
+     * @param newSha - New SHA (use ZERO_SHA for deletion)
+     * @param message - Description of the change
+     * @param committer - Optional committer info (defaults to constructor default)
+     */
+    async recordUpdate(refName, oldSha, newSha, message, committer) {
+        const entry = createReflogEntry(oldSha, newSha, committer ?? this.defaultCommitter, message);
+        await this.backend.appendEntry(refName, entry);
+    }
+    /**
+     * Record a HEAD update (convenience method).
+     */
+    async recordHeadUpdate(oldSha, newSha, message, committer) {
+        await this.recordUpdate('HEAD', oldSha, newSha, message, committer);
+    }
+    /**
+     * Get reflog history for a ref.
+     *
+     * @param refName - The ref to get history for
+     * @param options - Optional limit and offset
+     * @returns Entries in reverse chronological order (newest first)
+     */
+    async getHistory(refName, options) {
+        let entries = await this.backend.readEntries(refName);
+        if (options?.offset) {
+            entries = entries.slice(options.offset);
+        }
+        if (options?.limit) {
+            entries = entries.slice(0, options.limit);
+        }
+        return entries;
+    }
+    /**
+     * Get a specific reflog entry by index.
+     *
+     * @param refName - The ref to look up
+     * @param index - Entry index (0 = newest, @{n} syntax)
+     * @returns The entry or null if not found
+     */
+    async getEntry(refName, index) {
+        const entries = await this.backend.readEntries(refName);
+        return entries[index] ?? null;
+    }
+    /**
+     * Get the SHA at a specific reflog position.
+     *
+     * @param refName - The ref to look up
+     * @param index - Entry index (0 = current, 1 = previous, etc.)
+     * @returns The SHA or null if not found
+     */
+    async getShaAtIndex(refName, index) {
+        const entry = await this.getEntry(refName, index);
+        return entry?.newSha ?? null;
+    }
+    /**
+     * Delete reflog for a ref.
+     */
+    async deleteReflog(refName) {
+        await this.backend.deleteReflog(refName);
+    }
+    /**
+     * Check if a reflog exists for a ref.
+     */
+    async hasReflog(refName) {
+        return this.backend.reflogExists(refName);
+    }
+}
+/**
+ * Validate an atomic update command.
+ */
+export function validateAtomicUpdateCommand(cmd) {
+    if (!isValidRefName(cmd.refName)) {
+        return `Invalid ref name: ${cmd.refName}`;
+    }
+    if (cmd.oldSha !== null && cmd.oldSha !== ZERO_SHA && !SHA_REGEX.test(cmd.oldSha)) {
+        return `Invalid old SHA: ${cmd.oldSha}`;
+    }
+    if (cmd.newSha !== null && cmd.newSha !== ZERO_SHA && !SHA_REGEX.test(cmd.newSha)) {
+        return `Invalid new SHA: ${cmd.newSha}`;
+    }
+    return null;
+}
+/**
+ * Compare-and-swap check for atomic updates.
+ */
+export function casCheck(expectedOld, actualOld) {
+    // null expectedOld means "don't care"
+    if (expectedOld === null)
+        return true;
+    // ZERO_SHA expected means ref should not exist
+    if (expectedOld === ZERO_SHA) {
+        return actualOld === null || actualOld === ZERO_SHA;
+    }
+    // Otherwise must match exactly
+    return actualOld?.toLowerCase() === expectedOld.toLowerCase();
+}
 //# sourceMappingURL=index.js.map

@@ -42,40 +42,11 @@
  *   })
  * })
  */
-import { execSync } from 'child_process';
 import { walkCommits } from '../ops/commit-traversal';
+import { BINARY_CHECK_BYTES } from '../constants';
 import { DiffStatus, diffTrees } from '../ops/tree-diff';
 import { listBranches, createBranch, deleteBranch, getCurrentBranch } from '../ops/branch';
 import { createCommit } from '../ops/commit';
-/**
- * Execute a git command and return the output.
- *
- * @description Helper function to execute git CLI commands synchronously.
- * Used by bash CLI-based MCP tools.
- *
- * @param args - Array of arguments to pass to git
- * @param cwd - Working directory for the command
- * @returns Object with stdout, stderr, and exitCode
- */
-function execGit(args, cwd) {
-    try {
-        const stdout = execSync(['git', ...args].join(' '), {
-            cwd: cwd || process.cwd(),
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            maxBuffer: 10 * 1024 * 1024 // 10MB buffer for large outputs
-        });
-        return { stdout: stdout.toString(), stderr: '', exitCode: 0 };
-    }
-    catch (error) {
-        const execError = error;
-        return {
-            stdout: execError.stdout?.toString() || '',
-            stderr: execError.stderr?.toString() || '',
-            exitCode: execError.status || 1
-        };
-    }
-}
 /**
  * Recursively flatten a tree object into a map of path -> entry.
  * @param objectStore - Object store for fetching trees
@@ -1110,7 +1081,7 @@ export const gitTools = [
                 const timezone = '+0000'; // UTC for simplicity
                 const commitAuthor = {
                     name: author || 'Unknown',
-                    email: email || 'unknown@example.com',
+                    email: email || 'unknown@example.com.ai',
                     timestamp: now,
                     timezone
                 };
@@ -2055,7 +2026,7 @@ export const gitTools = [
                             };
                         }
                         // Check for binary content
-                        const isBinary = blob.some((b, i) => i < 8000 && b === 0);
+                        const isBinary = blob.some((b, i) => i < BINARY_CHECK_BYTES && b === 0);
                         if (isBinary) {
                             // Return base64 encoded binary content
                             const base64 = btoa(String.fromCharCode(...blob));
@@ -2142,35 +2113,14 @@ export const gitTools = [
                     };
                 }
             }
-            // Use bash CLI
-            const args = ['show'];
-            if (format === 'diff') {
-                args.push('--format=');
-            }
-            if (context_lines !== undefined) {
-                args.push(`-U${context_lines}`);
-            }
-            // Handle revision:path syntax
-            if (filePath) {
-                args.push(`${revision}:${filePath}`);
-            }
-            else {
-                args.push(revision);
-            }
-            const result = execGit(args);
-            if (result.exitCode !== 0) {
-                return {
-                    content: [{ type: 'text', text: result.stderr || `git show failed with exit code ${result.exitCode}` }],
-                    isError: true,
-                };
-            }
+            // No repository context and no bash CLI fallback (Workers-compatible)
             return {
-                content: [{ type: 'text', text: result.stdout }],
-                isError: false,
+                content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_show.' }],
+                isError: true,
             };
         },
     },
-    // git_blame tool - uses bash CLI
+    // git_blame tool
     {
         name: 'git_blame',
         description: 'Git blame - show what revision and author last modified each line of a file',
@@ -2358,7 +2308,7 @@ export const gitTools = [
                         };
                     }
                     // Check for binary content (null bytes or binary file signatures)
-                    const hasNullBytes = blob.some((b, i) => i < 8000 && b === 0);
+                    const hasNullBytes = blob.some((b, i) => i < BINARY_CHECK_BYTES && b === 0);
                     // Check for common binary file signatures
                     const isPNG = blob[0] === 0x89 && blob[1] === 0x50 && blob[2] === 0x4e && blob[3] === 0x47;
                     const isJPEG = blob[0] === 0xff && blob[1] === 0xd8 && blob[2] === 0xff;
@@ -2410,34 +2360,14 @@ export const gitTools = [
                     };
                 }
             }
-            // Use bash CLI
-            const args = ['blame'];
-            if (show_email) {
-                args.push('-e');
-            }
-            if (start_line !== undefined || end_line !== undefined) {
-                const start = start_line || 1;
-                const end = end_line || '';
-                args.push(`-L${start},${end}`);
-            }
-            if (revision) {
-                args.push(revision);
-            }
-            args.push('--', filePath);
-            const result = execGit(args);
-            if (result.exitCode !== 0) {
-                return {
-                    content: [{ type: 'text', text: result.stderr || `git blame failed with exit code ${result.exitCode}` }],
-                    isError: true,
-                };
-            }
+            // No repository context and no bash CLI fallback (Workers-compatible)
             return {
-                content: [{ type: 'text', text: result.stdout }],
-                isError: false,
+                content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_blame.' }],
+                isError: true,
             };
         },
     },
-    // git_ls_tree tool - uses bash CLI
+    // git_ls_tree tool
     {
         name: 'git_ls_tree',
         description: 'List the contents of a tree object, showing file names, modes, types, and SHA hashes',
@@ -2633,38 +2563,14 @@ export const gitTools = [
                     };
                 }
             }
-            // Use bash CLI
-            const args = ['ls-tree'];
-            if (recursive) {
-                args.push('-r');
-            }
-            if (show_trees) {
-                args.push('-d');
-            }
-            if (show_size) {
-                args.push('-l');
-            }
-            if (name_only) {
-                args.push('--name-only');
-            }
-            args.push(tree_ish);
-            if (filterPath) {
-                args.push('--', filterPath);
-            }
-            const result = execGit(args);
-            if (result.exitCode !== 0) {
-                return {
-                    content: [{ type: 'text', text: result.stderr || `git ls-tree failed with exit code ${result.exitCode}` }],
-                    isError: true,
-                };
-            }
+            // No repository context and no bash CLI fallback (Workers-compatible)
             return {
-                content: [{ type: 'text', text: result.stdout }],
-                isError: false,
+                content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_ls_tree.' }],
+                isError: true,
             };
         },
     },
-    // git_cat_file tool - uses bash CLI
+    // git_cat_file tool
     {
         name: 'git_cat_file',
         description: 'Show content or type/size information for repository objects',
@@ -2846,34 +2752,10 @@ export const gitTools = [
                     };
                 }
             }
-            // Use bash CLI
-            const args = ['cat-file'];
-            if (show_type) {
-                args.push('-t');
-            }
-            else if (show_size) {
-                args.push('-s');
-            }
-            else if (pretty_print) {
-                args.push('-p');
-            }
-            else if (expectedType && expectedType !== 'auto') {
-                args.push(expectedType);
-            }
-            else {
-                args.push('-p');
-            }
-            args.push(objectRef);
-            const result = execGit(args);
-            if (result.exitCode !== 0) {
-                return {
-                    content: [{ type: 'text', text: result.stderr || `git cat-file failed with exit code ${result.exitCode}` }],
-                    isError: true,
-                };
-            }
+            // No repository context and no bash CLI fallback (Workers-compatible)
             return {
-                content: [{ type: 'text', text: result.stdout }],
-                isError: false,
+                content: [{ type: 'text', text: 'Repository context required. Call setRepositoryContext() before using git_cat_file.' }],
+                isError: true,
             };
         },
     },
@@ -3166,5 +3048,222 @@ export function listTools() {
  */
 export function getTool(name) {
     return toolRegistry.get(name);
+}
+import { createGitTools } from './tools/index';
+export { createGitTools };
+/**
+ * Create a GitBinding from a RepositoryContext.
+ *
+ * This bridges the old per-tool handler pattern to the new search/fetch/do
+ * surface by implementing the GitBinding interface on top of RepositoryContext.
+ * Each GitBinding method delegates to the same underlying operations that the
+ * individual git_* tool handlers use.
+ *
+ * @param ctx - The repository context providing object store, ref store, etc.
+ * @returns A GitBinding suitable for use with createGitTools()
+ */
+export function createGitBindingFromContext(ctx) {
+    /**
+     * Resolve a ref string to a commit SHA.
+     */
+    async function resolveRef(ref) {
+        if (ref && /^[a-f0-9]{40}$/i.test(ref))
+            return ref;
+        if (ref) {
+            let sha = await ctx.refStore.getRef(`refs/heads/${ref}`);
+            if (!sha)
+                sha = await ctx.refStore.getRef(`refs/tags/${ref}`);
+            return sha;
+        }
+        const headRef = await ctx.refStore.getSymbolicRef('HEAD');
+        if (headRef)
+            return ctx.refStore.getRef(headRef);
+        return ctx.refStore.getHead();
+    }
+    return {
+        async status(options) {
+            const currentBranch = await getCurrentBranch(ctx.refStore);
+            const headSha = await resolveRef();
+            const staged = [];
+            const unstaged = [];
+            const untracked = [];
+            if (ctx.index) {
+                const indexEntries = await ctx.index.getEntries();
+                let headEntries = new Map();
+                if (headSha) {
+                    const headCommit = await ctx.objectStore.getCommit(headSha);
+                    if (headCommit) {
+                        headEntries = await flattenTree(ctx.objectStore, headCommit.tree);
+                    }
+                }
+                const stagedChanges = compareIndexToHead(headEntries, indexEntries);
+                for (const c of stagedChanges) {
+                    if (c.status !== DiffStatus.UNMERGED)
+                        staged.push(c.path);
+                }
+                if (ctx.workdir) {
+                    const workdirFiles = await ctx.workdir.getFiles();
+                    const indexMap = new Map(indexEntries.filter(e => e.stage === 0).map(e => [e.path, e]));
+                    const workdirMap = new Map(workdirFiles.map(f => [f.path, f]));
+                    for (const file of workdirFiles) {
+                        const ie = indexMap.get(file.path);
+                        if (!ie)
+                            untracked.push(file.path);
+                        else if (ie.sha !== file.sha || ie.mode !== file.mode)
+                            unstaged.push(file.path);
+                    }
+                    for (const [path] of indexMap) {
+                        if (!workdirMap.has(path))
+                            unstaged.push(path);
+                    }
+                }
+            }
+            return {
+                branch: currentBranch || 'HEAD',
+                staged,
+                unstaged,
+                untracked,
+                clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+            };
+        },
+        async log(options) {
+            const startSha = await resolveRef(options?.ref);
+            if (!startSha)
+                return { commits: [] };
+            const commitProvider = {
+                getCommit: (sha) => ctx.objectStore.getCommit(sha),
+            };
+            const traversalOptions = {
+                maxCount: options?.maxCount,
+                sort: 'date',
+            };
+            const commits = [];
+            for await (const tc of walkCommits(commitProvider, startSha, traversalOptions)) {
+                const msg = tc.commit.message;
+                if (options?.grep && !msg.toLowerCase().includes(options.grep.toLowerCase()))
+                    continue;
+                if (options?.author && !tc.commit.author.name.toLowerCase().includes(options.author.toLowerCase()))
+                    continue;
+                commits.push({
+                    sha: tc.sha,
+                    message: msg,
+                    author: `${tc.commit.author.name} <${tc.commit.author.email}>`,
+                    date: new Date(tc.commit.author.timestamp * 1000).toISOString(),
+                });
+            }
+            return { commits };
+        },
+        async diff(options) {
+            const result = await invokeTool('git_diff', {
+                staged: options?.staged,
+                commit1: options?.commit1,
+                commit2: options?.commit2,
+                path: options?.path,
+            });
+            return result.content[0].text;
+        },
+        async show(revision, options) {
+            const result = await invokeTool('git_show', {
+                revision,
+                path: options?.path,
+                format: options?.format,
+                context_lines: options?.contextLines,
+            });
+            const text = result.content[0].text;
+            // Try to return structured data
+            try {
+                return JSON.parse(text);
+            }
+            catch { /* ignore */ }
+            // For commit show, parse the text output into structured form
+            const commitSha = await resolveRef(revision);
+            if (commitSha) {
+                const commit = await ctx.objectStore.getCommit(commitSha);
+                if (commit) {
+                    return {
+                        sha: commitSha,
+                        message: commit.message,
+                        author: `${commit.author.name} <${commit.author.email}>`,
+                        date: new Date(commit.author.timestamp * 1000).toISOString(),
+                        parents: commit.parents,
+                        tree: commit.tree,
+                        text,
+                    };
+                }
+            }
+            return { text };
+        },
+        async commit(options) {
+            const result = await invokeTool('git_commit', {
+                message: options.message,
+                author: options.author,
+                email: options.email,
+                amend: options.amend,
+            });
+            const text = result.content[0].text;
+            // Parse "[$branch $sha] $message" format
+            const match = text.match(/\[.+\s+([a-f0-9]{7,})\]/);
+            return { sha: match ? match[1] : 'unknown' };
+        },
+        async add(files, options) {
+            const fileList = Array.isArray(files) ? files : [files];
+            await invokeTool('git_add', { files: fileList, all: options?.all });
+        },
+        async checkout(ref, options) {
+            await invokeTool('git_checkout', {
+                ref,
+                createBranch: options?.createBranch,
+                path: options?.path,
+            });
+        },
+        async branch(options) {
+            if (options?.delete && options?.name) {
+                await invokeTool('git_branch', { name: options.name, delete: true });
+                return { branches: [] };
+            }
+            if (options?.name) {
+                await invokeTool('git_branch', { name: options.name });
+                return { branches: [] };
+            }
+            // List branches using the underlying ops
+            const branches = await listBranches(ctx.refStore, {
+                all: options?.all || false,
+                remote: options?.remote || false,
+            });
+            const current = await getCurrentBranch(ctx.refStore);
+            return {
+                current: current || undefined,
+                branches: branches.map(b => ({
+                    name: b.name,
+                    sha: b.sha,
+                    remote: b.remote,
+                })),
+            };
+        },
+        async merge(branch, options) {
+            const result = await invokeTool('git_merge', { branch, ...options });
+            return { merged: !result.isError };
+        },
+        async push(options) {
+            const result = await invokeTool('git_push', options ?? {});
+            return { pushed: !result.isError, remote: options?.remote, branch: options?.branch };
+        },
+        async pull(options) {
+            const result = await invokeTool('git_pull', options ?? {});
+            return { pulled: !result.isError };
+        },
+        async fetch(options) {
+            const result = await invokeTool('git_fetch', options ?? {});
+            return { fetched: !result.isError };
+        },
+        async clone(url, options) {
+            const result = await invokeTool('git_clone', { url, ...options });
+            return { cloned: !result.isError };
+        },
+        async init(options) {
+            const result = await invokeTool('git_init', options ?? {});
+            return { initialized: !result.isError };
+        },
+    };
 }
 //# sourceMappingURL=tools.js.map

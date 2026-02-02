@@ -145,10 +145,12 @@ export function parseRefLine(line) {
     if (!match) {
         return null;
     }
-    return {
-        sha: match[1],
-        name: match[2]
-    };
+    const sha = match[1];
+    const name = match[2];
+    if (sha === undefined || name === undefined) {
+        return null;
+    }
+    return { sha, name };
 }
 /**
  * Format a ref for Git protocol (format: "sha ref-name\n").

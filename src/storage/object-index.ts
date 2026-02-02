@@ -415,19 +415,24 @@ export class ObjectIndex {
       sha: string; tier: string; pack_id: string | null; offset: number | null;
       size: number; type?: string; updated_at?: number
     }>
-    if (rows.length === 0) {
+    const row = rows[0]
+    if (rows.length === 0 || !row) {
       return null
     }
-    const row = rows[0]
-    return {
+    const location: ObjectLocation = {
       sha: row.sha,
       tier: row.tier as StorageTier,
       packId: row.pack_id,
       offset: row.offset,
       size: row.size,
-      type: row.type,
-      updatedAt: row.updated_at,
     }
+    if (row.type !== undefined) {
+      location.type = row.type
+    }
+    if (row.updated_at !== undefined) {
+      location.updatedAt = row.updated_at
+    }
+    return location
   }
 
   /**
@@ -475,15 +480,20 @@ export class ObjectIndex {
 
     const found = new Map<string, ObjectLocation>()
     for (const row of rawRows) {
-      found.set(row.sha, {
+      const location: ObjectLocation = {
         sha: row.sha,
         tier: row.tier as StorageTier,
         packId: row.pack_id,
         offset: row.offset,
         size: row.size,
-        type: row.type,
-        updatedAt: row.updated_at,
-      })
+      }
+      if (row.type !== undefined) {
+        location.type = row.type
+      }
+      if (row.updated_at !== undefined) {
+        location.updatedAt = row.updated_at
+      }
+      found.set(row.sha, location)
     }
 
     const missing = shas.filter(sha => !found.has(sha))
@@ -636,7 +646,8 @@ export class ObjectIndex {
       sha
     )
     const rows = result.toArray() as { changes: number }[]
-    return rows.length > 0 && rows[0].changes > 0
+    const firstRow = rows[0]
+    return rows.length > 0 && firstRow !== undefined && firstRow.changes > 0
   }
 
   /**
@@ -670,15 +681,22 @@ export class ObjectIndex {
       sha: string; tier: string; pack_id: string | null; offset: number | null;
       size: number; type?: string; updated_at?: number
     }>
-    return rawRows.map(row => ({
-      sha: row.sha,
-      tier: row.tier as StorageTier,
-      packId: row.pack_id,
-      offset: row.offset,
-      size: row.size,
-      type: row.type,
-      updatedAt: row.updated_at,
-    }))
+    return rawRows.map(row => {
+      const location: ObjectLocation = {
+        sha: row.sha,
+        tier: row.tier as StorageTier,
+        packId: row.pack_id,
+        offset: row.offset,
+        size: row.size,
+      }
+      if (row.type !== undefined) {
+        location.type = row.type
+      }
+      if (row.updated_at !== undefined) {
+        location.updatedAt = row.updated_at
+      }
+      return location
+    })
   }
 
   /**
@@ -712,15 +730,22 @@ export class ObjectIndex {
       sha: string; tier: string; pack_id: string | null; offset: number | null;
       size: number; type?: string; updated_at?: number
     }>
-    const locations = rawRows.map(row => ({
-      sha: row.sha,
-      tier: row.tier as StorageTier,
-      packId: row.pack_id,
-      offset: row.offset,
-      size: row.size,
-      type: row.type,
-      updatedAt: row.updated_at,
-    }))
+    const locations = rawRows.map(row => {
+      const location: ObjectLocation = {
+        sha: row.sha,
+        tier: row.tier as StorageTier,
+        packId: row.pack_id,
+        offset: row.offset,
+        size: row.size,
+      }
+      if (row.type !== undefined) {
+        location.type = row.type
+      }
+      if (row.updated_at !== undefined) {
+        location.updatedAt = row.updated_at
+      }
+      return location
+    })
     // Sort by offset to ensure consistent ordering
     return locations.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0))
   }

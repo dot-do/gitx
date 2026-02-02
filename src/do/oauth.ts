@@ -334,6 +334,9 @@ export async function verifyJWT(token: string, options: JWTVerifyOptions): Promi
   }
 
   const [headerB64, payloadB64, signatureB64] = parts
+  if (!headerB64 || !payloadB64 || !signatureB64) {
+    return { valid: false, error: 'Token is malformed: missing segments' }
+  }
 
   // Decode header
   let header: { alg: string; typ?: string; kid?: string }
@@ -399,10 +402,10 @@ export async function verifyJWT(token: string, options: JWTVerifyOptions): Promi
       return { valid: false, error: 'No matching key found for signature verification' }
     }
 
-    // Verify signature
+    // Verify signature (headerB64 and payloadB64 are guaranteed to be defined at this point)
     const signatureValid = await verifySignature(
       `${headerB64}.${payloadB64}`,
-      signatureB64,
+      signatureB64!,
       key,
       header.alg
     )
@@ -497,13 +500,13 @@ async function importKey(jwk: JWK, algorithm: string): Promise<CryptoKey> {
 
   const keyData: JsonWebKey = {
     kty: jwk.kty,
-    n: jwk.n,
-    e: jwk.e,
-    x: jwk.x,
-    y: jwk.y,
-    crv: jwk.crv,
     alg: algorithm,
   }
+  if (jwk.n !== undefined) keyData.n = jwk.n
+  if (jwk.e !== undefined) keyData.e = jwk.e
+  if (jwk.x !== undefined) keyData.x = jwk.x
+  if (jwk.y !== undefined) keyData.y = jwk.y
+  if (jwk.crv !== undefined) keyData.crv = jwk.crv
 
   return crypto.subtle.importKey('jwk', keyData, algParams, false, ['verify'])
 }
@@ -732,7 +735,7 @@ export function canPerformOperation(
 export function createOAuthMiddleware(options: OAuthMiddlewareOptions): MiddlewareHandler {
   const cache = options.cache ?? new InMemorySessionCache()
 
-  return async (c: Context, next) => {
+  return async (c: Context, next): Promise<Response | void> => {
     // Extract token
     const token = extractToken(c.req.raw.headers)
 
@@ -751,11 +754,13 @@ export function createOAuthMiddleware(options: OAuthMiddlewareOptions): Middlewa
 
     if (!context) {
       // Verify JWT
-      const result = await verifyJWT(token, {
+      const verifyOptions: JWTVerifyOptions = {
         jwksUrl: options.jwksUrl,
-        audience: options.audience,
-        issuer: options.issuer,
-      })
+      }
+      if (options.audience !== undefined) verifyOptions.audience = options.audience
+      if (options.issuer !== undefined) verifyOptions.issuer = options.issuer
+
+      const result = await verifyJWT(token, verifyOptions)
 
       if (!result.valid || !result.payload) {
         return c.json(
@@ -770,12 +775,12 @@ export function createOAuthMiddleware(options: OAuthMiddlewareOptions): Middlewa
       // Build context from payload
       context = {
         userId: result.payload.sub,
-        email: result.payload.email,
-        name: result.payload.name,
         scopes: parseGitScopes(result.payload.scopes),
         token,
         expiresAt: result.payload.exp * 1000,
       }
+      if (result.payload.email !== undefined) context.email = result.payload.email
+      if (result.payload.name !== undefined) context.name = result.payload.name
 
       // Cache the session
       const ttl = Math.min(
@@ -788,7 +793,7 @@ export function createOAuthMiddleware(options: OAuthMiddlewareOptions): Middlewa
     }
 
     // Check required scopes
-    if (options.requiredScopes?.length) {
+    if (options.requiredScopes?.length && context) {
       for (const required of options.requiredScopes) {
         if (!hasScope(context.scopes, required)) {
           return c.json(
@@ -800,13 +805,13 @@ export function createOAuthMiddleware(options: OAuthMiddlewareOptions): Middlewa
     }
 
     // Set context values for downstream handlers
-    c.set('userId', context.userId)
-    c.set('email', context.email)
-    c.set('name', context.name)
-    c.set('scopes', context.scopes)
-    c.set('token', context.token)
-    c.set('expiresAt', context.expiresAt)
-    c.set('oauthContext', context)
+    c.set('userId', context!.userId)
+    c.set('email', context!.email)
+    c.set('name', context!.name)
+    c.set('scopes', context!.scopes)
+    c.set('token', context!.token)
+    c.set('expiresAt', context!.expiresAt)
+    c.set('oauthContext', context!)
 
     await next()
   }
@@ -831,7 +836,7 @@ export function createOAuthMiddleware(options: OAuthMiddlewareOptions): Middlewa
  * ```
  */
 export function requireScope(requiredScope: GitScope): MiddlewareHandler {
-  return async (c: Context, next) => {
+  return async (c: Context, next): Promise<Response | void> => {
     const scopes = c.get('scopes') as GitScope[] | undefined
 
     if (!scopes) {

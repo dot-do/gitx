@@ -29,8 +29,11 @@
  * ```
  */
 import { isValidSha } from './storage';
+// Import shared validation utilities
+import { validateBranchName as sharedValidateBranchName, isValidBranchName as sharedIsValidBranchName, normalizeBranchName as sharedNormalizeBranchName, getBranchRefName as sharedGetBranchRefName } from '../utils/branch-validation';
 import { isValidRefName as _isValidRefName } from './storage';
 void _isValidRefName;
+// BranchValidationResult is re-exported from shared utilities above
 /**
  * Error thrown when a branch operation fails.
  *
@@ -654,14 +657,15 @@ export class BranchManager {
     }
 }
 // ============================================================================
-// Validation Functions
+// Validation Functions (delegating to shared utilities)
 // ============================================================================
 /**
  * Validate a branch name according to Git rules.
  *
  * @description
  * Checks if a branch name is valid and returns detailed validation results
- * including the normalized form of the name.
+ * including the normalized form of the name. Delegates to shared validation
+ * utilities for consistent behavior across the codebase.
  *
  * @param name - Branch name to validate
  * @returns Validation result with valid flag, error message, and normalized name
@@ -678,50 +682,13 @@ export class BranchManager {
  * }
  * ```
  */
-export function validateBranchName(name) {
-    // Empty name is invalid
-    if (!name || name.length === 0) {
-        return { valid: false, error: 'Branch name cannot be empty' };
-    }
-    // HEAD is not a valid branch name
-    if (name === 'HEAD') {
-        return { valid: false, error: 'HEAD is not a valid branch name' };
-    }
-    // Cannot start with dash
-    if (name.startsWith('-')) {
-        return { valid: false, error: 'Branch name cannot start with a dash' };
-    }
-    // Cannot contain spaces
-    if (name.includes(' ')) {
-        return { valid: false, error: 'Branch name cannot contain spaces' };
-    }
-    // Cannot contain double dots
-    if (name.includes('..')) {
-        return { valid: false, error: 'Branch name cannot contain double dots (..)' };
-    }
-    // Cannot end with .lock
-    if (name.endsWith('.lock')) {
-        return { valid: false, error: 'Branch name cannot end with .lock' };
-    }
-    // Cannot contain control characters (ASCII 0-31, 127)
-    const controlCharRegex = /[\x00-\x1f\x7f]/;
-    if (controlCharRegex.test(name)) {
-        return { valid: false, error: 'Branch name cannot contain control characters' };
-    }
-    // Cannot contain ~, ^, :, ?, *, [, ], \
-    const invalidChars = /[~^:?*[\]\\]/;
-    if (invalidChars.test(name)) {
-        return { valid: false, error: 'Branch name contains invalid characters (~, ^, :, ?, *, [, ], \\)' };
-    }
-    // Normalize the name (strip refs/heads/ if present)
-    const normalized = normalizeBranchName(name);
-    return { valid: true, normalized };
-}
+export const validateBranchName = sharedValidateBranchName;
 /**
  * Check if a string is a valid branch name.
  *
  * @description
  * Simple boolean check for branch name validity.
+ * Delegates to shared validation utilities.
  *
  * @param name - Branch name to check
  * @returns True if valid
@@ -733,14 +700,13 @@ export function validateBranchName(name) {
  * }
  * ```
  */
-export function isValidBranchName(name) {
-    return validateBranchName(name).valid;
-}
+export const isValidBranchName = sharedIsValidBranchName;
 /**
  * Normalize a branch name.
  *
  * @description
  * Removes refs/heads/ prefix if present, cleans up the name.
+ * Delegates to shared normalization utilities.
  *
  * @param name - Branch name or ref
  * @returns Normalized short branch name
@@ -751,17 +717,13 @@ export function isValidBranchName(name) {
  * normalizeBranchName('main')              // 'main'
  * ```
  */
-export function normalizeBranchName(name) {
-    if (name.startsWith('refs/heads/')) {
-        return name.slice('refs/heads/'.length);
-    }
-    return name;
-}
+export const normalizeBranchName = sharedNormalizeBranchName;
 /**
  * Get the full ref name for a branch.
  *
  * @description
  * Adds refs/heads/ prefix if not present.
+ * Delegates to shared utilities.
  *
  * @param name - Short branch name
  * @returns Full ref name
@@ -772,12 +734,7 @@ export function normalizeBranchName(name) {
  * getBranchRefName('refs/heads/main') // 'refs/heads/main'
  * ```
  */
-export function getBranchRefName(name) {
-    if (name.startsWith('refs/heads/')) {
-        return name;
-    }
-    return `refs/heads/${name}`;
-}
+export const getBranchRefName = sharedGetBranchRefName;
 // ============================================================================
 // Convenience Functions
 // ============================================================================

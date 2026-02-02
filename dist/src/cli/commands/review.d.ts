@@ -176,9 +176,8 @@ export interface KeyboardShortcut {
  * @description Main entry point for the `gitx review` command. Parses
  * command-line options and displays an interactive PR-style diff review.
  *
- * @param _ctx - Command context (unused in current implementation)
+ * @param ctx - Command context with cwd, args, options, and I/O functions
  * @returns Promise that resolves when review is complete
- * @throws {Error} Always throws "Not implemented" - command not yet implemented
  *
  * @example
  * // CLI usage

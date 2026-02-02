@@ -777,6 +777,9 @@ export class RefStorage {
      * Sets HEAD to point to a branch (symbolic) or commit (detached).
      * Uses locking to ensure atomic updates to HEAD.
      *
+     * For reflog integration, use the `updateHeadWithReflog` method instead,
+     * or use this method with a ReflogManager externally.
+     *
      * @param target - Branch ref name (symbolic) or SHA (detached)
      * @param symbolic - If true, create symbolic ref; if false, direct ref
      * @returns The updated HEAD ref
@@ -801,6 +804,113 @@ export class RefStorage {
             };
             await this.writeRef(ref);
             return ref;
+        }
+        finally {
+            await lock.release();
+        }
+    }
+    /**
+     * Get the current HEAD SHA (resolving symbolic refs).
+     *
+     * @description
+     * Returns the SHA that HEAD ultimately points to, following
+     * any symbolic ref chain. Returns null if HEAD doesn't exist
+     * or points to an unborn branch.
+     *
+     * This is useful for obtaining the "old" value before a HEAD update,
+     * which is needed for reflog entries.
+     *
+     * @returns The resolved SHA or null
+     *
+     * @example
+     * ```typescript
+     * const oldSha = await storage.getHeadSha()
+     * // Update HEAD
+     * await storage.updateHead(newSha, false)
+     * // Record in reflog
+     * await reflog.recordHeadUpdate(oldSha ?? ZERO_SHA, newSha, 'checkout: ...')
+     * ```
+     */
+    async getHeadSha() {
+        try {
+            const resolved = await this.resolveRef('HEAD');
+            return resolved.sha;
+        }
+        catch (error) {
+            if (error instanceof RefError && error.code === 'NOT_FOUND') {
+                return null;
+            }
+            throw error;
+        }
+    }
+    /**
+     * Update HEAD with reflog support.
+     *
+     * @description
+     * Updates HEAD and returns information needed for reflog entry.
+     * The caller is responsible for actually writing to the reflog.
+     *
+     * This method provides the old SHA, new SHA, and operation type
+     * which can be used with a ReflogManager.
+     *
+     * @param target - Branch ref name (symbolic) or SHA (detached)
+     * @param symbolic - If true, create symbolic ref; if false, direct ref
+     * @returns Object with ref, oldSha, newSha, and operation type
+     *
+     * @example
+     * ```typescript
+     * const result = await storage.updateHeadWithInfo('refs/heads/feature', true)
+     * await reflogManager.recordHeadUpdate(
+     *   result.oldSha,
+     *   result.newSha,
+     *   `checkout: moving from ${result.fromBranch} to feature`
+     * )
+     * ```
+     */
+    async updateHeadWithInfo(target, symbolic) {
+        // Acquire lock for atomic HEAD update
+        const lock = await this.getLock('HEAD');
+        try {
+            // Get old state before update
+            const oldHead = await this.getRef('HEAD');
+            const oldSha = await this.getHeadSha() ?? '0000000000000000000000000000000000000000';
+            const oldTarget = oldHead?.target ?? null;
+            // Build new ref
+            const ref = {
+                name: 'HEAD',
+                target,
+                type: symbolic ? 'symbolic' : 'direct'
+            };
+            await this.writeRef(ref);
+            // Determine the new SHA
+            let newSha;
+            if (symbolic) {
+                // For symbolic refs, resolve to get the SHA
+                try {
+                    const resolved = await this.resolveRef('HEAD');
+                    newSha = resolved.sha;
+                }
+                catch {
+                    // Branch might not exist yet (unborn)
+                    newSha = '0000000000000000000000000000000000000000';
+                }
+            }
+            else {
+                newSha = target;
+            }
+            // Determine operation type (heuristic)
+            let operation = 'other';
+            if (symbolic && !oldHead?.type || (oldHead?.type === 'direct' && symbolic)) {
+                operation = 'checkout';
+            }
+            else if (oldHead?.type === 'symbolic' && symbolic && oldTarget !== target) {
+                operation = 'checkout';
+            }
+            else if (!symbolic && oldHead?.type === 'symbolic') {
+                // Going from symbolic to direct is usually checkout to detached
+                operation = 'checkout';
+            }
+            return { ref, oldSha, newSha, oldTarget, operation };
         }
         finally {
             await lock.release();
@@ -894,6 +1004,216 @@ export class RefStorage {
      */
     async acquireLock(name, timeout) {
         return this.getLock(name, timeout);
+    }
+    // ==========================================================================
+    // Concurrent Update Handling
+    // ==========================================================================
+    /**
+     * Options for retry-enabled ref updates.
+     */
+    static DEFAULT_RETRY_OPTIONS = {
+        maxRetries: 3,
+        retryDelayMs: 50,
+        exponentialBackoff: true
+    };
+    /**
+     * Update a ref with automatic retry on concurrent conflicts.
+     *
+     * @description
+     * Performs an atomic update with automatic retry logic for handling
+     * concurrent modifications. Uses compare-and-swap (CAS) semantics
+     * internally to detect conflicts and retry with fresh data.
+     *
+     * This is useful when multiple processes may be updating the same ref
+     * simultaneously and you want optimistic concurrency control.
+     *
+     * @param name - Full ref name to update
+     * @param updateFn - Function that receives current SHA and returns new SHA
+     * @param options - Retry options
+     * @returns The updated ref
+     * @throws RefError if max retries exceeded or other non-retriable error
+     *
+     * @example
+     * ```typescript
+     * // Optimistic update with retry
+     * const ref = await storage.updateRefWithRetry(
+     *   'refs/heads/main',
+     *   async (currentSha) => {
+     *     // Compute new SHA based on current state
+     *     return computeNewCommit(currentSha)
+     *   },
+     *   { maxRetries: 5 }
+     * )
+     * ```
+     */
+    async updateRefWithRetry(name, updateFn, options) {
+        const maxRetries = options?.maxRetries ?? RefStorage.DEFAULT_RETRY_OPTIONS.maxRetries;
+        const baseDelay = options?.retryDelayMs ?? RefStorage.DEFAULT_RETRY_OPTIONS.retryDelayMs;
+        const exponentialBackoff = options?.exponentialBackoff ?? RefStorage.DEFAULT_RETRY_OPTIONS.exponentialBackoff;
+        let lastError = null;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                // Get current state
+                const currentRef = await this.getRef(name);
+                const currentSha = currentRef?.target ?? null;
+                // Compute new value
+                const newSha = await updateFn(currentSha);
+                // Attempt atomic update with CAS
+                return await this.updateRef(name, newSha, {
+                    oldValue: currentSha,
+                    create: currentSha === null,
+                    force: false
+                });
+            }
+            catch (error) {
+                if (error instanceof RefError && error.code === 'CONFLICT') {
+                    lastError = error;
+                    // Conflict detected, retry after delay
+                    if (attempt < maxRetries) {
+                        const delay = exponentialBackoff
+                            ? baseDelay * Math.pow(2, attempt)
+                            : baseDelay;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                }
+                // Non-retriable error or max retries exceeded
+                throw error;
+            }
+        }
+        // Should not reach here, but just in case
+        throw lastError ?? new RefError(`Max retries (${maxRetries}) exceeded for ref update: ${name}`, 'CONFLICT', name);
+    }
+    /**
+     * Atomically update multiple refs (batch update).
+     *
+     * @description
+     * Updates multiple refs in a single atomic transaction. If any update
+     * fails, all updates are rolled back (all-or-nothing semantics).
+     *
+     * Uses a two-phase approach:
+     * 1. Acquire locks on all refs
+     * 2. Verify all preconditions (oldValue checks)
+     * 3. Apply all updates
+     * 4. Release all locks
+     *
+     * @param updates - Array of ref updates to apply
+     * @returns Array of updated refs
+     * @throws RefError if any precondition fails (transaction aborted)
+     *
+     * @example
+     * ```typescript
+     * // Update main and develop atomically
+     * const refs = await storage.batchUpdateRefs([
+     *   { name: 'refs/heads/main', sha: newMainSha, oldValue: currentMainSha },
+     *   { name: 'refs/heads/develop', sha: newDevSha, oldValue: currentDevSha }
+     * ])
+     * ```
+     */
+    async batchUpdateRefs(updates) {
+        // Validate all updates first
+        for (const update of updates) {
+            if (!isValidRefName(update.name)) {
+                throw new RefError(`Invalid ref name: ${update.name}`, 'INVALID_NAME', update.name);
+            }
+            if (!isValidSha(update.sha)) {
+                throw new RefError(`Invalid SHA: ${update.sha}`, 'INVALID_SHA', update.name);
+            }
+        }
+        // Sort by name to prevent deadlocks from different lock acquisition orders
+        const sortedUpdates = [...updates].sort((a, b) => a.name.localeCompare(b.name));
+        const locks = [];
+        const results = [];
+        try {
+            // Phase 1: Acquire all locks
+            for (const update of sortedUpdates) {
+                const lock = await this.getLock(update.name);
+                locks.push(lock);
+            }
+            // Phase 2: Verify all preconditions
+            const currentRefs = new Map();
+            for (const update of sortedUpdates) {
+                const currentRef = await this.getRef(update.name);
+                currentRefs.set(update.name, currentRef);
+                // Check oldValue if provided
+                if (update.oldValue !== undefined) {
+                    if (update.oldValue === null) {
+                        // Expect ref to NOT exist
+                        if (currentRef) {
+                            throw new RefError(`Ref already exists: ${update.name}`, 'ALREADY_EXISTS', update.name);
+                        }
+                    }
+                    else {
+                        // Expect ref to have specific value
+                        if (!currentRef || currentRef.target !== update.oldValue) {
+                            throw new RefError(`Ref value mismatch: ${update.name}`, 'CONFLICT', update.name);
+                        }
+                    }
+                }
+                else if (!update.create && !currentRef) {
+                    // If not creating, ref must exist
+                    throw new RefError(`Ref not found: ${update.name}`, 'NOT_FOUND', update.name);
+                }
+            }
+            // Phase 3: Apply all updates
+            for (const update of sortedUpdates) {
+                const ref = {
+                    name: update.name,
+                    target: update.sha,
+                    type: 'direct'
+                };
+                await this.writeRef(ref);
+                results.push(ref);
+            }
+            return results;
+        }
+        finally {
+            // Phase 4: Release all locks (in reverse order)
+            for (let i = locks.length - 1; i >= 0; i--) {
+                await locks[i].release();
+            }
+        }
+    }
+    /**
+     * Compare-and-swap update for a ref.
+     *
+     * @description
+     * Low-level CAS operation for atomic ref updates. Updates the ref
+     * only if its current value matches the expected value.
+     *
+     * @param name - Full ref name
+     * @param expectedOld - Expected current SHA (null for create-only)
+     * @param newSha - New SHA to set
+     * @returns True if update succeeded, false if CAS failed
+     * @throws RefError for invalid name/SHA
+     *
+     * @example
+     * ```typescript
+     * // Only update if value is what we expect
+     * const success = await storage.compareAndSwap(
+     *   'refs/heads/main',
+     *   currentSha,
+     *   newSha
+     * )
+     * if (!success) {
+     *   console.log('Concurrent modification detected')
+     * }
+     * ```
+     */
+    async compareAndSwap(name, expectedOld, newSha) {
+        try {
+            await this.updateRef(name, newSha, {
+                oldValue: expectedOld,
+                create: expectedOld === null
+            });
+            return true;
+        }
+        catch (error) {
+            if (error instanceof RefError && (error.code === 'CONFLICT' || error.code === 'ALREADY_EXISTS')) {
+                return false;
+            }
+            throw error;
+        }
     }
     /**
      * Pack loose refs into packed-refs file.

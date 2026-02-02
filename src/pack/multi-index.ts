@@ -308,7 +308,8 @@ export class MultiIndexManager {
     const shardCount = this._config.shardCount
 
     if (shardCount === 16) {
-      return sha[0].toLowerCase()
+      const firstChar = sha[0]
+      return firstChar ? firstChar.toLowerCase() : '0'
     } else if (shardCount === 256) {
       return sha.slice(0, 2).toLowerCase()
     }
@@ -401,20 +402,32 @@ export class MultiIndexManager {
     let i = 0, j = 0
 
     while (i < a.length && j < sortedB.length) {
-      const cmp = a[i].objectId.localeCompare(sortedB[j].objectId)
+      const entryA = a[i]
+      const entryB = sortedB[j]
+      if (!entryA || !entryB) break
+      const cmp = entryA.objectId.localeCompare(entryB.objectId)
       if (cmp < 0) {
-        result.push(a[i++])
+        result.push(entryA)
+        i++
       } else if (cmp > 0) {
-        result.push(sortedB[j++])
+        result.push(entryB)
+        j++
       } else {
         // Duplicate - keep the newer one (from b)
-        result.push(sortedB[j++])
+        result.push(entryB)
+        j++
         i++
       }
     }
 
-    while (i < a.length) result.push(a[i++])
-    while (j < sortedB.length) result.push(sortedB[j++])
+    while (i < a.length) {
+      const entry = a[i++]
+      if (entry) result.push(entry)
+    }
+    while (j < sortedB.length) {
+      const entry = sortedB[j++]
+      if (entry) result.push(entry)
+    }
 
     return result
   }
@@ -430,6 +443,7 @@ export class MultiIndexManager {
     for (let i = 0; i < 256; i++) {
       while (entryIdx < shard.entries.length) {
         const entry = shard.entries[entryIdx]
+        if (!entry) break
         // Get second byte value (first byte determined by shard)
         const secondByte = parseInt(entry.objectId.slice(2, 4), 16)
         if (secondByte <= i) {
@@ -515,8 +529,8 @@ export class MultiIndexManager {
 
     if (this._config.useFanoutTables && shard.fanout.length === 256) {
       const secondByte = parseInt(normalizedSha.slice(2, 4), 16)
-      end = shard.fanout[secondByte]
-      start = secondByte === 0 ? 0 : shard.fanout[secondByte - 1]
+      end = shard.fanout[secondByte] ?? shard.entries.length
+      start = secondByte === 0 ? 0 : (shard.fanout[secondByte - 1] ?? 0)
     }
 
     // Binary search within range
@@ -526,14 +540,18 @@ export class MultiIndexManager {
     while (left <= right) {
       const mid = Math.floor((left + right) / 2)
       const entry = shard.entries[mid]
+      if (!entry) break
       const cmp = normalizedSha.localeCompare(entry.objectId)
 
       if (cmp === 0) {
-        return {
+        const result: PackObjectLocation = {
           packId: entry.packId,
-          offset: entry.offset,
-          crc32: entry.crc32
+          offset: entry.offset
         }
+        if (entry.crc32 !== undefined) {
+          result.crc32 = entry.crc32
+        }
+        return result
       } else if (cmp < 0) {
         right = mid - 1
       } else {

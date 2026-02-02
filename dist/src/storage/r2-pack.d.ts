@@ -395,6 +395,40 @@ export interface LockFileContent {
     acquiredAt: number;
     /** Worker/process identifier for debugging lock contention */
     holder?: string;
+    /** Number of times this lock has been stolen from expired holders */
+    stolenCount?: number;
+    /** Previous holder's lockId (set when lock is stolen) */
+    previousLockId?: string;
+}
+/**
+ * Options for acquiring a distributed lock.
+ *
+ * @description
+ * Configures lock acquisition behavior including TTL, holder identification,
+ * and lock stealing behavior.
+ */
+export interface DistributedLockOptions {
+    /**
+     * Time-to-live in milliseconds after which the lock expires.
+     * This prevents deadlocks from crashed processes.
+     * @default 30000 (30 seconds)
+     */
+    ttlMs?: number;
+    /** Worker/process identifier for debugging lock contention */
+    holder?: string;
+    /**
+     * Whether to allow stealing expired locks.
+     * When true and an existing lock has expired, the new acquirer can steal it.
+     * @default true
+     */
+    allowStealing?: boolean;
+    /**
+     * Grace period in milliseconds before considering a lock stealable.
+     * Even if a lock is expired, wait this additional time before stealing.
+     * Useful to prevent race conditions in clock skew scenarios.
+     * @default 0
+     */
+    stealingGracePeriodMs?: number;
 }
 /**
  * Lock on a packfile for write operations.
@@ -882,10 +916,13 @@ export declare class R2PackStorage {
      * @description
      * Uses R2's conditional write feature (ETags) to implement distributed locking.
      * Locks automatically expire after the TTL to prevent deadlocks.
+     * If an existing lock is expired (and optionally past the grace period),
+     * the new acquirer can "steal" the lock atomically.
      *
      * @param resource - Resource identifier to lock
-     * @param ttlMs - Time-to-live in milliseconds
+     * @param ttlMs - Time-to-live in milliseconds (default: 30000)
      * @param holder - Optional identifier for the lock holder (for debugging)
+     * @param options - Additional options for lock acquisition
      *
      * @returns LockHandle if acquired, null if lock is held by another process
      *
@@ -902,8 +939,70 @@ export declare class R2PackStorage {
      *   console.log('Could not acquire lock - resource is busy');
      * }
      * ```
+     *
+     * @example
+     * ```typescript
+     * // With lock stealing options
+     * const handle = await storage.acquireDistributedLock('my-resource', 30000, 'worker-1', {
+     *   allowStealing: true,
+     *   stealingGracePeriodMs: 1000 // Wait 1 second after expiry before stealing
+     * });
+     * ```
      */
-    acquireDistributedLock(resource: string, ttlMs?: number, holder?: string): Promise<LockHandle | null>;
+    acquireDistributedLock(resource: string, ttlMs?: number, holder?: string, options?: {
+        allowStealing?: boolean;
+        stealingGracePeriodMs?: number;
+    }): Promise<LockHandle | null>;
+    /**
+     * Checks if a lock can be stolen (is expired and past grace period).
+     *
+     * @description
+     * Useful for checking lock status without attempting to acquire it.
+     *
+     * @param resource - Resource identifier to check
+     * @param gracePeriodMs - Grace period after expiry before lock is stealable
+     *
+     * @returns Object with lock status information, or null if no lock exists
+     *
+     * @example
+     * ```typescript
+     * const status = await storage.getLockStatus('my-resource');
+     * if (status?.isStealable) {
+     *   console.log('Lock can be stolen');
+     * }
+     * ```
+     */
+    getLockStatus(resource: string, gracePeriodMs?: number): Promise<{
+        exists: boolean;
+        isExpired: boolean;
+        isStealable: boolean;
+        holder?: string;
+        expiresAt?: number;
+        stolenCount?: number;
+    } | null>;
+    /**
+     * Force-steals an expired lock, ignoring normal acquisition rules.
+     *
+     * @description
+     * This method will steal a lock even if allowStealing would normally be false.
+     * Use with caution - this is intended for administrative recovery scenarios.
+     *
+     * @param resource - Resource identifier to steal lock for
+     * @param ttlMs - Time-to-live for the new lock
+     * @param holder - Optional identifier for the new lock holder
+     *
+     * @returns LockHandle if stolen successfully, null if lock doesn't exist or isn't expired
+     *
+     * @example
+     * ```typescript
+     * // Administrative recovery: force-steal a stuck lock
+     * const handle = await storage.forceStealExpiredLock('stuck-resource', 30000, 'admin');
+     * if (handle) {
+     *   console.log('Lock stolen successfully');
+     * }
+     * ```
+     */
+    forceStealExpiredLock(resource: string, ttlMs?: number, holder?: string): Promise<LockHandle | null>;
     /**
      * Releases a distributed lock.
      *
@@ -1254,4 +1353,75 @@ export declare function acquirePackLock(bucket: R2Bucket, packId: string, option
 export declare function releasePackLock(bucket: R2Bucket, packId: string, options?: {
     prefix?: string;
 }): Promise<void>;
+/**
+ * Gets the status of a lock on a packfile.
+ *
+ * @description
+ * Standalone function for checking lock status without attempting acquisition.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to check
+ * @param options - Options including prefix and grace period
+ *
+ * @returns Lock status information, or null if no lock exists
+ *
+ * @example
+ * ```typescript
+ * const status = await getPackLockStatus(bucket, packId);
+ * if (status?.isExpired) {
+ *   console.log('Lock has expired');
+ * }
+ * if (status?.isStealable) {
+ *   console.log('Lock can be stolen');
+ * }
+ * ```
+ */
+export declare function getPackLockStatus(bucket: R2Bucket, packId: string, options?: {
+    prefix?: string;
+    gracePeriodMs?: number;
+}): Promise<{
+    exists: boolean;
+    isExpired: boolean;
+    isStealable: boolean;
+    holder?: string;
+    expiresAt?: number;
+    stolenCount?: number;
+} | null>;
+/**
+ * Force-steals an expired lock on a packfile.
+ *
+ * @description
+ * Standalone function for administrative recovery of stuck locks.
+ * Only works on expired locks - will not steal active locks.
+ *
+ * @param bucket - R2 bucket instance
+ * @param packId - Pack identifier to steal lock for
+ * @param options - Options including prefix, TTL, and holder
+ *
+ * @returns PackLock if stolen successfully, throws if lock is active or doesn't exist
+ *
+ * @throws {R2PackError} With code 'LOCKED' if lock is still active
+ * @throws {R2PackError} With code 'NOT_FOUND' if no lock exists
+ *
+ * @example
+ * ```typescript
+ * // Administrative recovery
+ * try {
+ *   const lock = await forceStealPackLock(bucket, packId, {
+ *     ttl: 30000,
+ *     holder: 'admin-recovery'
+ *   });
+ *   console.log('Lock stolen, proceeding with recovery');
+ * } catch (error) {
+ *   if (error.code === 'LOCKED') {
+ *     console.log('Lock is still active');
+ *   }
+ * }
+ * ```
+ */
+export declare function forceStealPackLock(bucket: R2Bucket, packId: string, options?: {
+    prefix?: string;
+    ttl?: number;
+    holder?: string;
+}): Promise<PackLock>;
 //# sourceMappingURL=r2-pack.d.ts.map

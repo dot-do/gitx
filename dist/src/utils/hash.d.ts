@@ -95,8 +95,9 @@ export declare class HashCache {
     /**
      * Generates a cache key for the given data.
      *
-     * @description Uses length + first 32 bytes (if available) to create a unique key.
-     * This is fast while providing good collision resistance.
+     * @description Uses length + full content hash as key. For data up to 256 bytes (typical
+     * for small Git objects like tags and commits), we use the entire content to avoid
+     * any possibility of collision. For larger data, we sample strategically.
      *
      * @param {Uint8Array} data - Data to generate key for
      * @returns {string} Cache key

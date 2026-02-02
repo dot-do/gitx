@@ -431,11 +431,11 @@ export class GitModule {
   constructor(options: GitModuleOptions) {
     this.repo = options.repo
     this.branch = options.branch ?? 'main'
-    this.path = options.path
-    this.r2 = options.r2
-    this.fs = options.fs
+    if (options.path !== undefined) this.path = options.path
+    if (options.r2 !== undefined) this.r2 = options.r2
+    if (options.fs !== undefined) this.fs = options.fs
     this.objectPrefix = options.objectPrefix ?? 'git/objects'
-    this.storage = options.storage
+    if (options.storage !== undefined) this.storage = options.storage
   }
 
   /**
@@ -456,13 +456,14 @@ export class GitModule {
    * ```
    */
   get binding(): GitBinding {
-    return {
+    const binding: GitBinding = {
       repo: this.repo,
       branch: this.branch,
-      path: this.path,
-      commit: this.currentCommit,
-      lastSync: this.lastSyncTime
     }
+    if (this.path !== undefined) binding.path = this.path
+    if (this.currentCommit !== undefined) binding.commit = this.currentCommit
+    if (this.lastSyncTime !== undefined) binding.lastSync = this.lastSyncTime
+    return binding
   }
 
   /**
@@ -482,9 +483,11 @@ export class GitModule {
     if (existingRows.length > 0) {
       // Load existing state
       const row = existingRows[0]
-      this.repoId = row.id
-      this.currentCommit = row.commit ?? undefined
-      this.lastSyncTime = row.last_sync ? new Date(row.last_sync) : undefined
+      if (row) {
+        this.repoId = row.id
+        if (row.commit !== null && row.commit !== undefined) this.currentCommit = row.commit
+        if (row.last_sync !== null && row.last_sync !== undefined) this.lastSyncTime = new Date(row.last_sync)
+      }
 
       // Load staged files from git_content table
       const stagedRows = this.storage.sql.exec(
@@ -516,8 +519,9 @@ export class GitModule {
         this.repo
       ).toArray() as Pick<GitRow, 'id'>[]
 
-      if (insertedRows.length > 0) {
-        this.repoId = insertedRows[0].id
+      const insertedRow = insertedRows[0]
+      if (insertedRow) {
+        this.repoId = insertedRow.id
 
         // Create the branch record
         this.storage.sql.exec(
@@ -588,7 +592,7 @@ export class GitModule {
 
       if (!refObject) {
         // No ref exists yet - this is a new/empty repository
-        this.currentCommit = undefined
+        delete this.currentCommit
         this.lastSyncTime = new Date()
 
         // Persist sync state to database even for empty repos
@@ -598,7 +602,6 @@ export class GitModule {
           success: true,
           objectsFetched: 0,
           filesWritten: 0,
-          commit: undefined
         }
       }
 
@@ -615,7 +618,7 @@ export class GitModule {
         const commitContent = decoder.decode(commitObject)
         const treeMatch = commitContent.match(/^tree ([a-f0-9]{40})/m)
 
-        if (treeMatch) {
+        if (treeMatch && treeMatch[1]) {
           const treeSha = treeMatch[1]
           // Recursively sync tree contents
           const treeResult = await this.syncTree(treeSha, this.path ?? '')
@@ -737,13 +740,14 @@ export class GitModule {
    * ```
    */
   async status(): Promise<GitStatus> {
-    return {
+    const status: GitStatus = {
       branch: this.branch,
-      head: this.currentCommit,
       staged: Array.from(this.stagedFiles),
       unstaged: [], // Would need working tree comparison
       clean: this.stagedFiles.size === 0
     }
+    if (this.currentCommit !== undefined) status.head = this.currentCommit
+    return status
   }
 
   /**

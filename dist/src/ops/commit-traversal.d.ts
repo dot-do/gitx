@@ -247,7 +247,12 @@ export declare class CommitWalker {
      */
     hasNext(): boolean;
     /**
-     * Iterate over all commits matching the options
+     * Iterate over all commits matching the options.
+     *
+     * @remarks
+     * This iterator properly handles cleanup when iteration is terminated early
+     * (via break, return, or throw). The walker state is reset in the finally block.
+     * Consumers should use for-await-of or manually call .return() when done.
      */
     [Symbol.asyncIterator](): AsyncIterableIterator<TraversalCommit>;
 }
@@ -258,6 +263,11 @@ export declare class CommitWalker {
  * @param start - Starting commit SHA or array of SHAs
  * @param options - Traversal options
  * @yields TraversalCommit objects in the requested order
+ *
+ * @remarks
+ * This generator properly handles cleanup when iteration is terminated early
+ * (via break, return, or throw). Resources are cleaned up in the finally block.
+ * Consumers should use for-await-of or manually call .return() when done.
  */
 export declare function walkCommits(provider: CommitProvider, start: string | string[], options?: TraversalOptions): AsyncGenerator<TraversalCommit, void, unknown>;
 /**

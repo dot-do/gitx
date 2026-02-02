@@ -55,7 +55,7 @@
 import pako from 'pako';
 import { PackObjectType, encodeTypeAndSize } from './format';
 import { createDelta } from './delta';
-import { sha1 } from '../utils/sha1';
+import { concatArrays, createPackHeader, computePackChecksum, encodeOffset, calculateSimilarity, TYPE_ORDER, DEPENDENCY_TYPE_ORDER, DEFAULT_WINDOW_SIZE, DEFAULT_MAX_DELTA_DEPTH, DEFAULT_COMPRESSION_LEVEL, DEFAULT_MIN_DELTA_SIZE } from './utils';
 /**
  * Available pack ordering strategies.
  *
@@ -82,99 +82,7 @@ export var PackOrderingStrategy;
     /** Orders based on delta chain structure */
     PackOrderingStrategy["DELTA_OPTIMIZED"] = "delta_optimized";
 })(PackOrderingStrategy || (PackOrderingStrategy = {}));
-// ============================================================================
-// Helper Functions
-// ============================================================================
-/**
- * Compute SHA-1 checksum of pack content
- */
-function computePackChecksum(data) {
-    return sha1(data);
-}
-/**
- * Create pack file header
- */
-function createPackHeader(objectCount) {
-    const header = new Uint8Array(12);
-    header[0] = 0x50; // P
-    header[1] = 0x41; // A
-    header[2] = 0x43; // C
-    header[3] = 0x4b; // K
-    header[4] = 0;
-    header[5] = 0;
-    header[6] = 0;
-    header[7] = 2;
-    header[8] = (objectCount >> 24) & 0xff;
-    header[9] = (objectCount >> 16) & 0xff;
-    header[10] = (objectCount >> 8) & 0xff;
-    header[11] = objectCount & 0xff;
-    return header;
-}
-/**
- * Encode offset for OFS_DELTA
- */
-function encodeOffset(offset) {
-    const bytes = [];
-    bytes.push(offset & 0x7f);
-    offset >>>= 7;
-    while (offset > 0) {
-        offset -= 1;
-        bytes.unshift((offset & 0x7f) | 0x80);
-        offset >>>= 7;
-    }
-    return new Uint8Array(bytes);
-}
-/**
- * Concatenate multiple Uint8Arrays
- */
-function concatArrays(arrays) {
-    let totalLength = 0;
-    for (const arr of arrays) {
-        totalLength += arr.length;
-    }
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const arr of arrays) {
-        result.set(arr, offset);
-        offset += arr.length;
-    }
-    return result;
-}
-/**
- * Calculate similarity between two byte arrays
- */
-function calculateSimilarity(a, b) {
-    if (a.length === 0 || b.length === 0)
-        return 0;
-    const windowSize = 4;
-    if (a.length < windowSize || b.length < windowSize) {
-        let matches = 0;
-        const minLen = Math.min(a.length, b.length);
-        for (let i = 0; i < minLen; i++) {
-            if (a[i] === b[i])
-                matches++;
-        }
-        return matches / Math.max(a.length, b.length);
-    }
-    const hashes = new Set();
-    for (let i = 0; i <= a.length - windowSize; i++) {
-        let hash = 0;
-        for (let j = 0; j < windowSize; j++) {
-            hash = ((hash << 5) - hash + a[i + j]) | 0;
-        }
-        hashes.add(hash);
-    }
-    let matches = 0;
-    for (let i = 0; i <= b.length - windowSize; i++) {
-        let hash = 0;
-        for (let j = 0; j < windowSize; j++) {
-            hash = ((hash << 5) - hash + b[i + j]) | 0;
-        }
-        if (hashes.has(hash))
-            matches++;
-    }
-    return matches / Math.max(a.length - windowSize + 1, b.length - windowSize + 1);
-}
+// Helper functions are imported from ./utils
 // ============================================================================
 // Main Functions
 // ============================================================================
@@ -244,16 +152,8 @@ export function applyOrderingStrategy(objects, strategy, config) {
     const orderedObjects = [...objects];
     switch (strategy) {
         case PackOrderingStrategy.TYPE_FIRST: {
-            const typeOrder = {
-                [PackObjectType.OBJ_COMMIT]: 0,
-                [PackObjectType.OBJ_TREE]: 1,
-                [PackObjectType.OBJ_BLOB]: 2,
-                [PackObjectType.OBJ_TAG]: 3,
-                [PackObjectType.OBJ_OFS_DELTA]: 4,
-                [PackObjectType.OBJ_REF_DELTA]: 5
-            };
             orderedObjects.sort((a, b) => {
-                const typeCompare = typeOrder[a.type] - typeOrder[b.type];
+                const typeCompare = (TYPE_ORDER[a.type] ?? 0) - (TYPE_ORDER[b.type] ?? 0);
                 if (typeCompare !== 0)
                     return typeCompare;
                 if (config?.secondaryStrategy === PackOrderingStrategy.SIZE_DESCENDING) {
@@ -351,17 +251,19 @@ export function computeObjectDependencies(objects) {
             // Parse commit to find tree and parent references
             const content = decoder.decode(obj.data);
             const treeMatch = content.match(/^tree ([0-9a-f]{40})/m);
-            if (treeMatch && objectMap.has(treeMatch[1])) {
-                dependencies.get(obj.sha).push(treeMatch[1]);
-                dependents.get(treeMatch[1]).push(obj.sha);
-                edges.push({ from: obj.sha, to: treeMatch[1] });
+            const treeSha = treeMatch?.[1];
+            if (treeSha && objectMap.has(treeSha)) {
+                dependencies.get(obj.sha).push(treeSha);
+                dependents.get(treeSha).push(obj.sha);
+                edges.push({ from: obj.sha, to: treeSha });
             }
             const parentMatches = content.matchAll(/^parent ([0-9a-f]{40})/gm);
             for (const match of parentMatches) {
-                if (objectMap.has(match[1])) {
-                    dependencies.get(obj.sha).push(match[1]);
-                    dependents.get(match[1]).push(obj.sha);
-                    edges.push({ from: obj.sha, to: match[1] });
+                const parentSha = match[1];
+                if (parentSha && objectMap.has(parentSha)) {
+                    dependencies.get(obj.sha).push(parentSha);
+                    dependents.get(parentSha).push(obj.sha);
+                    edges.push({ from: obj.sha, to: parentSha });
                 }
             }
         }
@@ -401,7 +303,7 @@ export function computeObjectDependencies(objects) {
                     if (parts.length >= 20 && parts.every(n => !isNaN(n) && n >= 0 && n <= 255)) {
                         let sha = '';
                         for (let i = 0; i < 20; i++) {
-                            sha += parts[i].toString(16).padStart(2, '0');
+                            sha += (parts[i] ?? 0).toString(16).padStart(2, '0');
                         }
                         if (objectMap.has(sha)) {
                             dependencies.get(obj.sha).push(sha);
@@ -460,16 +362,8 @@ export function computeObjectDependencies(objects) {
             }
             // Sort objects by type to ensure stable ordering:
             // blobs first, then trees, then commits (dependencies before dependents)
-            const typeOrder = {
-                [PackObjectType.OBJ_BLOB]: 0,
-                [PackObjectType.OBJ_TREE]: 1,
-                [PackObjectType.OBJ_TAG]: 2,
-                [PackObjectType.OBJ_COMMIT]: 3,
-                [PackObjectType.OBJ_OFS_DELTA]: 4,
-                [PackObjectType.OBJ_REF_DELTA]: 5
-            };
             const sortedObjects = [...objects].sort((a, b) => {
-                return typeOrder[a.type] - typeOrder[b.type];
+                return (DEPENDENCY_TYPE_ORDER[a.type] ?? 0) - (DEPENDENCY_TYPE_ORDER[b.type] ?? 0);
             });
             for (const obj of sortedObjects) {
                 visit(obj.sha);
@@ -508,12 +402,16 @@ export function selectOptimalBases(objects, options) {
         // For each object, find the best base
         for (let i = 0; i < typeObjects.length; i++) {
             const target = typeObjects[i];
+            if (!target)
+                continue;
             let bestBase = null;
             let bestSavings = 0;
             for (let j = 0; j < typeObjects.length; j++) {
                 if (i === j)
                     continue;
                 const candidate = typeObjects[j];
+                if (!candidate)
+                    continue;
                 // Prefer same-path objects if option is set
                 let similarity = calculateSimilarity(candidate.data, target.data);
                 if (options?.preferSamePath && candidate.path && target.path) {
@@ -567,7 +465,7 @@ export function validatePackIntegrity(packData, options) {
         return { valid: false, errors };
     }
     // Validate header signature
-    const signature = String.fromCharCode(packData[0], packData[1], packData[2], packData[3]);
+    const signature = String.fromCharCode(packData[0] ?? 0, packData[1] ?? 0, packData[2] ?? 0, packData[3] ?? 0);
     if (signature !== 'PACK') {
         errors.push(`Invalid pack signature: expected "PACK", got "${signature}"`);
     }
@@ -576,19 +474,19 @@ export function validatePackIntegrity(packData, options) {
         return { valid: errors.length === 0, errors };
     }
     // Validate version
-    const version = (packData[4] << 24) | (packData[5] << 16) | (packData[6] << 8) | packData[7];
+    const version = ((packData[4] ?? 0) << 24) | ((packData[5] ?? 0) << 16) | ((packData[6] ?? 0) << 8) | (packData[7] ?? 0);
     if (version !== 2) {
         errors.push(`Unsupported pack version: ${version}`);
     }
     // Get object count from header
-    const objectCount = (packData[8] << 24) | (packData[9] << 16) | (packData[10] << 8) | packData[11];
+    const objectCount = ((packData[8] ?? 0) << 24) | ((packData[9] ?? 0) << 16) | ((packData[10] ?? 0) << 8) | (packData[11] ?? 0);
     // Validate checksum (last 20 bytes)
     const storedChecksum = packData.slice(-20);
     const packContent = packData.slice(0, -20);
     const computedChecksum = computePackChecksum(packContent);
     let checksumValid = true;
     for (let i = 0; i < 20; i++) {
-        if (storedChecksum[i] !== computedChecksum[i]) {
+        if ((storedChecksum[i] ?? 0) !== (computedChecksum[i] ?? 0)) {
             checksumValid = false;
             break;
         }
@@ -602,23 +500,23 @@ export function validatePackIntegrity(packData, options) {
     const dataLength = packData.length - 20; // Exclude checksum
     while (offset < dataLength && actualObjectCount < objectCount) {
         // Read type and size header
-        let firstByte = packData[offset];
+        let firstByte = packData[offset] ?? 0;
         const type = (firstByte >> 4) & 0x07;
         offset++;
         // Read continuation bytes for size if MSB is set
         while (firstByte & 0x80) {
             if (offset >= dataLength)
                 break;
-            firstByte = packData[offset++];
+            firstByte = packData[offset++] ?? 0;
         }
         // Handle delta types
         if (type === PackObjectType.OBJ_OFS_DELTA) {
             // Read variable-length offset
-            let c = packData[offset++];
+            let c = packData[offset++] ?? 0;
             while (c & 0x80) {
                 if (offset >= dataLength)
                     break;
-                c = packData[offset++];
+                c = packData[offset++] ?? 0;
             }
         }
         else if (type === PackObjectType.OBJ_REF_DELTA) {
@@ -727,9 +625,9 @@ export class FullPackGenerator {
     constructor(options) {
         this.options = {
             enableDeltaCompression: options?.enableDeltaCompression ?? false,
-            maxDeltaDepth: options?.maxDeltaDepth ?? 50,
-            windowSize: options?.windowSize ?? 10,
-            compressionLevel: options?.compressionLevel ?? 6,
+            maxDeltaDepth: options?.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH,
+            windowSize: options?.windowSize ?? DEFAULT_WINDOW_SIZE,
+            compressionLevel: options?.compressionLevel ?? DEFAULT_COMPRESSION_LEVEL,
             orderingStrategy: options?.orderingStrategy
         };
     }
@@ -789,11 +687,16 @@ export class FullPackGenerator {
             const depthMap = new Map();
             for (let i = 0; i < ordered.objects.length; i++) {
                 const obj = ordered.objects[i];
+                if (!obj)
+                    continue;
                 this.reportProgress('compressing', i, ordered.objects.length, currentOffset, obj.sha);
+                // Get configured options with defaults
+                const windowSize = this.options.windowSize ?? DEFAULT_WINDOW_SIZE;
+                const maxDepth = this.options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH;
                 // Skip small objects
-                if (obj.data.length < 50) {
+                if (obj.data.length < DEFAULT_MIN_DELTA_SIZE) {
                     window.push(obj);
-                    if (window.length > (this.options.windowSize ?? 10)) {
+                    if (window.length > windowSize) {
                         window.shift();
                     }
                     continue;
@@ -806,7 +709,7 @@ export class FullPackGenerator {
                     if (candidate.type !== obj.type)
                         continue;
                     const candidateDepth = depthMap.get(candidate.sha) ?? 0;
-                    if (candidateDepth >= (this.options.maxDeltaDepth ?? 50))
+                    if (candidateDepth >= maxDepth)
                         continue;
                     const delta = createDelta(candidate.data, obj.data);
                     const savings = obj.data.length - delta.length;
@@ -824,7 +727,7 @@ export class FullPackGenerator {
                         maxDeltaDepth = depth;
                 }
                 window.push(obj);
-                if (window.length > (this.options.windowSize ?? 10)) {
+                if (window.length > windowSize) {
                     window.shift();
                 }
             }
@@ -832,6 +735,8 @@ export class FullPackGenerator {
         // Write objects
         for (let i = 0; i < ordered.objects.length; i++) {
             const obj = ordered.objects[i];
+            if (!obj)
+                continue;
             const objStart = currentOffset;
             offsetMap.set(obj.sha, objStart);
             this.reportProgress('writing', i, ordered.objects.length, currentOffset, obj.sha);
@@ -920,9 +825,9 @@ export class DeltaChainOptimizer {
     config;
     constructor(config) {
         this.config = {
-            maxDepth: config?.maxDepth ?? 50,
+            maxDepth: config?.maxDepth ?? DEFAULT_MAX_DELTA_DEPTH,
             minSavingsThreshold: config?.minSavingsThreshold ?? 0.1,
-            windowSize: config?.windowSize ?? 10,
+            windowSize: config?.windowSize ?? DEFAULT_WINDOW_SIZE,
             minMatchLength: config?.minMatchLength ?? 4
         };
     }
@@ -936,6 +841,8 @@ export class DeltaChainOptimizer {
             for (let j = i + 1; j < this.objects.length; j++) {
                 const a = this.objects[i];
                 const b = this.objects[j];
+                if (!a || !b)
+                    continue;
                 if (a.type === b.type) {
                     const similarity = calculateSimilarity(a.data, b.data);
                     if (similarity > 0.3) {
@@ -958,11 +865,15 @@ export class DeltaChainOptimizer {
         for (const [, typeObjects] of byType) {
             for (let i = 0; i < typeObjects.length; i++) {
                 const target = typeObjects[i];
+                if (!target)
+                    continue;
                 let bestSavings = 0;
                 for (let j = 0; j < typeObjects.length; j++) {
                     if (i === j)
                         continue;
                     const base = typeObjects[j];
+                    if (!base)
+                        continue;
                     const delta = createDelta(base.data, target.data);
                     const currentSavings = target.data.length - delta.length;
                     if (currentSavings > bestSavings) {
@@ -999,6 +910,8 @@ export class DeltaChainOptimizer {
                         continue;
                     const target = typeObjects[i];
                     const base = typeObjects[j];
+                    if (!target || !base)
+                        continue;
                     // Skip if base is larger than target (prefer smaller bases)
                     if (base.data.length > target.data.length)
                         continue;
@@ -1150,8 +1063,11 @@ export class LargeRepositoryHandler {
         }
         // Track memory usage estimate
         for (let i = 0; i < this.objects.length; i++) {
-            generator.addObject(this.objects[i]);
-            currentMemory += this.objects[i].data.length;
+            const obj = this.objects[i];
+            if (!obj)
+                continue;
+            generator.addObject(obj);
+            currentMemory += obj.data.length;
             // Check memory limit
             if (this.config.enableStreaming && currentMemory > (this.config.maxMemoryUsage ?? 500 * 1024 * 1024)) {
                 // In real implementation, would flush to disk

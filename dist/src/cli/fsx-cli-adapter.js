@@ -153,6 +153,69 @@ function parseCommitContent(data) {
     };
 }
 // ============================================================================
+// Node.js Filesystem Storage Implementation
+// ============================================================================
+/**
+ * Node.js filesystem-based storage implementing FSxFileStorage.
+ *
+ * @description
+ * This implementation uses Node.js `fs/promises` for persistent local file storage.
+ * It is used by the CLI adapter for local Git repository operations.
+ */
+class NodeFSStorage {
+    async read(filePath) {
+        try {
+            const data = await fs.readFile(filePath);
+            return new Uint8Array(data);
+        }
+        catch (error) {
+            if (error.code === 'ENOENT') {
+                return null;
+            }
+            throw error;
+        }
+    }
+    async write(filePath, data) {
+        // Ensure parent directory exists
+        const dir = path.dirname(filePath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(filePath, data);
+    }
+    async delete(filePath) {
+        try {
+            await fs.unlink(filePath);
+        }
+        catch (error) {
+            if (error.code !== 'ENOENT') {
+                throw error;
+            }
+        }
+    }
+    async exists(filePath) {
+        try {
+            await fs.access(filePath);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    async readdir(dirPath) {
+        try {
+            return await fs.readdir(dirPath);
+        }
+        catch (error) {
+            if (error.code === 'ENOENT') {
+                return [];
+            }
+            throw error;
+        }
+    }
+    async mkdir(dirPath, options) {
+        await fs.mkdir(dirPath, options);
+    }
+}
+// ============================================================================
 // FSxCLIAdapter Implementation
 // ============================================================================
 /**
@@ -192,7 +255,8 @@ export class FSxCLIAdapter {
     constructor(repoPath, options) {
         this.repoPath = repoPath;
         this.gitDir = options?.gitDir ?? path.join(repoPath, '.git');
-        this.backend = createFSxAdapter(this.gitDir);
+        // Use Node.js filesystem storage for persistent local storage
+        this.backend = createFSxAdapter(this.gitDir, new NodeFSStorage());
     }
     // ==========================================================================
     // Object Operations

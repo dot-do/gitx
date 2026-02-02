@@ -23,7 +23,7 @@
  * // Implement a storage backend
  * class MyObjectStore implements ObjectStore {
  *   async getObject(sha: string) { ... }
- *   async storeObject(type: string, data: Uint8Array) { ... }
+ *   async storeObject(type: ObjectType, data: Uint8Array) { ... }
  *   // ... other methods
  * }
  * ```
@@ -144,28 +144,8 @@ export function validateStoreParams(type, data) {
     }
     return { isValid: true };
 }
-/**
- * Assert that a SHA is valid, throwing if not.
- *
- * @description
- * Throws a descriptive error if the SHA is invalid.
- * Use this for input validation in API boundaries.
- *
- * @param sha - The SHA to validate
- * @param context - Optional context for the error message (e.g., 'tree', 'parent')
- * @throws Error if SHA is invalid
- *
- * @example
- * ```typescript
- * assertValidSha(treeSha, 'tree') // Throws: "Invalid tree SHA: ..."
- * ```
- */
-export function assertValidSha(sha, context) {
-    if (!isValidSha(sha)) {
-        const prefix = context ? `Invalid ${context} SHA` : 'Invalid SHA';
-        throw new Error(`${prefix}: ${sha}. Must be 40 lowercase hexadecimal characters`);
-    }
-}
+// Note: assertValidSha is exported from ./objects and re-exported via types/index.ts
+// We use assertValidShaFromObjects internally here to avoid circular dependencies
 /**
  * Assert that a ref name is valid, throwing if not.
  *

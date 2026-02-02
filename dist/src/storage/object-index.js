@@ -208,7 +208,16 @@ export class ObjectIndex {
         if (rows.length === 0) {
             return null;
         }
-        return rows[0];
+        const row = rows[0];
+        return {
+            sha: row.sha,
+            tier: row.tier,
+            packId: row.pack_id,
+            offset: row.offset,
+            size: row.size,
+            type: row.type,
+            updatedAt: row.updated_at,
+        };
     }
     /**
      * Performs batch lookup of multiple objects.
@@ -244,10 +253,18 @@ export class ObjectIndex {
         // Build query with placeholders
         const placeholders = shas.map(() => '?').join(', ');
         const result = this._storage.sql.exec(`SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE sha IN (${placeholders})`, ...shas);
-        const rows = result.toArray();
+        const rawRows = result.toArray();
         const found = new Map();
-        for (const row of rows) {
-            found.set(row.sha, row);
+        for (const row of rawRows) {
+            found.set(row.sha, {
+                sha: row.sha,
+                tier: row.tier,
+                packId: row.pack_id,
+                offset: row.offset,
+                size: row.size,
+                type: row.type,
+                updatedAt: row.updated_at,
+            });
         }
         const missing = shas.filter(sha => !found.has(sha));
         return { found, missing };
@@ -403,7 +420,16 @@ export class ObjectIndex {
      */
     async getObjectsByTier(tier) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE tier = ?', tier);
-        return result.toArray();
+        const rawRows = result.toArray();
+        return rawRows.map(row => ({
+            sha: row.sha,
+            tier: row.tier,
+            packId: row.pack_id,
+            offset: row.offset,
+            size: row.size,
+            type: row.type,
+            updatedAt: row.updated_at,
+        }));
     }
     /**
      * Gets all objects in a specific pack.
@@ -429,7 +455,16 @@ export class ObjectIndex {
      */
     async getObjectsByPack(packId) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE pack_id = ?', packId);
-        const locations = result.toArray();
+        const rawRows = result.toArray();
+        const locations = rawRows.map(row => ({
+            sha: row.sha,
+            tier: row.tier,
+            packId: row.pack_id,
+            offset: row.offset,
+            size: row.size,
+            type: row.type,
+            updatedAt: row.updated_at,
+        }));
         // Sort by offset to ensure consistent ordering
         return locations.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
     }

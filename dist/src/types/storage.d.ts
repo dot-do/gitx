@@ -23,12 +23,12 @@
  * // Implement a storage backend
  * class MyObjectStore implements ObjectStore {
  *   async getObject(sha: string) { ... }
- *   async storeObject(type: string, data: Uint8Array) { ... }
+ *   async storeObject(type: ObjectType, data: Uint8Array) { ... }
  *   // ... other methods
  * }
  * ```
  */
-import type { CommitObject, TreeObject } from './objects';
+import type { CommitObject, TreeObject, ObjectType } from './objects';
 /**
  * Validation result type.
  *
@@ -110,23 +110,6 @@ export declare function validateRefUpdate(refName: string, oldSha: string, newSh
  */
 export declare function validateStoreParams(type: string, data: Uint8Array): ValidationResult;
 /**
- * Assert that a SHA is valid, throwing if not.
- *
- * @description
- * Throws a descriptive error if the SHA is invalid.
- * Use this for input validation in API boundaries.
- *
- * @param sha - The SHA to validate
- * @param context - Optional context for the error message (e.g., 'tree', 'parent')
- * @throws Error if SHA is invalid
- *
- * @example
- * ```typescript
- * assertValidSha(treeSha, 'tree') // Throws: "Invalid tree SHA: ..."
- * ```
- */
-export declare function assertValidSha(sha: string, context?: string): void;
-/**
  * Assert that a ref name is valid, throwing if not.
  *
  * @description
@@ -190,7 +173,7 @@ export interface ObjectStore {
      * ```
      */
     getObject(sha: string): Promise<{
-        type: string;
+        type: ObjectType;
         data: Uint8Array;
     } | null>;
     /**
@@ -211,7 +194,7 @@ export interface ObjectStore {
      * console.log(`Stored blob: ${sha}`)
      * ```
      */
-    storeObject(type: string, data: Uint8Array): Promise<string>;
+    storeObject(type: ObjectType, data: Uint8Array): Promise<string>;
     /**
      * Check if an object exists in the store.
      *
@@ -382,7 +365,7 @@ export interface BasicObjectStore {
      * @returns Object with type and data, or null if not found
      */
     getObject(sha: string): Promise<{
-        type: string;
+        type: ObjectType;
         data: Uint8Array;
     } | null>;
     /**
@@ -392,7 +375,7 @@ export interface BasicObjectStore {
      * @param data - Raw object content
      * @returns 40-character SHA-1 hash of the stored object
      */
-    storeObject(type: string, data: Uint8Array): Promise<string>;
+    storeObject(type: ObjectType, data: Uint8Array): Promise<string>;
     /**
      * Check if an object exists.
      *
@@ -572,7 +555,7 @@ export interface CommitProvider {
      * }
      * ```
      */
-    getTree?(commitSha: string): Promise<unknown>;
+    getTree?(commitSha: string): Promise<TreeObject | null>;
 }
 /**
  * Minimal CommitProvider interface for basic operations.

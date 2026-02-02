@@ -21,7 +21,7 @@ export declare class RefValidationError extends Error {
 }
 /** Base error for resolution failures */
 export declare class ResolutionError extends Error {
-    partialChain?: string[];
+    partialChain?: string[] | undefined;
     constructor(message: string, partialChain?: string[]);
 }
 /** Error when ref not found */
@@ -112,7 +112,7 @@ export interface HeadState {
 /** Ref lock */
 export interface RefLock {
     refName: string;
-    owner?: string;
+    owner?: string | undefined;
     isHeld(): boolean;
 }
 /** Lock backend interface */
@@ -346,5 +346,220 @@ export declare function releaseRefLock(lock: RefLock): Promise<void>;
 export declare function isRefLocked(refName: string, backend: {
     checkLock?: (name: string) => Promise<boolean>;
 }): Promise<boolean>;
+/**
+ * A single entry in the reflog.
+ *
+ * The reflog tracks changes to refs over time, recording:
+ * - What SHA the ref changed from/to
+ * - Who made the change
+ * - When the change was made
+ * - Why the change was made (message)
+ */
+export interface ReflogEntry {
+    /** SHA before the change (zero SHA for creation) */
+    oldSha: string;
+    /** SHA after the change (zero SHA for deletion) */
+    newSha: string;
+    /** Committer/author identity */
+    committer: {
+        name: string;
+        email: string;
+    };
+    /** Unix timestamp of the change */
+    timestamp: number;
+    /** Timezone offset in minutes */
+    timezoneOffset: number;
+    /** Message describing the change (e.g., "commit: Initial commit") */
+    message: string;
+}
+/**
+ * Zero SHA used for ref creation/deletion in reflog.
+ */
+export declare const ZERO_SHA = "0000000000000000000000000000000000000000";
+/**
+ * Parse a single reflog line.
+ *
+ * Format: <old-sha> <new-sha> <committer> <timestamp> <tz> <tab><message>
+ * Example: abc123... def456... John Doe <john@example.com> 1234567890 -0500	commit: message
+ */
+export declare function parseReflogLine(line: string): ReflogEntry | null;
+/**
+ * Serialize a reflog entry to a line.
+ */
+export declare function serializeReflogEntry(entry: ReflogEntry): string;
+/**
+ * Parse a complete reflog file.
+ *
+ * Returns entries in reverse chronological order (newest first),
+ * which is the standard Git reflog display order.
+ */
+export declare function parseReflogFile(content: string): ReflogEntry[];
+/**
+ * Serialize reflog entries to file content.
+ *
+ * Entries should be in chronological order (oldest first) for storage.
+ */
+export declare function serializeReflogFile(entries: ReflogEntry[]): string;
+/**
+ * Create a reflog entry for a ref update.
+ *
+ * @param oldSha - Previous SHA (use ZERO_SHA for creation)
+ * @param newSha - New SHA (use ZERO_SHA for deletion)
+ * @param committer - Who made the change
+ * @param message - Description of the change
+ */
+export declare function createReflogEntry(oldSha: string, newSha: string, committer: {
+    name: string;
+    email: string;
+}, message: string): ReflogEntry;
+/**
+ * Reflog backend interface for storing reflog entries.
+ */
+export interface ReflogBackend {
+    /**
+     * Append an entry to a ref's reflog.
+     */
+    appendEntry(refName: string, entry: ReflogEntry): Promise<void>;
+    /**
+     * Read all entries from a ref's reflog.
+     * Returns entries in reverse chronological order (newest first).
+     */
+    readEntries(refName: string): Promise<ReflogEntry[]>;
+    /**
+     * Delete a reflog for a ref.
+     */
+    deleteReflog(refName: string): Promise<void>;
+    /**
+     * Check if a reflog exists for a ref.
+     */
+    reflogExists(refName: string): Promise<boolean>;
+}
+/**
+ * In-memory reflog backend for testing and simple use cases.
+ */
+export declare class InMemoryReflogBackend implements ReflogBackend {
+    private reflogs;
+    appendEntry(refName: string, entry: ReflogEntry): Promise<void>;
+    readEntries(refName: string): Promise<ReflogEntry[]>;
+    deleteReflog(refName: string): Promise<void>;
+    reflogExists(refName: string): Promise<boolean>;
+    /**
+     * Get raw entries in chronological order (for testing).
+     */
+    getRawEntries(refName: string): ReflogEntry[];
+    /**
+     * Clear all reflogs (for testing).
+     */
+    clear(): void;
+}
+/**
+ * Reflog manager for tracking ref changes.
+ *
+ * The reflog is Git's safety net - it records every change to refs,
+ * allowing recovery of "lost" commits and understanding ref history.
+ *
+ * @example
+ * ```typescript
+ * const reflog = new ReflogManager(backend)
+ *
+ * // Record a commit
+ * await reflog.recordUpdate('HEAD', oldSha, newSha, 'commit: Add feature')
+ *
+ * // View history
+ * const history = await reflog.getHistory('HEAD', { limit: 10 })
+ * ```
+ */
+export declare class ReflogManager {
+    private backend;
+    private defaultCommitter;
+    constructor(backend: ReflogBackend, defaultCommitter?: {
+        name: string;
+        email: string;
+    });
+    /**
+     * Record a ref update in the reflog.
+     *
+     * @param refName - The ref being updated (e.g., 'HEAD', 'refs/heads/main')
+     * @param oldSha - Previous SHA (use ZERO_SHA for creation)
+     * @param newSha - New SHA (use ZERO_SHA for deletion)
+     * @param message - Description of the change
+     * @param committer - Optional committer info (defaults to constructor default)
+     */
+    recordUpdate(refName: string, oldSha: string, newSha: string, message: string, committer?: {
+        name: string;
+        email: string;
+    }): Promise<void>;
+    /**
+     * Record a HEAD update (convenience method).
+     */
+    recordHeadUpdate(oldSha: string, newSha: string, message: string, committer?: {
+        name: string;
+        email: string;
+    }): Promise<void>;
+    /**
+     * Get reflog history for a ref.
+     *
+     * @param refName - The ref to get history for
+     * @param options - Optional limit and offset
+     * @returns Entries in reverse chronological order (newest first)
+     */
+    getHistory(refName: string, options?: {
+        limit?: number;
+        offset?: number;
+    }): Promise<ReflogEntry[]>;
+    /**
+     * Get a specific reflog entry by index.
+     *
+     * @param refName - The ref to look up
+     * @param index - Entry index (0 = newest, @{n} syntax)
+     * @returns The entry or null if not found
+     */
+    getEntry(refName: string, index: number): Promise<ReflogEntry | null>;
+    /**
+     * Get the SHA at a specific reflog position.
+     *
+     * @param refName - The ref to look up
+     * @param index - Entry index (0 = current, 1 = previous, etc.)
+     * @returns The SHA or null if not found
+     */
+    getShaAtIndex(refName: string, index: number): Promise<string | null>;
+    /**
+     * Delete reflog for a ref.
+     */
+    deleteReflog(refName: string): Promise<void>;
+    /**
+     * Check if a reflog exists for a ref.
+     */
+    hasReflog(refName: string): Promise<boolean>;
+}
+/**
+ * Result of an atomic ref update.
+ */
+export interface AtomicUpdateResult {
+    success: boolean;
+    oldSha: string | null;
+    newSha: string | null;
+    error?: string;
+}
+/**
+ * Command for a batch atomic ref update.
+ *
+ * This is used for the atomic update helpers in refs module.
+ * Note: The protocol module has its own RefUpdateCommand for wire protocol.
+ */
+export interface AtomicRefUpdateCommand {
+    refName: string;
+    oldSha: string | null;
+    newSha: string | null;
+    force?: boolean;
+}
+/**
+ * Validate an atomic update command.
+ */
+export declare function validateAtomicUpdateCommand(cmd: AtomicRefUpdateCommand): string | null;
+/**
+ * Compare-and-swap check for atomic updates.
+ */
+export declare function casCheck(expectedOld: string | null, actualOld: string | null): boolean;
 export {};
 //# sourceMappingURL=index.d.ts.map

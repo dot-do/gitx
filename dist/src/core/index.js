@@ -79,4 +79,8 @@ encodePktLine, flushPkt, delimPkt, responseEndPkt, parsePktLines, parsePktLine,
 parseCapabilities, formatCapabilities, hasCapability, getCapabilityValue, 
 // Reference advertisement utilities
 parseRefAdvertisements, formatRefAdvertisements, } from './protocol';
+// ============================================================================
+// Repository Abstraction
+// ============================================================================
+export { GitBackendRepository, } from './repository';
 //# sourceMappingURL=index.js.map

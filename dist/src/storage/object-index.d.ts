@@ -40,7 +40,7 @@
  * }
  * ```
  */
-import { DurableObjectStorage } from '../durable-object/schema';
+import type { DurableObjectStorage } from './types';
 /**
  * Storage tiers for object location.
  *

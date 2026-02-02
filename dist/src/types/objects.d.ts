@@ -154,7 +154,7 @@ export interface TreeObject extends GitObject {
  * ```typescript
  * const author: Author = {
  *   name: 'John Doe',
- *   email: 'john@example.com',
+ *   email: 'john@example.com.ai',
  *   timestamp: 1704067200,  // Unix seconds
  *   timezone: '-0800'       // PST
  * }
@@ -191,8 +191,8 @@ export interface Author {
  *   data: rawCommitData,
  *   tree: 'abc123...',
  *   parents: ['parent1sha...'],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit\n\nAdd project structure'
  * }
  * ```
@@ -237,7 +237,7 @@ export interface CommitObject extends GitObject {
  *   object: 'commitsha...',
  *   objectType: 'commit',
  *   name: 'v1.0.0',
- *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Bob', email: 'bob@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release version 1.0.0'
  * }
  * ```
@@ -258,12 +258,16 @@ export interface TagObject extends GitObject {
     /** Alternative tag name field (deprecated, prefer 'name') */
     tag?: string;
 }
+import { SHA1_PATTERN, SHA256_PATTERN, ZERO_SHA, ZERO_SHA256, isValidSha1, isValidSha256, validateSha, assertValidSha, assertValidSha1, assertValidSha256, isZeroSha, getShaType, normalizeSha, validateAndNormalizeSha, type ShaValidationResult } from '../utils/sha-validation';
+export { SHA1_PATTERN, SHA256_PATTERN, ZERO_SHA, ZERO_SHA256, isValidSha1, isValidSha256, validateSha, assertValidSha, assertValidSha1, assertValidSha256, isZeroSha, getShaType, normalizeSha, validateAndNormalizeSha, type ShaValidationResult, };
 /**
  * Valid SHA-1 hash pattern (40 lowercase hexadecimal characters).
  *
  * @description
  * Regular expression for validating SHA-1 hashes used in Git.
  * Matches exactly 40 lowercase hexadecimal characters.
+ *
+ * @deprecated Use SHA1_PATTERN for SHA-1 only, or SHA_COMBINED_PATTERN for both SHA-1 and SHA-256.
  *
  * @example
  * ```typescript
@@ -286,14 +290,19 @@ export declare const SHA_PATTERN: RegExp;
  */
 export declare const VALID_MODES: Set<string>;
 /**
- * Validate a SHA-1 hash string.
+ * Validate a SHA hash string (supports both SHA-1 and SHA-256).
  *
  * @description
- * Checks if a string is a valid Git SHA-1 hash (40 lowercase hex characters).
+ * Checks if a string is a valid Git SHA hash:
+ * - SHA-1: 40 lowercase hexadecimal characters
+ * - SHA-256: 64 lowercase hexadecimal characters
+ *
  * Use this to validate user input or data from external sources.
+ * For strict SHA-1 only validation, use isValidSha1().
+ * For strict SHA-256 only validation, use isValidSha256().
  *
  * @param sha - The string to validate
- * @returns True if the string is a valid SHA-1 hash
+ * @returns True if the string is a valid SHA-1 or SHA-256 hash
  *
  * @example
  * ```typescript
@@ -301,12 +310,57 @@ export declare const VALID_MODES: Set<string>;
  *   console.log('Invalid SHA') // Too short
  * }
  *
+ * // SHA-1 (40 chars)
  * if (isValidSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
- *   console.log('Valid SHA')
+ *   console.log('Valid SHA-1')
+ * }
+ *
+ * // SHA-256 (64 chars)
+ * if (isValidSha('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')) {
+ *   console.log('Valid SHA-256')
  * }
  * ```
  */
 export declare function isValidSha(sha: string): boolean;
+/**
+ * Minimum length for a short SHA prefix.
+ *
+ * @description
+ * Git requires a minimum of 4 characters for a short SHA prefix.
+ * This matches the behavior of the git command-line tool.
+ */
+export declare const MIN_SHORT_SHA_LENGTH = 4;
+/**
+ * Pattern for validating short SHA prefixes (4-40 hex characters, case-insensitive).
+ */
+export declare const SHORT_SHA_PATTERN: RegExp;
+/**
+ * Validate a short SHA-1 prefix string.
+ *
+ * @description
+ * Checks if a string is a valid short Git SHA-1 prefix (4-40 hex characters).
+ * Short SHAs are commonly used in Git commands and UIs for convenience.
+ * Git requires at least 4 characters to avoid excessive ambiguity.
+ *
+ * @param sha - The string to validate
+ * @returns True if the string is a valid short SHA-1 prefix (4-40 hex characters)
+ *
+ * @example
+ * ```typescript
+ * if (isValidShortSha('abc')) {
+ *   console.log('Invalid - too short') // Less than 4 chars
+ * }
+ *
+ * if (isValidShortSha('abc123')) {
+ *   console.log('Valid short SHA')
+ * }
+ *
+ * if (isValidShortSha('da39a3ee5e6b4b0d3255bfef95601890afd80709')) {
+ *   console.log('Valid full SHA (also a valid short SHA)')
+ * }
+ * ```
+ */
+export declare function isValidShortSha(sha: string): boolean;
 /**
  * Validate a Git object type string.
  *
@@ -377,7 +431,7 @@ export declare function validateTreeEntry(entry: TreeEntry): {
  * ```typescript
  * const result = validateAuthor({
  *   name: 'Alice',
- *   email: 'alice@example.com',
+ *   email: 'alice@example.com.ai',
  *   timestamp: 1704067200,
  *   timezone: '+0000'
  * })
@@ -576,8 +630,8 @@ export declare function serializeTree(entries: TreeEntry[]): Uint8Array;
  * const commit = serializeCommit({
  *   tree: 'abc123...',
  *   parents: ['parent1...'],
- *   author: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
- *   committer: { name: 'Alice', email: 'alice@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   author: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
+ *   committer: { name: 'Alice', email: 'alice@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Initial commit'
  * })
  * const sha = await sha1(commit)
@@ -600,7 +654,7 @@ export declare function serializeCommit(commit: Omit<CommitObject, 'type' | 'dat
  *   object: 'commitsha...',
  *   objectType: 'commit',
  *   name: 'v1.0.0',
- *   tagger: { name: 'Bob', email: 'bob@example.com', timestamp: 1704067200, timezone: '+0000' },
+ *   tagger: { name: 'Bob', email: 'bob@example.com.ai', timestamp: 1704067200, timezone: '+0000' },
  *   message: 'Release v1.0.0'
  * })
  * const sha = await sha1(tag)

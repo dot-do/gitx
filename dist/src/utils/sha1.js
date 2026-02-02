@@ -95,7 +95,7 @@ export function sha1(data) {
         }
         // Extend the sixteen 32-bit words into eighty 32-bit words
         for (let i = 16; i < 80; i++) {
-            w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+            w[i] = rotl((w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0), 1);
         }
         // Initialize working variables
         let a = h0;
@@ -126,7 +126,7 @@ export function sha1(data) {
                 f = b ^ c ^ d;
                 k = 0xca62c1d6;
             }
-            const temp = (rotl(a, 5) + f + e + k + w[i]) >>> 0;
+            const temp = (rotl(a, 5) + f + e + k + (w[i] ?? 0)) >>> 0;
             e = d;
             d = c;
             c = rotl(b, 30);
@@ -176,7 +176,7 @@ export function sha1Hex(data) {
     const hash = sha1(data);
     let hex = '';
     for (let i = 0; i < hash.length; i++) {
-        hex += hash[i].toString(16).padStart(2, '0');
+        hex += (hash[i] ?? 0).toString(16).padStart(2, '0');
     }
     return hex;
 }
@@ -249,7 +249,7 @@ export function sha1Verify(data, expected) {
 export function bytesToHex(bytes) {
     let hex = '';
     for (let i = 0; i < bytes.length; i++) {
-        hex += bytes[i].toString(16).padStart(2, '0');
+        hex += (bytes[i] ?? 0).toString(16).padStart(2, '0');
     }
     return hex;
 }
@@ -298,6 +298,12 @@ const SHA1_H4 = 0xc3d2e1f0;
  */
 const SHA1_K = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
 /**
+ * Module-level TextEncoder instance for performance optimization.
+ * Avoids creating new TextEncoder on every hash operation.
+ * @internal
+ */
+const encoder = new TextEncoder();
+/**
  * Rotate left (circular left shift) operation.
  * @internal
  */
@@ -316,34 +322,34 @@ function processChunk(chunk, h, w) {
     }
     // Extend the sixteen 32-bit words into eighty 32-bit words
     for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        w[i] = rotl((w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0), 1);
     }
     // Initialize working variables
-    let a = h[0];
-    let b = h[1];
-    let c = h[2];
-    let d = h[3];
-    let e = h[4];
+    let a = h[0] ?? 0;
+    let b = h[1] ?? 0;
+    let c = h[2] ?? 0;
+    let d = h[3] ?? 0;
+    let e = h[4] ?? 0;
     // Main loop - 80 rounds
     for (let i = 0; i < 80; i++) {
         let f, k;
         if (i < 20) {
             f = (b & c) | (~b & d);
-            k = SHA1_K[0];
+            k = SHA1_K[0] ?? 0;
         }
         else if (i < 40) {
             f = b ^ c ^ d;
-            k = SHA1_K[1];
+            k = SHA1_K[1] ?? 0;
         }
         else if (i < 60) {
             f = (b & c) | (b & d) | (c & d);
-            k = SHA1_K[2];
+            k = SHA1_K[2] ?? 0;
         }
         else {
             f = b ^ c ^ d;
-            k = SHA1_K[3];
+            k = SHA1_K[3] ?? 0;
         }
-        const temp = (rotl(a, 5) + f + e + k + w[i]) >>> 0;
+        const temp = (rotl(a, 5) + f + e + k + (w[i] ?? 0)) >>> 0;
         e = d;
         d = c;
         c = rotl(b, 30);
@@ -351,11 +357,11 @@ function processChunk(chunk, h, w) {
         a = temp;
     }
     // Add this chunk's hash to result so far
-    h[0] = (h[0] + a) >>> 0;
-    h[1] = (h[1] + b) >>> 0;
-    h[2] = (h[2] + c) >>> 0;
-    h[3] = (h[3] + d) >>> 0;
-    h[4] = (h[4] + e) >>> 0;
+    h[0] = ((h[0] ?? 0) + a) >>> 0;
+    h[1] = ((h[1] ?? 0) + b) >>> 0;
+    h[2] = ((h[2] ?? 0) + c) >>> 0;
+    h[3] = ((h[3] ?? 0) + d) >>> 0;
+    h[4] = ((h[4] ?? 0) + e) >>> 0;
 }
 /**
  * Streaming SHA-1 hasher for processing large data incrementally.
@@ -602,7 +608,7 @@ export class StreamingSHA1 {
  */
 export function hashObjectStreaming(type, data) {
     const hasher = new StreamingSHA1();
-    const header = new TextEncoder().encode(`${type} ${data.length}\0`);
+    const header = encoder.encode(`${type} ${data.length}\0`);
     hasher.update(header);
     hasher.update(data);
     return hasher.digest();
@@ -627,7 +633,7 @@ export function hashObjectStreaming(type, data) {
  */
 export function hashObjectStreamingHex(type, data) {
     const hasher = new StreamingSHA1();
-    const header = new TextEncoder().encode(`${type} ${data.length}\0`);
+    const header = encoder.encode(`${type} ${data.length}\0`);
     hasher.update(header);
     hasher.update(data);
     return hasher.digestHex();

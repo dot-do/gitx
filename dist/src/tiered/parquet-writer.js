@@ -53,6 +53,10 @@
  * @see {@link defineSchema} - Schema definition helper
  */
 import pako from 'pako';
+import * as lz4 from 'lz4/lib/binding';
+// Module-level encoder/decoder to avoid repeated instantiation (performance optimization)
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 // ============================================================================
 // Types and Enums
 // ============================================================================
@@ -869,7 +873,7 @@ export class ParquetWriter {
         };
         // Encode metadata to JSON and then to bytes
         const metadataJson = JSON.stringify(metadata);
-        const metadataBytes = new TextEncoder().encode(metadataJson);
+        const metadataBytes = encoder.encode(metadataJson);
         // Compress metadata if needed
         let compressedMetadata;
         if (this.options.compression === ParquetCompression.GZIP) {
@@ -882,7 +886,7 @@ export class ParquetWriter {
         }
         // Build final file structure
         // PAR1 magic (4 bytes) + data + metadata length (4 bytes) + metadata + PAR1 magic (4 bytes)
-        const magic = new TextEncoder().encode('PAR1');
+        const magic = encoder.encode('PAR1');
         const metadataLength = new Uint8Array(4);
         new DataView(metadataLength.buffer).setUint32(0, compressedMetadata.length, true);
         // Calculate total size
@@ -911,12 +915,35 @@ export class ParquetWriter {
         if (compression === ParquetCompression.UNCOMPRESSED) {
             return data;
         }
-        // Use pako deflate for a basic compression simulation
-        // Real implementation would use snappy-js, zstd-codec, lz4js etc.
         try {
-            return pako.deflate(data, { level: compression === ParquetCompression.ZSTD ? 9 : 6 });
+            switch (compression) {
+                case ParquetCompression.LZ4: {
+                    // Use LZ4 raw block compression (no framing) for Parquet LZ4_RAW codec
+                    const maxSize = lz4.compressBound(data.length);
+                    const output = new Uint8Array(maxSize);
+                    const compressedSize = lz4.compress(data, output);
+                    // compressedSize === 0 means data is incompressible
+                    if (compressedSize === 0) {
+                        return data;
+                    }
+                    return output.slice(0, compressedSize);
+                }
+                case ParquetCompression.ZSTD:
+                    // ZSTD provides best compression ratio - use highest deflate level as fallback
+                    return pako.deflate(data, { level: 9 });
+                case ParquetCompression.SNAPPY:
+                    // Snappy-like compression using deflate at medium level
+                    return pako.deflate(data, { level: 4 });
+                case ParquetCompression.GZIP:
+                    // GZIP handled separately in _generateParquetBytes
+                    return pako.gzip(data);
+                default:
+                    return pako.deflate(data, { level: 6 });
+            }
         }
-        catch {
+        catch (error) {
+            // Compression failed, return uncompressed data
+            console.warn('[ParquetWriter] compressColumn: compression failed, returning uncompressed data:', error instanceof Error ? error.message : String(error));
             return data;
         }
     }
@@ -1119,13 +1146,14 @@ export function getMetadata(bytes) {
         // Try gzip first
         metadataBytes = pako.ungzip(compressedMetadata);
     }
-    catch {
+    catch (gzipError) {
         try {
             // Try inflate (deflate)
             metadataBytes = pako.inflate(compressedMetadata);
         }
-        catch {
-            // Assume uncompressed
+        catch (inflateError) {
+            // Assume uncompressed - this is expected for some metadata formats
+            console.debug('[parseParquetMetadata] decompression failed, assuming uncompressed metadata. gzip:', gzipError instanceof Error ? gzipError.message : String(gzipError), 'inflate:', inflateError instanceof Error ? inflateError.message : String(inflateError));
             metadataBytes = compressedMetadata;
         }
     }

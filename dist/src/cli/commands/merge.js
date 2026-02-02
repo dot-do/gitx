@@ -733,7 +733,7 @@ export async function continueMerge(cwd) {
 export async function mergeCommand(ctx) {
     const { cwd, args, options, stdout, stderr } = ctx;
     // Handle --help flag
-    if (options.help || options.h) {
+    if (options['help'] || options['h']) {
         stdout('gitx merge - Join two or more development histories together');
         stdout('');
         stdout('Usage: gitx merge [options] <branch>...');
@@ -750,7 +750,7 @@ export async function mergeCommand(ctx) {
         return;
     }
     // Handle --abort flag
-    if (options.abort) {
+    if (options['abort']) {
         try {
             await abortMerge(cwd);
             stdout('Merge aborted');
@@ -762,7 +762,7 @@ export async function mergeCommand(ctx) {
         return;
     }
     // Handle --continue flag
-    if (options.continue) {
+    if (options['continue']) {
         try {
             const result = await continueMerge(cwd);
             if (result.success) {
@@ -779,12 +779,12 @@ export async function mergeCommand(ctx) {
     // cac may capture the branch name as a value for boolean-like options
     let branchArgs = [...args];
     // If --ff-only captured the branch name as its value, restore it to args
-    if (typeof options.ffOnly === 'string') {
-        branchArgs.unshift(options.ffOnly);
+    if (typeof options['ffOnly'] === 'string') {
+        branchArgs.unshift(options['ffOnly']);
     }
     // If --squash captured the branch name as its value, restore it to args
-    if (typeof options.squash === 'string') {
-        branchArgs.unshift(options.squash);
+    if (typeof options['squash'] === 'string') {
+        branchArgs.unshift(options['squash']);
     }
     // Check for branch argument
     if (branchArgs.length === 0) {
@@ -793,24 +793,24 @@ export async function mergeCommand(ctx) {
     // Parse options
     const mergeOptions = {};
     // Handle --no-ff: cac parses this as ff: false
-    if (options['no-ff'] || options.noFf || options.ff === false) {
+    if (options['no-ff'] || options['noFf'] || options['ff'] === false) {
         mergeOptions.noFastForward = true;
     }
     // Handle --ff-only: cac parses this as ffOnly: true or ffOnly: 'branchname'
-    if (options['ff-only'] || options.ffOnly) {
+    if (options['ff-only'] || options['ffOnly']) {
         mergeOptions.fastForwardOnly = true;
     }
-    if (options.squash) {
+    if (options['squash']) {
         mergeOptions.squash = true;
     }
-    if (options.m) {
-        mergeOptions.message = String(options.m);
+    if (options['m']) {
+        mergeOptions.message = String(options['m']);
     }
-    if (options.strategy) {
-        mergeOptions.strategy = String(options.strategy);
+    if (options['strategy']) {
+        mergeOptions.strategy = String(options['strategy']);
     }
-    if (options['strategy-option'] || options.strategyOption) {
-        mergeOptions.strategyOption = String(options['strategy-option'] || options.strategyOption);
+    if (options['strategy-option'] || options['strategyOption']) {
+        mergeOptions.strategyOption = String(options['strategy-option'] || options['strategyOption']);
     }
     try {
         const result = await mergeBranches(cwd, branchArgs.length > 1 ? branchArgs : branchArgs[0], mergeOptions);

@@ -148,7 +148,7 @@ const MAX_BUCKET_SIZE = 64;
 function rabinHash(data, offset) {
     let hash = 0;
     for (let i = 0; i < WINDOW_SIZE; i++) {
-        hash = (hash * RABIN_BASE + data[offset + i]) % RABIN_MOD;
+        hash = (hash * RABIN_BASE + (data[offset + i] ?? 0)) % RABIN_MOD;
     }
     return hash;
 }
@@ -207,16 +207,16 @@ function buildHashIndex(base) {
     addToIndex(0);
     for (let i = 1; i <= base.length - WINDOW_SIZE; i++) {
         // Roll the hash forward (O(1) operation)
-        hash = rabinRoll(hash, base[i - 1], base[i + WINDOW_SIZE - 1]);
+        hash = rabinRoll(hash, base[i - 1] ?? 0, base[i + WINDOW_SIZE - 1] ?? 0);
         addToIndex(i);
     }
     return { bucketCount, bucketMask, offsets, counts };
     function addToIndex(offset) {
         const bucket = hash & bucketMask;
-        const count = counts[bucket];
+        const count = counts[bucket] ?? 0;
         if (count < MAX_BUCKET_SIZE) {
             offsets[bucket * MAX_BUCKET_SIZE + count] = offset;
-            counts[bucket] = count + 1;
+            counts[bucket] = (count + 1);
         }
     }
 }
@@ -230,10 +230,10 @@ function buildHashIndex(base) {
  */
 function* lookupIndex(index, hash) {
     const bucket = hash & index.bucketMask;
-    const count = index.counts[bucket];
+    const count = index.counts[bucket] ?? 0;
     const baseOffset = bucket * MAX_BUCKET_SIZE;
     for (let i = 0; i < count; i++) {
-        yield index.offsets[baseOffset + i];
+        yield index.offsets[baseOffset + i] ?? 0;
     }
 }
 /**
@@ -323,6 +323,9 @@ export function parseDeltaHeader(data, offset) {
             throw new Error(`Delta header parsing failed: exceeded maximum length of ${MAX_VARINT_BYTES} bytes (possible infinite loop or corrupted data)`);
         }
         const byte = data[offset + bytesRead];
+        if (byte === undefined) {
+            throw new Error(`Delta header parsing failed: unexpected end of data at offset ${offset + bytesRead}`);
+        }
         bytesRead++;
         // Add the lower 7 bits to the result
         size |= (byte & 0x7f) << shift;
@@ -417,26 +420,29 @@ export function applyDelta(base, delta) {
     // Process instructions
     while (offset < delta.length) {
         const cmd = delta[offset++];
+        if (cmd === undefined) {
+            break;
+        }
         if (cmd & COPY_INSTRUCTION) {
             // Copy instruction
             let copyOffset = 0;
             let copySize = 0;
             // Read offset bytes (bits 0-3 indicate which bytes are present)
             if (cmd & 0x01)
-                copyOffset |= delta[offset++];
+                copyOffset |= (delta[offset++] ?? 0);
             if (cmd & 0x02)
-                copyOffset |= delta[offset++] << 8;
+                copyOffset |= (delta[offset++] ?? 0) << 8;
             if (cmd & 0x04)
-                copyOffset |= delta[offset++] << 16;
+                copyOffset |= (delta[offset++] ?? 0) << 16;
             if (cmd & 0x08)
-                copyOffset |= delta[offset++] << 24;
+                copyOffset |= (delta[offset++] ?? 0) << 24;
             // Read size bytes (bits 4-6 indicate which bytes are present)
             if (cmd & 0x10)
-                copySize |= delta[offset++];
+                copySize |= (delta[offset++] ?? 0);
             if (cmd & 0x20)
-                copySize |= delta[offset++] << 8;
+                copySize |= (delta[offset++] ?? 0) << 8;
             if (cmd & 0x40)
-                copySize |= delta[offset++] << 16;
+                copySize |= (delta[offset++] ?? 0) << 16;
             // Size of 0 means 0x10000 (65536)
             if (copySize === 0) {
                 copySize = 0x10000;
@@ -576,7 +582,7 @@ export function createDelta(base, target) {
             targetOffset++;
             // Roll the hash forward (O(1) operation)
             if (targetOffset <= target.length - WINDOW_SIZE) {
-                currentHash = rabinRoll(currentHash, target[targetOffset - 1], target[targetOffset + WINDOW_SIZE - 1]);
+                currentHash = rabinRoll(currentHash, target[targetOffset - 1] ?? 0, target[targetOffset + WINDOW_SIZE - 1] ?? 0);
             }
         }
     }
@@ -604,7 +610,7 @@ export function createDelta(base, target) {
 function _hashBytes(data, offset, length) {
     let hash = 0;
     for (let i = 0; i < length; i++) {
-        hash = ((hash << 5) - hash + data[offset + i]) | 0;
+        hash = ((hash << 5) - hash + (data[offset + i] ?? 0)) | 0;
     }
     return hash;
 }
@@ -713,7 +719,7 @@ function emitCopy(instructions, offset, size) {
     const instruction = new Uint8Array(1 + bytes.length);
     instruction[0] = cmd;
     for (let i = 0; i < bytes.length; i++) {
-        instruction[1 + i] = bytes[i];
+        instruction[1 + i] = bytes[i] ?? 0;
     }
     instructions.push(instruction);
 }

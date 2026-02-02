@@ -99,8 +99,8 @@ void _BINARY_EXTENSIONS; // Preserve for future use
 export async function diffCommand(ctx) {
     // Basic implementation for CLI integration
     const options = {
-        staged: ctx.options.staged || ctx.options.cached,
-        noColor: ctx.options.noColor,
+        staged: Boolean(ctx.options['staged'] || ctx.options['cached']),
+        noColor: Boolean(ctx.options['noColor']),
     };
     // If help is requested, it's handled by CLI
     // Otherwise run diff
@@ -793,7 +793,7 @@ export function getLanguageFromPath(filePath) {
  */
 export async function formatHighlightedDiff(diff, options) {
     // Check for NO_COLOR environment variable
-    const noColor = options?.noColor || process.env.NO_COLOR !== undefined;
+    const noColor = options?.noColor || process.env['NO_COLOR'] !== undefined;
     if (noColor) {
         return formatPlainDiff(diff);
     }

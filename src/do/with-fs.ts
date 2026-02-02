@@ -278,7 +278,7 @@ export function withFs<TBase extends Constructor>(
     /**
      * Static list of capabilities for introspection.
      */
-    static capabilities = [...((Base as Record<string, unknown>).capabilities as string[] || []), 'fs']
+    static capabilities = [...((Base as Record<string, unknown>)['capabilities'] as string[] || []), 'fs']
 
     /**
      * Internal storage for the lazily initialized FsModule.
@@ -302,19 +302,19 @@ export function withFs<TBase extends Constructor>(
 
       // Extend $ context if contextMode is enabled
       if (options.contextMode) {
-        const dollarContext = (this as Record<string, unknown>).$ as Record<string, unknown> | undefined
+        const dollarContext = (this as Record<string, unknown>)['$'] as Record<string, unknown> | undefined
 
         if (dollarContext) {
           const self = this
 
           // Create a proxy that adds fs to the $ context
-          ;(this as Record<string, FsContextValue>).$ = new Proxy(dollarContext as WithFsContext, {
+          ;(this as unknown as Record<string, FsContextValue>)['$'] = new Proxy(dollarContext as WithFsContext, {
             get(target, prop: string | symbol) {
               if (prop === 'fs') {
                 return self.fs
               }
               // Forward to original context
-              const value = (target as Record<string | symbol, FsContextValue>)[prop]
+              const value = (target as unknown as Record<string | symbol, FsContextValue>)[prop]
               if (typeof value === 'function') {
                 return value.bind(target)
               }
@@ -361,15 +361,15 @@ export function withFs<TBase extends Constructor>(
 
       // If no SQL factory provided, try common patterns
       if (!sql) {
-        const ctx = (this as Record<string, unknown>).ctx as Record<string, unknown> | undefined
-        const state = (this as Record<string, unknown>).state as Record<string, unknown> | undefined
+        const ctx = (this as Record<string, unknown>)['ctx'] as Record<string, unknown> | undefined
+        const state = (this as Record<string, unknown>)['state'] as Record<string, unknown> | undefined
 
         // Try ctx.storage.sql (dotdo pattern)
-        sql = (ctx?.storage as Record<string, unknown> | undefined)?.sql as SqlStorage | undefined
+        sql = ((ctx?.['storage'] as Record<string, unknown> | undefined)?.['sql']) as SqlStorage | undefined
 
         // Try state.storage.sql (CF DO pattern)
         if (!sql) {
-          sql = (state?.storage as Record<string, unknown> | undefined)?.sql as SqlStorage | undefined
+          sql = ((state?.['storage'] as Record<string, unknown> | undefined)?.['sql']) as SqlStorage | undefined
         }
       }
 
@@ -390,16 +390,14 @@ export function withFs<TBase extends Constructor>(
         archive = opts.getArchive(this)
       }
 
-      // Build module options
-      const moduleOptions: FsModuleOptions = {
-        sql,
-        r2,
-        archive,
-        basePath: opts.basePath,
-        hotMaxSize: opts.hotMaxSize,
-        defaultMode: opts.defaultMode,
-        defaultDirMode: opts.defaultDirMode,
-      }
+      // Build module options - only include defined values
+      const moduleOptions: FsModuleOptions = { sql }
+      if (r2 !== undefined) moduleOptions.r2 = r2
+      if (archive !== undefined) moduleOptions.archive = archive
+      if (opts.basePath !== undefined) moduleOptions.basePath = opts.basePath
+      if (opts.hotMaxSize !== undefined) moduleOptions.hotMaxSize = opts.hotMaxSize
+      if (opts.defaultMode !== undefined) moduleOptions.defaultMode = opts.defaultMode
+      if (opts.defaultDirMode !== undefined) moduleOptions.defaultDirMode = opts.defaultDirMode
 
       return new FsModule(moduleOptions)
     }
@@ -413,8 +411,8 @@ export function withFs<TBase extends Constructor>(
       if (name === 'fs') return true
       // Check if parent class has the hasCapability method
       const baseProto = Base.prototype as Record<string, unknown>
-      if (baseProto && typeof baseProto.hasCapability === 'function') {
-        return (baseProto.hasCapability as (name: string) => boolean).call(this, name)
+      if (baseProto && typeof baseProto['hasCapability'] === 'function') {
+        return (baseProto['hasCapability'] as (name: string) => boolean).call(this, name)
       }
       return false
     }

@@ -33,17 +33,17 @@
 // ============================================================================
 // GitModule Imports and Exports
 // ============================================================================
-import { GitModule, createGitModule, isGitModule, } from './GitModule';
+import { GitModule, createGitModule, isGitModule, } from './git-module';
 export { GitModule, createGitModule, isGitModule, };
 // ============================================================================
 // withGit Mixin Imports and Exports
 // ============================================================================
-import { withGit, hasGitCapability, } from './withGit';
+import { withGit, hasGitCapability, } from './with-git';
 export { withGit, hasGitCapability, };
 // ============================================================================
 // withFs Mixin Imports and Exports
 // ============================================================================
-import { withFs, hasFsCapability, } from './withFs';
+import { withFs, hasFsCapability, } from './with-fs';
 export { withFs, hasFsCapability, };
 // ============================================================================
 // FsModule Imports and Exports
@@ -52,7 +52,7 @@ import { FsModule, createFsModule, isFsModule,
 // Constants
 S_IFMT, S_IFREG, S_IFDIR, S_IFLNK, 
 // Error classes
-ENOENT, EEXIST, EISDIR, ENOTDIR, ENOTEMPTY, } from './FsModule';
+ENOENT, EEXIST, EISDIR, ENOTDIR, ENOTEMPTY, } from './fs-module';
 export { FsModule, createFsModule, isFsModule, 
 // Constants
 S_IFMT, S_IFREG, S_IFDIR, S_IFLNK, 
@@ -71,6 +71,31 @@ export { TieredStorage, createTieredStorage, };
 // ============================================================================
 // GitRepoDO Imports and Exports
 // ============================================================================
-import { GitRepoDO, isGitRepoDO } from './GitRepoDO';
+import { GitRepoDO, isGitRepoDO } from './git-repo-do';
 export { GitRepoDO, isGitRepoDO };
+// ============================================================================
+// Schema and Database Imports and Exports
+// ============================================================================
+import { SchemaManager, SCHEMA_VERSION, SCHEMA_SQL, } from './schema';
+export { SchemaManager, SCHEMA_VERSION, SCHEMA_SQL, };
+// ============================================================================
+// ObjectStore Imports and Exports
+// ============================================================================
+import { ObjectStore, } from './object-store';
+export { ObjectStore, };
+// ============================================================================
+// WAL (Write-Ahead Log) Imports and Exports
+// ============================================================================
+import { WALManager, } from './wal';
+export { WALManager, };
+// ============================================================================
+// Branch Protection Imports and Exports
+// ============================================================================
+import { BranchProtectionManager, checkBranchProtection, matchesProtectionPattern, } from './branch-protection';
+export { BranchProtectionManager, checkBranchProtection, matchesProtectionPattern, };
+// ============================================================================
+// OAuth.do Integration Imports and Exports
+// ============================================================================
+import { extractToken, verifyJWT, createOAuthMiddleware, requireScope, InMemorySessionCache, parseGitScopes, hasScope, canPerformOperation, shouldRefreshToken, } from './oauth';
+export { extractToken, verifyJWT, createOAuthMiddleware, requireScope, InMemorySessionCache, parseGitScopes, hasScope, canPerformOperation, shouldRefreshToken, };
 //# sourceMappingURL=index.js.map

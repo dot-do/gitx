@@ -36,6 +36,7 @@
  *
  * @module ops/branch
  */
+import { isValidBranchName as sharedIsValidBranchName, normalizeBranchName as sharedNormalizeBranchName } from '../utils/branch-validation';
 /**
  * Ref store interface for branch operations.
  *
@@ -379,7 +380,7 @@ export interface CheckoutResult {
     /** True if now in detached HEAD state */
     detached?: boolean;
     /** Upstream tracking ref if set */
-    tracking?: string;
+    tracking?: string | undefined;
 }
 /**
  * Result of setting branch tracking.
@@ -412,6 +413,7 @@ export interface RemoveTrackingResult {
  *
  * Git branch names have specific rules to ensure they work correctly
  * across all platforms and don't conflict with Git's special syntax.
+ * Delegates to shared validation utilities for consistent behavior.
  *
  * Rules checked:
  * - Not empty
@@ -435,9 +437,10 @@ export interface RemoveTrackingResult {
  * isValidBranchName('has space')      // false (contains space)
  * ```
  */
-export declare function isValidBranchName(name: string): boolean;
+export declare const isValidBranchName: typeof sharedIsValidBranchName;
 /**
  * Normalizes a branch name by removing refs/heads/ prefix.
+ * Delegates to shared normalization utilities.
  *
  * @param name - The branch name or ref path
  * @returns The normalized branch name
@@ -448,7 +451,7 @@ export declare function isValidBranchName(name: string): boolean;
  * normalizeBranchName('main')             // 'main'
  * ```
  */
-export declare function normalizeBranchName(name: string): string;
+export declare const normalizeBranchName: typeof sharedNormalizeBranchName;
 /**
  * Creates a new branch.
  *

@@ -46,7 +46,7 @@
  *
  * const output = await result
  */
-import { gitTools } from './tools';
+import { gitTools, createGitBindingFromContext, createGitTools, getRepositoryContext } from './tools';
 /**
  * MCP SDK Error codes - JSON-RPC 2.0 standard codes and MCP-specific codes.
  *
@@ -597,6 +597,23 @@ export class MCPSDKAdapter {
      * Skips tools that are already registered.
      */
     registerGitdoTools() {
+        // Register the 3 search/fetch/do tools backed by the git binding
+        const ctx = getRepositoryContext();
+        if (ctx) {
+            const gitBinding = createGitBindingFromContext(ctx);
+            const tools = createGitTools(gitBinding);
+            for (const tool of tools) {
+                if (!this.tools.has(tool.name)) {
+                    this.registerTool({
+                        name: tool.name,
+                        description: tool.description,
+                        inputSchema: tool.inputSchema,
+                        handler: async (params) => tool.handler(params),
+                    });
+                }
+            }
+        }
+        // Also register legacy git_* tools for backward compatibility
         for (const tool of gitTools) {
             if (!this.tools.has(tool.name)) {
                 this.registerTool({

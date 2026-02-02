@@ -49,6 +49,8 @@
  *
  * @module ops/tree-diff
  */
+import { BINARY_CHECK_BYTES } from '../constants';
+import { assertValidSha } from '../types/objects';
 /**
  * Status of a file in a diff.
  *
@@ -99,8 +101,8 @@ export var FileMode;
  * @returns true if the file appears to be binary
  */
 export function isBinaryContent(content) {
-    // Check first 8000 bytes for null bytes
-    const checkLength = Math.min(content.length, 8000);
+    // Check first BINARY_CHECK_BYTES bytes for null bytes
+    const checkLength = Math.min(content.length, BINARY_CHECK_BYTES);
     for (let i = 0; i < checkLength; i++) {
         if (content[i] === 0x00) {
             return true;
@@ -253,6 +255,7 @@ export function filterByPathspecs(entries, pathspecs, excludePaths) {
  * @returns Promise resolving to flat list of entries with full paths
  */
 export async function walkTree(store, treeSha, prefix) {
+    assertValidSha(treeSha, 'tree');
     const tree = await store.getTree(treeSha);
     if (!tree) {
         return [];
@@ -300,6 +303,13 @@ function getModeType(mode) {
  */
 export async function diffTrees(store, oldTreeSha, newTreeSha, options = {}) {
     const { detectRenames: enableRenames = false, detectCopies: enableCopies = false, similarityThreshold = 50, pathspecs, excludePaths, detectBinary = false, recursive = true } = options;
+    // Validate SHA parameters (if provided)
+    if (oldTreeSha !== null) {
+        assertValidSha(oldTreeSha, 'old tree');
+    }
+    if (newTreeSha !== null) {
+        assertValidSha(newTreeSha, 'new tree');
+    }
     // Handle null on both sides
     if (oldTreeSha === null && newTreeSha === null) {
         return {

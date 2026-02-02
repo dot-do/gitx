@@ -75,11 +75,15 @@ export interface R2ObjectsLike {
     cursor?: string;
 }
 /**
+ * SQL parameter types that can be passed to exec().
+ */
+export type SqlParam = string | number | boolean | null | Uint8Array;
+/**
  * SQL interface for Durable Object storage.
  */
 export interface SqlStorage {
-    exec(query: string, ...params: unknown[]): {
-        toArray(): unknown[];
+    exec<T = Record<string, unknown>>(query: string, ...params: SqlParam[]): {
+        toArray(): T[];
     };
 }
 /**
