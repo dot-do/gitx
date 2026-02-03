@@ -23,7 +23,7 @@
  */
 
 import { parquetWriteBuffer } from 'hyparquet-writer'
-import { parquetReadObjects } from 'hyparquet'
+import { parquetReadObjects, parquetQuery } from 'hyparquet'
 import type { ObjectType } from '../types/objects'
 import { isValidSha, isValidObjectType } from '../types/objects'
 import type { CASBackend, StoredObjectResult } from './backend'
@@ -599,7 +599,7 @@ export class ParquetStore implements CASBackend {
       if (check === 'definite') return true
 
       // Check buffer
-      if (this.buffer.some(o => o.sha === sha)) return true
+      if (this.bufferIndex.has(sha)) return true
 
       // Bloom filter says absent - optionally verify with R2 to catch false negatives
       if (check === 'absent') {
@@ -630,7 +630,7 @@ export class ParquetStore implements CASBackend {
     if (this.tombstones.has(sha)) return null
 
     // Check in-memory buffer FIRST
-    const buffered = this.buffer.find(o => o.sha === sha)
+    const buffered = this.bufferIndex.get(sha)
     if (buffered) {
       return { type: buffered.type, content: buffered.data }
     }
@@ -664,7 +664,7 @@ export class ParquetStore implements CASBackend {
    */
   private async checkR2ExistsInternal(sha: string): Promise<StoredObjectResult | null> {
     // Check in-memory buffer first
-    const buffered = this.buffer.find(o => o.sha === sha)
+    const buffered = this.bufferIndex.get(sha)
     if (buffered) {
       return { type: buffered.type, content: buffered.data }
     }
@@ -686,8 +686,13 @@ export class ParquetStore implements CASBackend {
     // Parquet files are append-only. Mark SHA as tombstoned.
     // Tombstoned SHAs are excluded during compaction.
     this.tombstones.add(sha)
-    // Remove from buffer if present
-    this.buffer = this.buffer.filter(o => o.sha !== sha)
+    // Remove from buffer if present - O(1) Map check + update
+    const buffered = this.bufferIndex.get(sha)
+    if (buffered) {
+      this.bufferIndex.delete(sha)
+      this.bufferBytes -= buffered.data.length
+      this.buffer = this.buffer.filter(o => o.sha !== sha)
+    }
     // Also remove from WAL to prevent recovery of deleted objects
     this.sql.sql.exec(
       `DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE sha = ?`,
@@ -975,6 +980,7 @@ export class ParquetStore implements CASBackend {
       // Update state
       this.objectFileKeys = [newKey]
       this.buffer = []
+      this.bufferIndex.clear()
       this.bufferBytes = 0
       this.tombstones.clear()
 
@@ -1023,21 +1029,43 @@ export class ParquetStore implements CASBackend {
       },
     }
 
-    // Read all rows from Parquet file and filter by SHA
-    // parquetReadObjects is simpler and more reliable than parquetQuery across environments
-    let allRows: Record<string, unknown>[]
+    // Use parquetQuery with SHA filter for predicate pushdown
+    // This uses row group statistics to skip groups that can't contain the SHA
+    // and stops early once a matching row is found (limit: 1)
+    let matchingRows: Record<string, unknown>[]
     try {
-      allRows = await parquetReadObjects({
+      matchingRows = await parquetQuery({
         file,
         columns: ['sha', 'type', 'storage', 'raw_data'],
-        rowFormat: 'object',
+        filter: { sha },  // Predicate pushdown: uses min/max statistics
+        limit: 1,         // Early termination: stop after finding the object
       })
-    } catch (_err) {
-      // If parquetRead fails, fall back to raw R2 lookup
-      allRows = []
+      // If parquetQuery returns 0 results but we expected to find something,
+      // fall back to manual filtering for compatibility with edge cases
+      if (matchingRows.length === 0) {
+        const allRows = await parquetReadObjects({
+          file,
+          columns: ['sha', 'type', 'storage', 'raw_data'],
+          rowFormat: 'object',
+        })
+        matchingRows = allRows.filter(r => r['sha'] === sha).slice(0, 1)
+      }
+    } catch {
+      // If parquetQuery fails, fall back to parquetReadObjects with manual filter
+      try {
+        const allRows = await parquetReadObjects({
+          file,
+          columns: ['sha', 'type', 'storage', 'raw_data'],
+          rowFormat: 'object',
+        })
+        matchingRows = allRows.filter(r => r['sha'] === sha).slice(0, 1)
+      } catch {
+        // If both fail, return null
+        return null
+      }
     }
 
-    const row = allRows.find(r => r['sha'] === sha)
+    const row = matchingRows[0]
     if (!row) return null
 
     const rawType = row['type'] as string

@@ -42,8 +42,30 @@ declare module 'hyparquet' {
   export type ParquetReadOptions = Record<string, unknown>
   export type FileMetaData = Record<string, unknown>
 
+  export type ParquetQueryFilter = {
+    [column: string]: unknown | {
+      $eq?: unknown
+      $gt?: unknown
+      $gte?: unknown
+      $lt?: unknown
+      $lte?: unknown
+      $ne?: unknown
+      $in?: unknown[]
+    }
+  }
+
+  export interface ParquetQueryOptions {
+    file: { byteLength: number; slice(start: number, end?: number): ArrayBuffer | Promise<ArrayBuffer> }
+    filter?: ParquetQueryFilter
+    columns?: string[]
+    limit?: number
+    orderBy?: string
+    rowFormat?: 'object' | 'array'
+  }
+
   export function parquetRead(options: ParquetReadOptions): Promise<void>
   export function parquetReadObjects(options: Omit<ParquetReadOptions, 'onComplete'>): Promise<Record<string, unknown>[]>
+  export function parquetQuery(options: ParquetQueryOptions): Promise<Record<string, unknown>[]>
   export function parquetMetadata(buffer: ArrayBuffer): FileMetaData
   export function parquetMetadataAsync(buffer: { byteLength: number; slice(start: number, end: number): Promise<ArrayBuffer> }): Promise<FileMetaData>
 }
