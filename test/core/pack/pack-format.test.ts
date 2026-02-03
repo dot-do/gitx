@@ -1299,18 +1299,22 @@ describe('Large Offset Handling', () => {
   describe('writeLargeOffset', () => {
     it('should write 8-byte big-endian offset', () => {
       const data = new Uint8Array(8)
-      writeLargeOffset(data, 0, 0x123456789abcdef0)
+      // Use a value within Number.MAX_SAFE_INTEGER
+      const testValue = 0x123456789ab // Safe 43-bit value
+      writeLargeOffset(data, 0, testValue)
 
       const view = new DataView(data.buffer)
-      expect(view.getBigUint64(0, false)).toBe(0x123456789abcdef0n)
+      expect(view.getBigUint64(0, false)).toBe(BigInt(testValue))
     })
 
     it('should write at specified offset in buffer', () => {
       const data = new Uint8Array(16)
-      writeLargeOffset(data, 8, 0xaabbccddeeff0011)
+      // Use a value within Number.MAX_SAFE_INTEGER (about 53 bits)
+      const testValue = 0x1fffffffffffff // Number.MAX_SAFE_INTEGER
+      writeLargeOffset(data, 8, testValue)
 
       const view = new DataView(data.buffer)
-      expect(view.getBigUint64(8, false)).toBe(0xaabbccddeeff0011n)
+      expect(view.getBigUint64(8, false)).toBe(BigInt(testValue))
     })
 
     it('should round-trip with readLargeOffset', () => {
@@ -1717,31 +1721,52 @@ describe('Integration Tests', () => {
 
 
 // =============================================================================
-// Test Helper Implementations (stubs for tests to compile)
+// Test Helper Implementations
 // =============================================================================
 
 /**
  * Creates a valid test pack index for testing
  * This is a test helper that creates properly formatted test data
  */
-function createValidTestIndex(_objectCount: number): Uint8Array {
-  // This will fail until implementation exists
-  // The test should define what "valid" means
-  throw new Error('Test helper not implemented - tests should fail in RED phase')
+function createValidTestIndex(objectCount: number): Uint8Array {
+  // Create test entries
+  const entries: PackIndexEntry[] = []
+  for (let i = 0; i < objectCount; i++) {
+    // Create sorted SHAs (aa, ab, ac, ... or similar)
+    const prefix = i.toString(16).padStart(2, '0')
+    entries.push({
+      sha: prefix + '0'.repeat(38),
+      offset: 12 + i * 100, // offset after header
+      crc32: 0x12345678 + i,
+    })
+  }
+
+  // Use createPackIndex to generate valid index data
+  const packChecksum = new Uint8Array(20).fill(0xab)
+  return createPackIndex(entries, packChecksum)
 }
 
 /**
  * Creates a minimal valid pack file
  */
-function createMinimalValidPack(_objectCount: number): Uint8Array {
-  // This will fail until implementation exists
-  throw new Error('Test helper not implemented - tests should fail in RED phase')
+function createMinimalValidPack(objectCount: number): Uint8Array {
+  const header = createMinimalPackHeader(objectCount)
+  const checksum = computePackChecksum(header)
+
+  const pack = new Uint8Array(header.length + 20)
+  pack.set(header, 0)
+  pack.set(checksum, header.length)
+
+  return pack
 }
 
 /**
- * Creates a pack file with the given objects
+ * Creates a pack file with the given objects using PackWriter
  */
-function createPackWithObjects(_objects: Array<{ type: number; data: Uint8Array }>): Uint8Array {
-  // This will fail until implementation exists
-  throw new Error('Test helper not implemented - tests should fail in RED phase')
+function createPackWithObjects(objects: Array<{ type: number; data: Uint8Array }>): Uint8Array {
+  const writer = new PackWriter()
+  for (const { type, data } of objects) {
+    writer.addObject(type, data)
+  }
+  return writer.finalize()
 }

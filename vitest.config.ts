@@ -27,6 +27,8 @@ export default defineWorkersConfig({
       'test/rpc/**/*.test.ts',
       'test/e2e/**/*.test.ts',
       'test/build/**/*.test.ts',
+      // This test uses node:fs and node:path to scan the filesystem
+      'test/core/no-cf-deps.test.ts',
     ],
     // Memory optimization: run test files sequentially to prevent OOM
     fileParallelism: false,

@@ -245,7 +245,71 @@ function computeAdler32(data: Uint8Array): number {
 }
 
 // =============================================================================
+// Node.js zlib implementation (if available)
+// =============================================================================
+
+// Try to import Node's zlib module at module load time
+let nodeZlibModule: typeof import('zlib') | null = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  nodeZlibModule = require('zlib')
+} catch {
+  nodeZlibModule = null
+}
+
+function createNodeZlibInflateClass(zlib: typeof import('zlib')) {
+  return class NodeZlibInflate implements InflateStream {
+    result: Uint8Array = new Uint8Array(0)
+    err: number = 0
+    msg?: string
+    ended: boolean = false
+    strm: ZlibStreamState = {}
+
+    push(data: Uint8Array, _final: boolean): void {
+      try {
+        // Use info: true to get bytes consumed
+        const { buffer, engine } = zlib.inflateSync(Buffer.from(data), { info: true }) as {
+          buffer: Buffer
+          engine: { bytesWritten: number }
+        }
+        this.result = new Uint8Array(buffer)
+        // bytesWritten is the number of input bytes consumed
+        this.strm.next_in = engine.bytesWritten
+        this.strm.avail_in = data.length - engine.bytesWritten
+        this.ended = true
+      } catch (e) {
+        this.err = 1
+        this.msg = e instanceof Error ? e.message : 'Unknown error'
+      }
+    }
+  }
+}
+
+class NodeZlibImpl implements CompressionApi {
+  private zlib: typeof import('zlib')
+  Inflate: new () => InflateStream
+
+  constructor(zlib: typeof import('zlib')) {
+    this.zlib = zlib
+    this.Inflate = createNodeZlibInflateClass(zlib)
+  }
+
+  deflate(data: Uint8Array): Uint8Array {
+    const result = this.zlib.deflateSync(Buffer.from(data))
+    return new Uint8Array(result)
+  }
+
+  inflate(data: Uint8Array): Uint8Array {
+    const result = this.zlib.inflateSync(Buffer.from(data))
+    return new Uint8Array(result)
+  }
+}
+
+// =============================================================================
 // Export
 // =============================================================================
 
-export const pako: CompressionApi = new ZlibImpl()
+// Use Node's zlib if available, otherwise use the minimal shim
+export const pako: CompressionApi = nodeZlibModule
+  ? new NodeZlibImpl(nodeZlibModule)
+  : new ZlibImpl()

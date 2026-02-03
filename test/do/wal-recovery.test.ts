@@ -83,6 +83,14 @@ class CrashableWALStorage implements DurableObjectStorage {
         const entries = Array.from(this.walEntries.values())
           .filter(e => !e.flushed)
           .sort((a, b) => a.id - b.id)
+          .map(e => ({
+            id: e.id,
+            operation: e.operation,
+            payload: e.payload,
+            transaction_id: e.transactionId,
+            created_at: e.createdAt,
+            flushed: e.flushed ? 1 : 0
+          }))
         return { toArray: () => entries }
       }
 
@@ -92,6 +100,14 @@ class CrashableWALStorage implements DurableObjectStorage {
         const entries = Array.from(this.walEntries.values())
           .filter(e => e.transactionId === txId)
           .sort((a, b) => a.id - b.id)
+          .map(e => ({
+            id: e.id,
+            operation: e.operation,
+            payload: e.payload,
+            transaction_id: e.transactionId,
+            created_at: e.createdAt,
+            flushed: e.flushed ? 1 : 0
+          }))
         return { toArray: () => entries }
       }
 
@@ -100,6 +116,14 @@ class CrashableWALStorage implements DurableObjectStorage {
         const entries = Array.from(this.walEntries.values())
           .filter(e => !e.flushed)
           .sort((a, b) => a.id - b.id)
+          .map(e => ({
+            id: e.id,
+            operation: e.operation,
+            payload: e.payload,
+            transaction_id: e.transactionId,
+            created_at: e.createdAt,
+            flushed: e.flushed ? 1 : 0
+          }))
         return { toArray: () => entries }
       }
 

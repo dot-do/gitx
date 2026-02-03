@@ -37,7 +37,7 @@ const sampleSha = 'a'.repeat(40) // Valid SHA-1 hex string
  */
 class MockObjectStorage implements DurableObjectStorage {
   private objects: Map<string, StoredObject> = new Map()
-  private objectIndex: Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number }> = new Map()
+  private objectIndex: Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number; chunked: number; chunkCount: number }> = new Map()
   private walEntries: { id: number; operation: string; payload: Uint8Array; flushed: boolean }[] = []
   private nextWalId = 1
   private executedQueries: string[] = []
@@ -79,8 +79,10 @@ class MockObjectStorage implements DurableObjectStorage {
         const size = params[4] as number
         const type = params[5] as string
         const updatedAt = params[6] as number
+        const chunked = params[7] as number ?? 0
+        const chunkCount = params[8] as number ?? 0
 
-        this.objectIndex.set(sha, { tier, packId, offset, size, type, updatedAt })
+        this.objectIndex.set(sha, { tier, packId, offset, size, type, updatedAt, chunked, chunkCount })
         return { toArray: () => [] }
       }
 
@@ -95,7 +97,7 @@ class MockObjectStorage implements DurableObjectStorage {
       if (query.includes('SELECT') && query.includes('FROM object_index') && query.includes('WHERE sha = ?')) {
         const sha = params[0] as string
         const idx = this.objectIndex.get(sha)
-        return { toArray: () => idx ? [{ sha, tier: idx.tier, pack_id: idx.packId, offset: idx.offset, size: idx.size, type: idx.type, updated_at: idx.updatedAt }] : [] }
+        return { toArray: () => idx ? [{ sha, tier: idx.tier, pack_id: idx.packId, offset: idx.offset, size: idx.size, type: idx.type, updated_at: idx.updatedAt, chunked: idx.chunked, chunk_count: idx.chunkCount }] : [] }
       }
 
       // Handle object DELETE
@@ -142,7 +144,7 @@ class MockObjectStorage implements DurableObjectStorage {
     return this.objects
   }
 
-  getObjectIndex(): Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number }> {
+  getObjectIndex(): Map<string, { tier: string; packId: string | null; offset: number | null; size: number; type: string; updatedAt: number; chunked: number; chunkCount: number }> {
     return this.objectIndex
   }
 
@@ -178,7 +180,9 @@ class MockObjectStorage implements DurableObjectStorage {
       offset: null,
       size: data.length,
       type,
-      updatedAt: now
+      updatedAt: now,
+      chunked: 0,
+      chunkCount: 0
     })
   }
 }

@@ -498,18 +498,25 @@ export function getFanoutRange(
  * Parse a pack index file (v2).
  */
 export function parsePackIndex(data: Uint8Array): PackIndex {
-  // Check minimum size (header + fanout + checksums)
-  const minSize = 8 + 256 * 4 + 40
-  if (data.length < minSize) {
+  // Need at least 4 bytes to check the magic
+  if (data.length < 4) {
     throw new Error('Pack index truncated or too short')
   }
 
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
 
-  // Parse header
+  // Parse header - check magic first
   const magic = view.getUint32(0, false)
   if (magic !== PACK_INDEX_MAGIC) {
-    throw new Error(`Invalid pack index magic/signature: 0x${magic.toString(16)}`)
+    // Check if this might be a v1 format (no magic header)
+    // v1 format is not supported
+    throw new Error(`Invalid pack index magic/signature: 0x${magic.toString(16)} - version 1 format is not supported`)
+  }
+
+  // Now check minimum size for v2 (header + fanout + checksums)
+  const minSize = 8 + 256 * 4 + 40
+  if (data.length < minSize) {
+    throw new Error('Pack index truncated or too short')
   }
 
   const version = view.getUint32(4, false)
@@ -801,8 +808,10 @@ export function writeLargeOffset(
   value: number
 ): void {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
-  const high = Math.floor(value / 0x100000000)
-  const low = value % 0x100000000
+  // Use BigInt for precision with large 64-bit values
+  const bigValue = BigInt(value)
+  const high = Number(bigValue >> 32n)
+  const low = Number(bigValue & 0xffffffffn)
 
   view.setUint32(offset, high, false)
   view.setUint32(offset + 4, low, false)
@@ -875,7 +884,7 @@ export class PackParser {
 
   constructor(data: Uint8Array) {
     if (data.length < 12) {
-      throw new Error('Pack data too short')
+      throw new Error('Invalid pack data: too short')
     }
 
     this._data = data
@@ -941,11 +950,25 @@ export class PackObjectIterator implements Iterable<ParsedPackObject> {
 
       offset += compressedSize
 
+      // Compute SHA of the git object (type + ' ' + size + '\0' + data)
+      const typeName = getTypeName(type)
+      const header = new TextEncoder().encode(`${typeName} ${decompressed.length}\0`)
+      const fullContent = new Uint8Array(header.length + decompressed.length)
+      fullContent.set(header)
+      fullContent.set(decompressed, header.length)
+      const sha = bytesToHex(sha1(fullContent))
+
+      // Compute CRC32 of the compressed data in pack
+      const compressedForCrc = this.data.slice(objectStart, offset)
+      const crc32 = calculateCRC32(compressedForCrc)
+
       yield {
         type,
         size,
         data: decompressed,
         offset: objectStart,
+        sha,
+        crc32,
       }
     }
   }
@@ -1016,6 +1039,27 @@ function hexToBytes(hex: string): Uint8Array {
     bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
   }
   return bytes
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function getTypeName(type: number): string {
+  switch (type) {
+    case OBJ_COMMIT:
+      return 'commit'
+    case OBJ_TREE:
+      return 'tree'
+    case OBJ_BLOB:
+      return 'blob'
+    case OBJ_TAG:
+      return 'tag'
+    default:
+      throw new Error(`Unknown object type: ${type}`)
+  }
 }
 
 function concatArrays(arrays: Uint8Array[]): Uint8Array {

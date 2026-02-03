@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import path from 'path'
 
 /**
  * Vitest config for Node.js-specific tests.
@@ -9,6 +10,12 @@ import { defineConfig } from 'vitest/config'
  * Run with: npx vitest run --config vitest.node.config.ts
  */
 export default defineConfig({
+  resolve: {
+    alias: [
+      { find: /^@dotdo\/gitx\/(.*)$/, replacement: path.resolve(__dirname, './core/$1') },
+      { find: '@dotdo/gitx', replacement: path.resolve(__dirname, './core') },
+    ],
+  },
   test: {
     globals: true,
     include: [

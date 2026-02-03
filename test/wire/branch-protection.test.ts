@@ -357,7 +357,7 @@ describe('Branch Protection', () => {
 
         const result = checkProtectionRule(command, config, context, false)
         expect(result.allowed).toBe(false)
-        expect(result.reason).toContain('linear history')
+        expect(result.reason).toContain('Linear history')
         expect(result.suggestion).toContain('Rebase')
       })
 

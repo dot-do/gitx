@@ -595,7 +595,7 @@ function getViolationType(reason: string): ProtectionViolationType {
   if (reason.includes('Force push')) return 'force_push_blocked'
   if (reason.includes('deletion')) return 'deletion_blocked'
   if (reason.includes('locked')) return 'branch_locked'
-  if (reason.includes('linear history')) return 'linear_history_required'
+  if (reason.includes('Linear history')) return 'linear_history_required'
   if (reason.includes('review')) return 'reviews_required'
   if (reason.includes('signed')) return 'signed_commits_required'
   if (reason.includes('status check')) return 'status_checks_required'
