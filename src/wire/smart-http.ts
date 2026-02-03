@@ -1082,7 +1082,7 @@ function formatPeeledRefs(refs: GitRef[]): string[] {
  * @param body - Request body as Uint8Array
  * @returns Parsed wants, haves, capabilities, and done flag
  *
- * @throws {Error} If the request is malformed (invalid pkt-line format)
+ * @throws {Error} If the request is malformed (invalid pkt-line length prefix)
  *
  * @example
  * ```typescript
@@ -1180,7 +1180,8 @@ export function parseUploadPackRequest(body: Uint8Array): {
  * @param body - Request body as Uint8Array
  * @returns Parsed commands, capabilities, and packfile
  *
- * @throws {Error} If the request is malformed
+ * @throws {Error} If the pkt-line length prefix is incomplete or invalid
+ * @throws {Error} If the pkt-line packet data is incomplete
  *
  * @example
  * ```typescript

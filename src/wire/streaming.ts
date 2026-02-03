@@ -513,6 +513,9 @@ export class StreamingPackWriter {
    * Writes a single object to the pack.
    *
    * @param object - Object to write (can have streaming data)
+   *
+   * @throws {Error} If the pack writer has already been finalized
+   * @throws {Error} If more objects are written than the specified object count
    */
   async writeObject(object: StreamableObject): Promise<void> {
     if (this.finalized) {
@@ -559,6 +562,10 @@ export class StreamingPackWriter {
    * @param type - Object type
    * @param size - Total size in bytes
    * @param dataStream - ReadableStream of object data
+   *
+   * @throws {Error} If the pack writer has already been finalized
+   * @throws {Error} If more objects are written than the specified object count
+   * @throws {Error} If compression fails
    */
   async writeStreamingObject(
     _sha: string,
@@ -640,6 +647,9 @@ export class StreamingPackWriter {
    * Finalizes the pack and returns a ReadableStream of the complete packfile.
    *
    * @returns ReadableStream of the complete packfile including checksum
+   *
+   * @throws {Error} If the pack writer has already been finalized
+   * @throws {Error} If the number of objects written doesn't match the expected count
    */
   async finalize(): Promise<ReadableStream<Uint8Array>> {
     if (this.finalized) {
@@ -748,6 +758,9 @@ export interface StreamingPackReaderOptions {
  *
  * @param options - Parser options including callbacks
  * @returns WritableStream that accepts packfile data
+ *
+ * @throws {Error} If packfile signature is invalid (not 'PACK')
+ * @throws {Error} If pack version is unsupported (not 2 or 3)
  *
  * @example
  * ```typescript

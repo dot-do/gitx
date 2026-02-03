@@ -251,6 +251,8 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
 
   /**
    * Read a complete blob, reassembling from chunks if needed.
+   *
+   * @throws {Error} If a chunk is missing for a chunked blob
    */
   async function readBlob(sha: string): Promise<Uint8Array | null> {
     const record = metadata.get(getMetadataKey(sha))
@@ -286,6 +288,12 @@ export function createChunkedBlobStorage(): ChunkedBlobStorage {
 
   /**
    * Read a range of bytes from a blob.
+   *
+   * @throws {Error} If offset is negative
+   * @throws {Error} If length is negative
+   * @throws {Error} If range exceeds blob size
+   * @throws {Error} If data is missing for non-chunked blob
+   * @throws {Error} If a chunk is missing for a chunked blob
    */
   async function readRange(
     sha: string,

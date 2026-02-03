@@ -144,6 +144,13 @@ export class BundleWriter {
     return projectedSize <= this._config.maxBundleSize
   }
 
+  /**
+   * Add an object to the current bundle.
+   *
+   * @throws {BundleWriterError} If writer is closed
+   * @throws {BundleWriterError} If object with same OID already exists
+   * @throws {BundleWriterError} If bundle rotation fails
+   */
   async add(oid: string, type: BundleObjectType, data: Uint8Array): Promise<void> {
     if (this._closed) {
       throw new BundleWriterError('Cannot add to closed writer')

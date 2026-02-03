@@ -468,6 +468,10 @@ function decodeArray(buf: Uint8Array, pos: number, dictionary: string[]): { resu
  * Decode VARIANT metadata + value buffers back into a JavaScript value.
  *
  * This is the inverse of hyparquet-writer's encodeVariant().
+ *
+ * @throws {Error} If VARIANT header is missing or malformed
+ * @throws {Error} If VARIANT basic type is unknown
+ * @throws {Error} If VARIANT primitive type_id is unknown
  */
 export function decodeVariant(metadata: Uint8Array, value: Uint8Array): unknown {
   const dictionary = decodeMetadata(metadata)
@@ -484,6 +488,8 @@ export function decodeVariant(metadata: Uint8Array, value: Uint8Array): unknown 
  * For inline storage, returns the raw object bytes in content.
  * For r2/lfs storage, returns the R2 key as a string in content,
  * plus LFS metadata (oid, lfsSize) for lfs objects.
+ *
+ * @throws {Error} If VARIANT data is malformed (see decodeVariant)
  */
 export function decodeGitObject(
   sha: string,

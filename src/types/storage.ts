@@ -181,7 +181,11 @@ export function validateStoreParams(type: string, data: Uint8Array): ValidationR
  * Use this for input validation in API boundaries.
  *
  * @param refName - The ref name to validate
- * @throws Error if ref name is invalid
+ *
+ * @throws {Error} If ref name is empty or not a string
+ * @throws {Error} If ref name starts with '.' or '/'
+ * @throws {Error} If ref name ends with '/', '.', or '.lock'
+ * @throws {Error} If ref name contains '..', '//', or invalid characters (control chars, space, ~, ^, :, ?, *, [, \)
  *
  * @example
  * ```typescript
