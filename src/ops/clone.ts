@@ -865,62 +865,112 @@ export async function unpackObjects(
     }
   }
 
-  // Second pass: resolve deltas
-  // Keep resolving until no more progress is made
-  let resolved = 0
-  let lastResolved = -1
+  // Second pass: resolve deltas using queue-based algorithm (O(n) instead of O(n^2))
+  // Build dependency graph: track which deltas are waiting for which bases
+  const waitingOnOffset = new Map<number, PendingDelta[]>() // baseOffset -> deltas waiting
+  const waitingOnSha = new Map<string, PendingDelta[]>()    // baseSha -> deltas waiting
+  const readyQueue: PendingDelta[] = []
 
-  while (resolved > lastResolved) {
-    lastResolved = resolved
+  // Categorize pending deltas: ready to resolve vs waiting for base
+  for (const delta of pendingDeltas) {
+    if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
+      if (objectsByOffset.has(delta.baseOffset)) {
+        readyQueue.push(delta)
+      } else {
+        const waiting = waitingOnOffset.get(delta.baseOffset) || []
+        waiting.push(delta)
+        waitingOnOffset.set(delta.baseOffset, waiting)
+      }
+    } else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
+      // Check if base is already available
+      let baseAvailable = objectsBySha.has(delta.baseSha)
 
-    for (let i = pendingDeltas.length - 1; i >= 0; i--) {
-      const delta = pendingDeltas[i]!
-      let baseObj: ParsedPackObject | undefined
-
-      if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
-        baseObj = objectsByOffset.get(delta.baseOffset)
-      } else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
-        baseObj = objectsBySha.get(delta.baseSha)
-
-        // Try to get from backend if not in our parsed objects
-        if (!baseObj) {
-          const backendObj = await backend.readObject(delta.baseSha)
-          if (backendObj) {
-            baseObj = {
-              type: backendObj.type,
-              data: backendObj.data,
-              offset: -1,
-              sha: delta.baseSha
-            }
+      // Also check backend for ref_delta bases (thin packs)
+      if (!baseAvailable) {
+        const backendObj = await backend.readObject(delta.baseSha)
+        if (backendObj) {
+          // Cache it for delta resolution
+          const obj: ParsedPackObject = {
+            type: backendObj.type,
+            data: backendObj.data,
+            offset: -1,
+            sha: delta.baseSha
           }
+          objectsBySha.set(delta.baseSha, obj)
+          baseAvailable = true
         }
       }
 
-      if (!baseObj) continue
-
-      // Apply delta
-      const targetData = applyDelta(baseObj.data, delta.deltaData)
-      const targetObj: ParsedPackObject = {
-        type: baseObj.type,
-        data: targetData,
-        offset: delta.offset
+      if (baseAvailable) {
+        readyQueue.push(delta)
+      } else {
+        const waiting = waitingOnSha.get(delta.baseSha) || []
+        waiting.push(delta)
+        waitingOnSha.set(delta.baseSha, waiting)
       }
-
-      objectsByOffset.set(delta.offset, targetObj)
-
-      // Store in backend
-      const sha = await backend.writeObject({ type: baseObj.type, data: targetData })
-      targetObj.sha = sha
-      objectsBySha.set(sha, targetObj)
-
-      // Remove from pending
-      pendingDeltas.splice(i, 1)
-      resolved++
     }
   }
 
-  if (pendingDeltas.length > 0) {
-    throw new Error(`Failed to resolve ${pendingDeltas.length} delta objects`)
+  // Process queue - each delta is processed exactly once
+  let resolved = 0
+  while (readyQueue.length > 0) {
+    const delta = readyQueue.shift()!
+    let baseObj: ParsedPackObject | undefined
+
+    if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
+      baseObj = objectsByOffset.get(delta.baseOffset)
+    } else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
+      baseObj = objectsBySha.get(delta.baseSha)
+    }
+
+    if (!baseObj) {
+      // This shouldn't happen if categorization was correct, but handle gracefully
+      continue
+    }
+
+    // Apply delta
+    const targetData = applyDelta(baseObj.data, delta.deltaData)
+    const targetObj: ParsedPackObject = {
+      type: baseObj.type,
+      data: targetData,
+      offset: delta.offset
+    }
+
+    objectsByOffset.set(delta.offset, targetObj)
+
+    // Store in backend
+    const sha = await backend.writeObject({ type: baseObj.type, data: targetData })
+    targetObj.sha = sha
+    objectsBySha.set(sha, targetObj)
+    resolved++
+
+    // Check if this newly resolved object unblocks any waiting deltas
+    // Check by offset (for ofs_delta chains)
+    const nowReadyByOffset = waitingOnOffset.get(delta.offset)
+    if (nowReadyByOffset) {
+      readyQueue.push(...nowReadyByOffset)
+      waitingOnOffset.delete(delta.offset)
+    }
+
+    // Check by SHA (for ref_delta chains)
+    const nowReadyBySha = waitingOnSha.get(sha)
+    if (nowReadyBySha) {
+      readyQueue.push(...nowReadyBySha)
+      waitingOnSha.delete(sha)
+    }
+  }
+
+  // Check for unresolved deltas (missing bases)
+  let totalUnresolved = 0
+  for (const deltas of waitingOnOffset.values()) {
+    totalUnresolved += deltas.length
+  }
+  for (const deltas of waitingOnSha.values()) {
+    totalUnresolved += deltas.length
+  }
+
+  if (totalUnresolved > 0) {
+    throw new Error(`Failed to resolve ${totalUnresolved} delta objects`)
   }
 
   if (onProgress) {

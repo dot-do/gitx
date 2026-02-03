@@ -268,10 +268,11 @@ function createNodeZlibInflateClass(zlib: typeof import('zlib')) {
     push(data: Uint8Array, _final: boolean): void {
       try {
         // Use info: true to get bytes consumed
-        const { buffer, engine } = zlib.inflateSync(Buffer.from(data), { info: true }) as {
+        const result = zlib.inflateSync(Buffer.from(data), { info: true }) as unknown as {
           buffer: Buffer
           engine: { bytesWritten: number }
         }
+        const { buffer, engine } = result
         this.result = new Uint8Array(buffer)
         // bytesWritten is the number of input bytes consumed
         this.strm.next_in = engine.bytesWritten

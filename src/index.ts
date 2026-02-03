@@ -499,6 +499,7 @@ export {
   computeObjectSha,
   packTypeToObjectType,
   bytesToHex,
+  UNPACK_LIMITS,
   type UnpackedObject,
   type UnpackResult,
   type UnpackOptions,
