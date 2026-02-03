@@ -462,9 +462,10 @@ export declare const normalizeBranchName: typeof sharedNormalizeBranchName;
  * @param options - Branch creation options
  * @returns Result of the branch creation
  *
- * @throws {Error} If the branch name is invalid
+ * @throws {Error} If the branch name is invalid (see isValidBranchName for rules)
  * @throws {Error} If the branch already exists and force is false
- * @throws {Error} If the start point cannot be resolved
+ * @throws {Error} If the start point (SHA, branch, or ref) cannot be resolved
+ * @throws {Error} If HEAD does not point to a valid commit when no startPoint specified
  *
  * @example
  * ```typescript
@@ -496,10 +497,10 @@ export declare function createBranch(refStore: RefStore, options: BranchOptions)
  * @param options - Delete options
  * @returns Result of the delete operation
  *
- * @throws {Error} If no branch name is provided
+ * @throws {Error} If no branch name is provided (name or names required)
  * @throws {Error} If the branch doesn't exist
- * @throws {Error} If trying to delete the current branch
- * @throws {Error} If branch is not merged and force is false
+ * @throws {Error} If trying to delete the currently checked out branch
+ * @throws {Error} If branch is not fully merged and force is false (when checkMerged is true)
  *
  * @example
  * ```typescript
@@ -556,10 +557,10 @@ export declare function listBranches(refStore: RefStore, options?: BranchListOpt
  * @param options - Rename options
  * @returns Result of the rename operation
  *
- * @throws {Error} If no current branch when oldName not specified
- * @throws {Error} If the new name is invalid
+ * @throws {Error} If no current branch exists when oldName is not specified (detached HEAD)
+ * @throws {Error} If the new branch name is invalid (see isValidBranchName for rules)
  * @throws {Error} If the old branch doesn't exist
- * @throws {Error} If the new name exists and force is false
+ * @throws {Error} If a branch with the new name already exists and force is false
  *
  * @example
  * ```typescript
@@ -591,9 +592,11 @@ export declare function renameBranch(refStore: RefStore, options: BranchRenameOp
  * @param options - Checkout options
  * @returns Result of the checkout operation
  *
- * @throws {Error} If neither name nor sha is provided
+ * @throws {Error} If both branch name and SHA are specified without detach option
+ * @throws {Error} If branch name is not provided (when not in detached mode)
  * @throws {Error} If branch doesn't exist and create is false
- * @throws {Error} If branch exists when creating and force is false
+ * @throws {Error} If branch already exists when creating and force is false
+ * @throws {Error} If the start point cannot be resolved when creating a branch
  *
  * @example
  * ```typescript
@@ -696,7 +699,7 @@ export declare function branchExists(refStore: RefStore, name: string, options?:
  * @param upstream - The upstream ref (e.g., 'origin/main')
  * @returns Result of setting tracking
  *
- * @throws {Error} If the local branch doesn't exist
+ * @throws {Error} If the local branch doesn't exist in the ref store
  *
  * @example
  * ```typescript
@@ -758,7 +761,7 @@ export declare function getDefaultBranch(refStore: RefStore): Promise<string | n
  * @param refStore - The ref store for accessing refs
  * @param name - The branch name to set as default
  *
- * @throws {Error} If the branch doesn't exist
+ * @throws {Error} If the specified branch doesn't exist in the ref store
  *
  * @example
  * ```typescript

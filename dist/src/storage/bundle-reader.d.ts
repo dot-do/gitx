@@ -94,10 +94,19 @@ export declare class BundleReaderService {
     private validateOidLength;
     /**
      * Read a single object from a bundle by OID
+     *
+     * @throws {BundleReaderError} If OID length is invalid
+     * @throws {BundleReaderError} If storage read fails
+     * @throws {BundleNotFoundError} If bundle does not exist
+     * @throws {BundleFormatError} If bundle format is invalid
      */
     readObject(bundlePath: string, oid: string): Promise<BundleObject | null>;
     /**
      * Read a range of bytes from an object
+     *
+     * @throws {BundleReaderError} If object is not found in bundle
+     * @throws {BundleNotFoundError} If bundle does not exist
+     * @throws {BundleFormatError} If bundle format is invalid
      */
     readObjectRange(bundlePath: string, oid: string, start: number, end?: number): Promise<RangeReadResult>;
     /**

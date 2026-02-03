@@ -461,6 +461,7 @@ export class GitModule {
      *
      * @param message - Commit message
      * @returns Commit hash or object with hash
+     * @throws {Error} If no files are staged for commit
      *
      * @example
      * ```typescript
@@ -614,6 +615,7 @@ export class GitModule {
      *
      * @param _remote - Remote name (ignored, always uses R2)
      * @param _branch - Branch to pull (uses configured branch)
+     * @throws {Error} If pull/sync operation fails
      */
     async pull(_remote, _branch) {
         const result = await this.sync();

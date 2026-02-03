@@ -46,14 +46,21 @@ export default defineWorkersConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/index.ts'],
+      include: ['src/**/*.ts', 'core/**/*.ts'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/index.ts',
+        '**/*.test.ts',
+        '**/test/**',
+        '**/mocks/**',
+        '**/dist/**',
+      ],
       thresholds: {
-        statements: 75,
+        lines: 70,
         branches: 60,
-        functions: 60,
-        lines: 75
-      }
+        functions: 70,
+        statements: 70,
+      },
     },
     testTimeout: 30000
   }

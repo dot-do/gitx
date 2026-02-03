@@ -20,9 +20,11 @@
  * ```
  */
 import { Hono } from 'hono';
-import { GitRepoDOError, GitRepoDOErrorCode, } from './types';
+import { GitRepoDOError, GitRepoDOErrorCode } from './types';
 import { createLogger } from './logger';
 import { setupRoutes } from './routes';
+import { createFsxAdapter } from './fsx-adapter';
+import { createWorkflowContext } from './workflow-context';
 import { ThinSchemaManager, SchemaManager } from './schema';
 import { ParquetStore } from '../storage/parquet-store';
 import { createIcebergFlushHandler } from '../iceberg/flush-handler';
@@ -42,75 +44,6 @@ const COMPACTION_BASE_DELAY_MS = 10_000;
 const COMPACTION_BACKOFF_MULTIPLIER = 3;
 /** SQLite table for compaction retry state */
 const COMPACTION_RETRIES_TABLE = 'compaction_retries';
-/**
- * Creates an FsCapability adapter that uses the FSX service binding.
- * All filesystem operations are proxied to the fsx-do worker.
- */
-function createFsxAdapter(fsx, namespace) {
-    const baseUrl = `https://fsx.do/${namespace}`;
-    return {
-        async readFile(path) {
-            const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'GET' });
-            if (!response.ok) {
-                throw new Error(`Failed to read file: ${path} (${response.status})`);
-            }
-            return response.text();
-        },
-        async writeFile(path, content) {
-            const body = typeof content === 'string' ? content : new Uint8Array(content);
-            const response = await fsx.fetch(`${baseUrl}${path}`, {
-                method: 'PUT',
-                body,
-                headers: { 'Content-Type': 'application/octet-stream' },
-            });
-            if (!response.ok) {
-                throw new Error(`Failed to write file: ${path} (${response.status})`);
-            }
-        },
-        async readDir(path) {
-            const response = await fsx.fetch(`${baseUrl}${path}?list=true`, { method: 'GET' });
-            if (!response.ok) {
-                throw new Error(`Failed to read directory: ${path} (${response.status})`);
-            }
-            const data = await response.json();
-            return data.entries ?? [];
-        },
-        async exists(path) {
-            const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'HEAD' });
-            return response.ok;
-        },
-        async mkdir(path, options) {
-            const url = new URL(`${baseUrl}${path}`);
-            if (options?.recursive)
-                url.searchParams.set('recursive', 'true');
-            const response = await fsx.fetch(url.toString(), {
-                method: 'POST',
-                headers: { 'X-Operation': 'mkdir' },
-            });
-            if (!response.ok && response.status !== 409) {
-                throw new Error(`Failed to create directory: ${path} (${response.status})`);
-            }
-        },
-        async rm(path, options) {
-            const url = new URL(`${baseUrl}${path}`);
-            if (options?.recursive)
-                url.searchParams.set('recursive', 'true');
-            if (options?.force)
-                url.searchParams.set('force', 'true');
-            const response = await fsx.fetch(url.toString(), { method: 'DELETE' });
-            if (!response.ok && !(options?.force && response.status === 404)) {
-                throw new Error(`Failed to remove: ${path} (${response.status})`);
-            }
-        },
-        async getFileId(path) {
-            const response = await fsx.fetch(`${baseUrl}${path}?meta=true`, { method: 'GET' });
-            if (!response.ok)
-                return null;
-            const data = await response.json();
-            return data.id ?? null;
-        },
-    };
-}
 // ============================================================================
 // DO Base Class Implementation
 // ============================================================================
@@ -775,100 +708,14 @@ export class GitRepoDO extends DO {
     // ===========================================================================
     // Private Methods
     // ===========================================================================
+    /**
+     * Creates the workflow context for the $ API.
+     * Delegates to the extracted workflow-context module for cleaner organization.
+     */
     _createWorkflowContext() {
-        const self = this;
-        // Create the $ proxy with all required methods
-        const context = {
-            // Fire-and-forget
-            send(event, data) {
-                // Queue event for async processing
-                self.state.waitUntil(self.state.storage.put(`pending:${Date.now()}`, { event, data }));
-            },
-            // Quick attempt (blocking, non-durable)
-            async try(action, data) {
-                // Execute action directly
-                const result = { action, success: true };
-                if (data !== undefined)
-                    result.data = data;
-                return result;
-            },
-            // Durable execution with retries
-            async do(action, data) {
-                // Store action for durability
-                const actionId = `action:${Date.now()}`;
-                await self.state.storage.put(actionId, { action, data, status: 'pending' });
-                // Execute and update status
-                const result = { action, success: true };
-                if (data !== undefined)
-                    result.data = data;
-                await self.state.storage.put(actionId, { action, data, status: 'completed', result });
-                return result;
-            },
-            // Event handler proxy
-            on: new Proxy({}, {
-                get(_target, noun) {
-                    return new Proxy({}, {
-                        get(_t, verb) {
-                            return (handler) => {
-                                // Register event handler
-                                self.state.waitUntil(self.state.storage.put(`handler:${noun}:${verb}`, { handler: String(handler) }));
-                            };
-                        },
-                    });
-                },
-            }),
-            // Scheduling proxy
-            every: new Proxy({}, {
-                get(_target, schedule) {
-                    return {
-                        at: (time) => (handler) => {
-                            // Register scheduled handler
-                            self.state.waitUntil(self.state.storage.put(`schedule:${schedule}:${time}`, { handler: String(handler) }));
-                        },
-                    };
-                },
-            }),
-            // Git-specific methods
-            async branch(name) {
-                await self.state.storage.put(`refs/heads/${name}`, {
-                    created: Date.now(),
-                    head: await self.state.storage.get('HEAD'),
-                });
-            },
-            async checkout(ref) {
-                await self.state.storage.put('HEAD', ref);
-            },
-            async merge(branch) {
-                const branchData = await self.state.storage.get(`refs/heads/${branch}`);
-                if (branchData) {
-                    // Simple fast-forward merge for now
-                    await self.state.storage.put('HEAD', branchData);
-                }
-            },
-        };
-        // Add domain proxy for $.Noun(id) pattern
-        return new Proxy(context, {
-            get(target, prop) {
-                // Return existing properties first
-                if (prop in target) {
-                    return target[prop];
-                }
-                // For capitalized names, return a domain resolver function
-                if (prop.charAt(0) === prop.charAt(0).toUpperCase()) {
-                    return (id) => {
-                        // Return a proxy that represents the domain entity
-                        return new Proxy({}, {
-                            get(_t, method) {
-                                return async (...args) => {
-                                    // This would resolve and call the method on the target DO
-                                    return { domain: prop, id, method, args };
-                                };
-                            },
-                        });
-                    };
-                }
-                return undefined;
-            },
+        return createWorkflowContext({
+            storage: this.state.storage,
+            waitUntil: (promise) => this.state.waitUntil(promise),
         });
     }
     _createStoreAccessor(prefix) {

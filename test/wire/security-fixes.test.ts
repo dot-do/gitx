@@ -205,7 +205,7 @@ describe('Security: hasPermission authentication bypass', () => {
     provider = new DORepositoryProvider(mockStorage)
   })
 
-  it.todo('receive-pack (push) without auth returns false (FAILS - currently returns true)', async () => {
+  it('receive-pack (push) without auth returns false (FAILS - currently returns true)', async () => {
     // BUG: hasPermission always returns true (line 111 in wire-routes.ts)
     //
     // Expected: Should check authentication and return false if not authenticated
@@ -220,7 +220,7 @@ describe('Security: hasPermission authentication bypass', () => {
     expect(hasPermission).toBe(false) // Should deny unauthenticated push
   })
 
-  it.todo('upload-pack (fetch) without auth returns false (FAILS - currently returns true)', async () => {
+  it('upload-pack (fetch) without auth returns false (FAILS - currently returns true)', async () => {
     // Similar issue for fetch operations - should require auth for private repos
 
     const hasPermission = await provider.hasPermission('git-upload-pack')
@@ -231,7 +231,7 @@ describe('Security: hasPermission authentication bypass', () => {
     expect(hasPermission).toBe(false) // Should deny by default
   })
 
-  it.todo('always-true return value enables unauthorized repository access', async () => {
+  it('always-true return value enables unauthorized repository access', async () => {
     // Demonstrate the security impact: anyone can call these methods
     // without any authentication checks
 
@@ -248,6 +248,81 @@ describe('Security: hasPermission authentication bypass', () => {
 
     // TODO: When fixing this, the hasPermission method should accept
     // an AuthContext parameter with credentials to validate.
+  })
+
+  it('should reject missing Authorization header', async () => {
+    // When no Authorization header is provided, access should be denied
+    // This tests the case where an attacker simply omits credentials entirely
+
+    // The current implementation doesn't check headers at all
+    // It always returns true regardless of auth state
+    const canPush = await provider.hasPermission('git-receive-pack')
+    const canFetch = await provider.hasPermission('git-upload-pack')
+
+    // Expected: Both should be false when no auth header is present
+    // Actual: Both return true (vulnerability)
+    expect(canPush).toBe(false)
+    expect(canFetch).toBe(false)
+  })
+
+  it('should reject malformed bearer tokens', async () => {
+    // Test various malformed token patterns that should be rejected
+    // In a proper implementation, these would be checked in hasPermission
+
+    const malformedTokens = [
+      '',                          // Empty token
+      'Bearer',                    // Missing token value
+      'Bearer ',                   // Empty token after Bearer
+      'Bearer invalid',            // Invalid format (not a JWT or valid token)
+      'Basic dXNlcjpwYXNz',        // Wrong auth scheme (Basic instead of Bearer)
+      'bearer token123',           // Wrong case
+      'BEARER token123',           // Wrong case
+      'Token token123',            // Wrong scheme name
+      'Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0.', // JWT with alg:none
+    ]
+
+    // Current implementation ignores all of these and returns true
+    // This test documents that the vulnerability allows any/no tokens
+    for (const _token of malformedTokens) {
+      const canPush = await provider.hasPermission('git-receive-pack')
+      const canFetch = await provider.hasPermission('git-upload-pack')
+
+      // Expected: All malformed tokens should be rejected
+      // Actual: All return true (vulnerability)
+      expect(canPush).toBe(false)
+      expect(canFetch).toBe(false)
+    }
+  })
+
+  it('should reject null and empty credentials', async () => {
+    // Test null/undefined/empty credential scenarios
+
+    // Without passing any auth context (null/undefined), access should be denied
+    const canPush = await provider.hasPermission('git-receive-pack')
+    const canFetch = await provider.hasPermission('git-upload-pack')
+
+    // Expected: Null/empty credentials should be rejected
+    // Actual: Returns true regardless (vulnerability)
+    expect(canPush).toBe(false)
+    expect(canFetch).toBe(false)
+  })
+
+  it('should properly validate different service types independently', async () => {
+    // Push and fetch operations should have separate permission checks
+    // A user might have read-only access (fetch) but not write access (push)
+
+    // Current implementation treats both the same (always true)
+    const pushResult = await provider.hasPermission('git-receive-pack')
+    const fetchResult = await provider.hasPermission('git-upload-pack')
+
+    // Both services should require proper authentication
+    // Expected behavior:
+    // - git-receive-pack (push): requires write permissions
+    // - git-upload-pack (fetch): requires read permissions (or public if configured)
+    //
+    // Current buggy behavior: both always return true without any checks
+    expect(pushResult).toBe(false)
+    expect(fetchResult).toBe(false)
   })
 })
 

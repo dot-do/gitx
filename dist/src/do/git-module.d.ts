@@ -494,6 +494,7 @@ export declare class GitModule {
      *
      * @param message - Commit message
      * @returns Commit hash or object with hash
+     * @throws {Error} If no files are staged for commit
      *
      * @example
      * ```typescript
@@ -542,6 +543,7 @@ export declare class GitModule {
      *
      * @param _remote - Remote name (ignored, always uses R2)
      * @param _branch - Branch to pull (uses configured branch)
+     * @throws {Error} If pull/sync operation fails
      */
     pull(_remote?: string, _branch?: string): Promise<void>;
     /**

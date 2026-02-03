@@ -57,7 +57,20 @@ export declare class BundleCorruptedError extends Error {
 export declare class BundleIndexError extends Error {
     constructor(message: string);
 }
-/** Parses and validates a bundle header from raw bytes, optionally verifying the checksum. */
+/**
+ * Parses and validates a bundle header from raw bytes, optionally verifying the checksum.
+ *
+ * @param data - Raw bundle bytes (at least BUNDLE_HEADER_SIZE bytes)
+ * @param options - Parsing options
+ * @param options.verifyChecksum - Whether to verify the header checksum
+ * @returns Parsed bundle header
+ *
+ * @throws {BundleFormatError} If header is truncated (less than 64 bytes)
+ * @throws {BundleFormatError} If magic bytes are invalid (not 'BNDL')
+ * @throws {BundleFormatError} If bundle version is unsupported
+ * @throws {BundleFormatError} If index offset exceeds total size
+ * @throws {BundleCorruptedError} If checksum verification fails (when verifyChecksum is true)
+ */
 export declare function parseBundleHeader(data: Uint8Array, options?: {
     verifyChecksum?: boolean;
 }): BundleHeader;
@@ -67,7 +80,17 @@ export declare function createBundleHeader(options: {
     indexOffset: number;
     totalSize: number;
 }): Uint8Array;
-/** Deserializes the bundle index section into an array of index entries. */
+/**
+ * Deserializes the bundle index section into an array of index entries.
+ *
+ * @param data - Raw index bytes
+ * @param entryCount - Expected number of entries
+ * @returns Array of parsed index entries sorted by OID
+ *
+ * @throws {BundleIndexError} If index data is smaller than expected based on entry count
+ * @throws {BundleIndexError} If duplicate OIDs are found in the index
+ * @throws {BundleIndexError} If an object type value is invalid (not 1-4)
+ */
 export declare function parseBundleIndex(data: Uint8Array, entryCount: number): BundleIndexEntry[];
 /** Serializes an array of bundle index entries into raw bytes. */
 export declare function createBundleIndex(entries: BundleIndexEntry[]): Uint8Array;

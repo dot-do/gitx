@@ -15,4 +15,6 @@ export * from './worker-loader';
 export * from './interfaces';
 // GitCapability Types (DO integration)
 export * from './capability';
+// Git Binding Types (MCP context)
+export * from './git-binding';
 //# sourceMappingURL=index.js.map

@@ -77,6 +77,13 @@ export class BundleWriter {
         const projectedSize = this.currentBundleSize + bytes + BUNDLE_INDEX_ENTRY_SIZE;
         return projectedSize <= this._config.maxBundleSize;
     }
+    /**
+     * Add an object to the current bundle.
+     *
+     * @throws {BundleWriterError} If writer is closed
+     * @throws {BundleWriterError} If object with same OID already exists
+     * @throws {BundleWriterError} If bundle rotation fails
+     */
     async add(oid, type, data) {
         if (this._closed) {
             throw new BundleWriterError('Cannot add to closed writer');

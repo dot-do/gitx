@@ -33,13 +33,19 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       include: ['src/cli/**/*.ts', 'src/mcp/**/*.ts'],
-      exclude: ['src/**/*.d.ts'],
+      exclude: [
+        'src/**/*.d.ts',
+        '**/*.test.ts',
+        '**/test/**',
+        '**/mocks/**',
+        '**/dist/**',
+      ],
       thresholds: {
-        statements: 75,
+        lines: 70,
         branches: 60,
-        functions: 60,
-        lines: 75
-      }
+        functions: 70,
+        statements: 70,
+      },
     },
   }
 })

@@ -10,4 +10,5 @@ export * from './storage';
 export * from './worker-loader';
 export * from './interfaces';
 export * from './capability';
+export * from './git-binding';
 //# sourceMappingURL=index.d.ts.map

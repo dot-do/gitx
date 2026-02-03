@@ -128,6 +128,10 @@ function buildClientCapabilities(serverCaps, options) {
  * @param url - Parsed or string URL
  * @param options - Push options (for auth and custom fetch)
  * @returns Remote ref advertisement
+ * @throws {Error} If SSH protocol is used (not yet supported)
+ * @throws {Error} If authentication fails (401/403 response)
+ * @throws {Error} If server returns non-2xx status
+ * @throws {Error} If server doesn't support Smart HTTP (invalid content type)
  */
 export async function discoverReceivePackRefs(url, options) {
     const parsed = typeof url === 'string' ? parseCloneUrl(url) : url;
@@ -375,6 +379,8 @@ function parseTree(data) {
 }
 /**
  * Convert object type string to PackObjectType.
+ *
+ * @throws {Error} If object type is unknown
  */
 function stringToPackObjectType(type) {
     switch (type) {
@@ -509,6 +515,7 @@ function parseReportStatus(data) {
  *
  * @param data - Side-band encoded data
  * @returns Concatenated channel 1 data as string
+ * @throws {Error} If server sends error on channel 3
  */
 function demultiplexSideBand(data) {
     const parts = [];

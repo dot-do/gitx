@@ -286,6 +286,10 @@ export declare class GitRepoDO extends DO implements GitRepoDOInstance {
      * Resolve a URL to a resource.
      */
     resolve(url: string): Promise<unknown>;
+    /**
+     * Creates the workflow context for the $ API.
+     * Delegates to the extracted workflow-context module for cleaner organization.
+     */
     private _createWorkflowContext;
     private _createStoreAccessor;
 }

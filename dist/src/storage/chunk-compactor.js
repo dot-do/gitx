@@ -282,6 +282,8 @@ export class ChunkCompactor {
      *
      * Groups candidates into super-chunks that approach the target size,
      * writes them to storage, and updates the compaction index.
+     *
+     * @throws {Error} If compaction is already in progress
      */
     async compact() {
         if (this._isCompacting) {
@@ -476,6 +478,7 @@ export class ChunkCompactor {
      * - Defragmenting storage
      *
      * @returns Compaction result
+     * @throws {Error} If compaction is already in progress
      */
     async fullCompaction() {
         if (this._isCompacting) {

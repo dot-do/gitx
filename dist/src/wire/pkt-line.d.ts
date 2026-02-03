@@ -205,7 +205,7 @@ export interface PktLineStreamResult {
  * @param data - The data to encode (string or Uint8Array)
  * @returns Encoded pkt-line as string (for text) or Uint8Array (for binary)
  *
- * @throws {Error} If data exceeds MAX_PKT_LINE_DATA bytes
+ * @throws {Error} If data exceeds MAX_PKT_LINE_DATA (65516 bytes)
  *
  * @example Encoding text data
  * ```typescript
@@ -244,7 +244,7 @@ export declare function encodePktLine(data: PktLineInput): string | Uint8Array;
  * @param input - The input to decode (string or Uint8Array)
  * @returns Object with decoded data, packet type (if special), and bytes consumed
  *
- * @throws {Error} If packet size exceeds MAX_PKT_LINE_SIZE (65520 bytes)
+ * @throws {Error} If packet size exceeds MAX_PKT_LINE_SIZE (65520 bytes) - prevents DoS attacks
  *
  * @example Decoding a data packet
  * ```typescript

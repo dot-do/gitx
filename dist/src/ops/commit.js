@@ -79,7 +79,7 @@ export function formatTimestamp(timestamp, timezone) {
  * @param timestampStr - Timestamp string like "1234567890 +0000"
  * @returns Object with parsed timestamp and timezone
  *
- * @throws {Error} If the format is invalid
+ * @throws {Error} If the timestamp format is invalid (must be "SECONDS TIMEZONE")
  *
  * @example
  * ```typescript
@@ -593,9 +593,12 @@ export function buildCommitObject(options) {
  * @param options - Commit creation options
  * @returns The created commit result with SHA and commit object
  *
- * @throws {Error} If tree SHA is missing or invalid
- * @throws {Error} If author is missing or invalid
- * @throws {Error} If commit message is empty
+ * @throws {Error} If tree SHA is missing or has invalid format (must be 40 hex chars)
+ * @throws {Error} If author is missing, has invalid name (no angle brackets/newlines), or invalid email
+ * @throws {Error} If committer has invalid name or email format
+ * @throws {Error} If commit message is empty or whitespace only
+ * @throws {Error} If parent SHA has invalid format
+ * @throws {Error} If timestamp is negative
  * @throws {Error} If commit would be empty and allowEmpty is false
  *
  * @example
@@ -768,7 +771,7 @@ function parseStoredCommit(data) {
  * @param options - Amendment options (only specified fields are changed)
  * @returns The new commit result (original commit is not modified)
  *
- * @throws {Error} If the commit doesn't exist
+ * @throws {Error} If the commit doesn't exist in the object store
  *
  * @example
  * ```typescript

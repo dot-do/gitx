@@ -28,30 +28,21 @@ import { Hono } from 'hono'
 
 import type {
   DOState,
-  ServiceBinding,
   GitRepoDOEnv,
   InitializeOptions,
   ForkOptions,
   ForkResult,
   CompactResult,
   WorkflowContext,
-  ActionResult,
   StoreAccessor,
   FsCapability,
   Logger,
 } from './types'
-import {
-  GitRepoDOError,
-  GitRepoDOErrorCode,
-  type DatabaseAccessor,
-  type WorkflowEventProxy,
-  type WorkflowScheduleProxy,
-  type EventHandler,
-  type ScheduledHandler,
-  type JsonValue,
-} from './types'
+import { GitRepoDOError, GitRepoDOErrorCode, type DatabaseAccessor } from './types'
 import { createLogger } from './logger'
 import { setupRoutes, type GitRepoDOInstance, type RouteSetupOptions } from './routes'
+import { createFsxAdapter } from './fsx-adapter'
+import { createWorkflowContext } from './workflow-context'
 import { ThinSchemaManager, SchemaManager } from './schema'
 import { ParquetStore } from '../storage/parquet-store'
 import { createIcebergFlushHandler } from '../iceberg/flush-handler'
@@ -76,79 +67,6 @@ const COMPACTION_BACKOFF_MULTIPLIER = 3
 
 /** SQLite table for compaction retry state */
 const COMPACTION_RETRIES_TABLE = 'compaction_retries'
-
-/**
- * Creates an FsCapability adapter that uses the FSX service binding.
- * All filesystem operations are proxied to the fsx-do worker.
- */
-function createFsxAdapter(fsx: ServiceBinding, namespace: string): FsCapability {
-  const baseUrl = `https://fsx.do/${namespace}`
-
-  return {
-    async readFile(path: string): Promise<string | Buffer> {
-      const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'GET' })
-      if (!response.ok) {
-        throw new Error(`Failed to read file: ${path} (${response.status})`)
-      }
-      return response.text()
-    },
-
-    async writeFile(path: string, content: string | Buffer): Promise<void> {
-      const body = typeof content === 'string' ? content : new Uint8Array(content)
-      const response = await fsx.fetch(`${baseUrl}${path}`, {
-        method: 'PUT',
-        body,
-        headers: { 'Content-Type': 'application/octet-stream' },
-      })
-      if (!response.ok) {
-        throw new Error(`Failed to write file: ${path} (${response.status})`)
-      }
-    },
-
-    async readDir(path: string): Promise<string[]> {
-      const response = await fsx.fetch(`${baseUrl}${path}?list=true`, { method: 'GET' })
-      if (!response.ok) {
-        throw new Error(`Failed to read directory: ${path} (${response.status})`)
-      }
-      const data = await response.json() as { entries: string[] }
-      return data.entries ?? []
-    },
-
-    async exists(path: string): Promise<boolean> {
-      const response = await fsx.fetch(`${baseUrl}${path}`, { method: 'HEAD' })
-      return response.ok
-    },
-
-    async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-      const url = new URL(`${baseUrl}${path}`)
-      if (options?.recursive) url.searchParams.set('recursive', 'true')
-      const response = await fsx.fetch(url.toString(), {
-        method: 'POST',
-        headers: { 'X-Operation': 'mkdir' },
-      })
-      if (!response.ok && response.status !== 409) {
-        throw new Error(`Failed to create directory: ${path} (${response.status})`)
-      }
-    },
-
-    async rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void> {
-      const url = new URL(`${baseUrl}${path}`)
-      if (options?.recursive) url.searchParams.set('recursive', 'true')
-      if (options?.force) url.searchParams.set('force', 'true')
-      const response = await fsx.fetch(url.toString(), { method: 'DELETE' })
-      if (!response.ok && !(options?.force && response.status === 404)) {
-        throw new Error(`Failed to remove: ${path} (${response.status})`)
-      }
-    },
-
-    async getFileId(path: string): Promise<number | null> {
-      const response = await fsx.fetch(`${baseUrl}${path}?meta=true`, { method: 'GET' })
-      if (!response.ok) return null
-      const data = await response.json() as { id?: number }
-      return data.id ?? null
-    },
-  }
-}
 
 // ============================================================================
 // DO Base Class Implementation
@@ -946,117 +864,14 @@ export class GitRepoDO extends DO implements GitRepoDOInstance {
   // Private Methods
   // ===========================================================================
 
+  /**
+   * Creates the workflow context for the $ API.
+   * Delegates to the extracted workflow-context module for cleaner organization.
+   */
   private _createWorkflowContext(): WorkflowContext {
-    const self = this
-
-    // Create the $ proxy with all required methods
-    const context: WorkflowContext = {
-      // Fire-and-forget
-      send<T = unknown>(event: string, data?: T): void {
-        // Queue event for async processing
-        self.state.waitUntil(
-          self.state.storage.put(`pending:${Date.now()}`, { event, data })
-        )
-      },
-
-      // Quick attempt (blocking, non-durable)
-      async try<T = unknown>(action: string, data?: T): Promise<ActionResult<T>> {
-        // Execute action directly
-        const result: ActionResult<T> = { action, success: true }
-        if (data !== undefined) result.data = data
-        return result
-      },
-
-      // Durable execution with retries
-      async do<T = unknown>(action: string, data?: T): Promise<ActionResult<T>> {
-        // Store action for durability
-        const actionId = `action:${Date.now()}`
-        await self.state.storage.put(actionId, { action, data, status: 'pending' })
-
-        // Execute and update status
-        const result: ActionResult<T> = { action, success: true }
-        if (data !== undefined) result.data = data
-        await self.state.storage.put(actionId, { action, data, status: 'completed', result })
-
-        return result
-      },
-
-      // Event handler proxy
-      on: new Proxy({} as WorkflowEventProxy, {
-        get(_target, noun: string) {
-          return new Proxy({}, {
-            get(_t, verb: string) {
-              return <T = unknown>(handler: EventHandler<T>) => {
-                // Register event handler
-                self.state.waitUntil(
-                  self.state.storage.put(`handler:${noun}:${verb}`, { handler: String(handler) })
-                )
-              }
-            },
-          })
-        },
-      }),
-
-      // Scheduling proxy
-      every: new Proxy({} as WorkflowScheduleProxy, {
-        get(_target, schedule: string) {
-          return {
-            at: (time: string) => (handler: ScheduledHandler) => {
-              // Register scheduled handler
-              self.state.waitUntil(
-                self.state.storage.put(`schedule:${schedule}:${time}`, { handler: String(handler) })
-              )
-            },
-          }
-        },
-      }),
-
-      // Git-specific methods
-      async branch(name: string): Promise<void> {
-        await self.state.storage.put(`refs/heads/${name}`, {
-          created: Date.now(),
-          head: await self.state.storage.get('HEAD'),
-        })
-      },
-
-      async checkout(ref: string): Promise<void> {
-        await self.state.storage.put('HEAD', ref)
-      },
-
-      async merge(branch: string): Promise<void> {
-        const branchData = await self.state.storage.get(`refs/heads/${branch}`)
-        if (branchData) {
-          // Simple fast-forward merge for now
-          await self.state.storage.put('HEAD', branchData)
-        }
-      },
-    }
-
-    // Add domain proxy for $.Noun(id) pattern
-    return new Proxy(context, {
-      get(target, prop: string) {
-        // Return existing properties first
-        if (prop in target) {
-          return target[prop as keyof WorkflowContext]
-        }
-
-        // For capitalized names, return a domain resolver function
-        if (prop.charAt(0) === prop.charAt(0).toUpperCase()) {
-          return (id: string) => {
-            // Return a proxy that represents the domain entity
-            return new Proxy({}, {
-              get(_t, method: string) {
-                return async (...args: JsonValue[]) => {
-                  // This would resolve and call the method on the target DO
-                  return { domain: prop, id, method, args }
-                }
-              },
-            })
-          }
-        }
-
-        return undefined
-      },
+    return createWorkflowContext({
+      storage: this.state.storage,
+      waitUntil: (promise) => this.state.waitUntil(promise),
     })
   }
 

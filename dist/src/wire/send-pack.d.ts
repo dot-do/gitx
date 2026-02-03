@@ -176,6 +176,10 @@ export declare function parseReceivePackCapabilities(capsString: string): Receiv
  * @param url - Parsed or string URL
  * @param options - Push options (for auth and custom fetch)
  * @returns Remote ref advertisement
+ * @throws {Error} If SSH protocol is used (not yet supported)
+ * @throws {Error} If authentication fails (401/403 response)
+ * @throws {Error} If server returns non-2xx status
+ * @throws {Error} If server doesn't support Smart HTTP (invalid content type)
  */
 export declare function discoverReceivePackRefs(url: string | ParsedCloneUrl, options?: DiscoverOptions): Promise<RemoteRefAdvertisement>;
 /**
