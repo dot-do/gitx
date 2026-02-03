@@ -171,3 +171,27 @@ export {
   type StreamProgressCallback,
   type StreamingPackReaderOptions,
 } from './streaming'
+
+// Send-pack Protocol (Push Client)
+export {
+  push,
+  pushBranch,
+  deleteBranch,
+  discoverReceivePackRefs,
+  parseReceivePackCapabilities,
+  ZERO_SHA as SEND_PACK_ZERO_SHA,
+  type PushAuth,
+  type RefUpdate,
+  type RefUpdateResult as SendPackRefUpdateResult,
+  type ReceivePackCapabilities as SendPackCapabilities,
+  type RemoteRefAdvertisement,
+  type PushOptions,
+  type PushResult,
+  type DiscoverOptions as SendPackDiscoverOptions,
+} from './send-pack'
+
+// Receive-pack Protocol Limits (DoS Protection)
+export {
+  UNPACK_LIMITS,
+  type UnpackOptions as ReceivePackUnpackOptions,
+} from './receive-pack'

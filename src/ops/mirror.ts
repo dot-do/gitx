@@ -34,10 +34,16 @@ import {
   unpackObjects,
   parseCloneUrl,
   type CloneOptions,
-  type RefAdvertisement,
 } from './clone'
 import type { GitBackend } from '../core/backend'
 import type { GitRef } from '../wire/smart-http'
+import {
+  push as sendPack,
+  discoverReceivePackRefs,
+  ZERO_SHA,
+  type RefUpdate,
+  type PushResult,
+} from '../wire/send-pack'
 
 // ============================================================================
 // Types
@@ -513,42 +519,34 @@ export class MirrorSync {
   }
 
   /**
-   * Push local refs to downstream.
+   * Push local refs to downstream using git send-pack protocol.
    *
-   * Note: Full push mirroring requires git-receive-pack support on the remote.
-   * This implementation discovers the remote state and reports what would be pushed.
-   * Actual push requires send-pack protocol which is a separate concern.
+   * Uses the send-pack protocol to push objects and update refs on the remote.
    */
   private async pushSync(): Promise<MirrorSyncResult> {
     const downstream = this.config.downstream ?? this.config.upstream
     const { conflictStrategy, refPatterns, excludePatterns } = this.config
     const progress = this.config.onProgress
 
-    const cloneOptions: CloneOptions = {
-      ...(downstream.auth ? { auth: downstream.auth } : {}),
-      ...(downstream.fetch ? { fetch: downstream.fetch } : {}),
-      ...(progress ? { onProgress: progress } : {}),
-    }
-
-    // Step 1: Discover downstream refs
+    // Step 1: Discover downstream refs via git-receive-pack service
     if (progress) progress('Discovering downstream refs...')
-    const parsed = parseCloneUrl(downstream.url)
-    let remoteAdvert: RefAdvertisement
 
+    let remoteRefs: Array<{ name: string; sha: string }>
     try {
-      remoteAdvert = await discoverRefs(parsed, cloneOptions)
+      // Build options only with defined values
+      const discoverOpts: { auth?: { username: string; password: string }; fetch?: typeof fetch } = {}
+      if (downstream.auth) discoverOpts.auth = downstream.auth
+      if (downstream.fetch) discoverOpts.fetch = downstream.fetch
+      const remoteAdvert = await discoverReceivePackRefs(downstream.url, discoverOpts)
+      remoteRefs = remoteAdvert.refs
     } catch {
       // Remote may be empty or unreachable
-      remoteAdvert = {
-        refs: [],
-        capabilities: {},
-        symrefs: new Map(),
-      }
+      remoteRefs = []
     }
 
     // Build remote ref map
     const remoteRefMap = new Map<string, string>()
-    for (const ref of remoteAdvert.refs) {
+    for (const ref of remoteRefs) {
       remoteRefMap.set(ref.name, ref.sha)
     }
 
@@ -565,6 +563,7 @@ export class MirrorSync {
 
     // Step 4: Compare and build push plan
     const refResults: RefSyncResult[] = []
+    const refUpdatesToPush: RefUpdate[] = []
 
     for (const localRef of filteredRefs) {
       const remoteSha = remoteRefMap.get(localRef.name) ?? null
@@ -592,6 +591,11 @@ export class MirrorSync {
           fastForward: true,
           conflict: false,
         })
+        refUpdatesToPush.push({
+          refName: localRef.name,
+          oldSha: ZERO_SHA,
+          newSha: localRef.sha,
+        })
       } else {
         // Diverged - resolve conflict
         const result = this.resolveConflict(
@@ -602,30 +606,105 @@ export class MirrorSync {
           'push',
         )
         refResults.push(result)
+
+        // Only push if the conflict was resolved to update
+        if (result.updated && result.resolution !== 'skipped') {
+          refUpdatesToPush.push({
+            refName: localRef.name,
+            oldSha: remoteSha,
+            newSha: localRef.sha,
+            force: result.resolution === 'force-local',
+          })
+        }
       }
     }
 
-    const refsUpdated = refResults.filter((r) => r.updated && r.resolution !== 'skipped').length
+    const refsToUpdate = refUpdatesToPush.length
     const refsSkipped = refResults.filter((r) => !r.updated || r.resolution === 'skipped').length
 
-    // Note: Actual push via send-pack is not implemented here.
-    // This reports the push plan. A full implementation would use
-    // git-receive-pack protocol to send objects and update refs.
-    if (progress) progress(`Push sync plan: ${refsUpdated} refs to update, ${refsSkipped} skipped.`)
+    // Step 5: Execute push via send-pack if there are refs to update
+    let objectsPushed = 0
 
-    // Update state
+    if (refsToUpdate > 0) {
+      if (progress) progress(`Pushing ${refsToUpdate} refs to remote...`)
+
+      try {
+        // Build push options only with defined values
+        const pushOpts: {
+          url: string
+          refUpdates: RefUpdate[]
+          backend: GitBackend
+          auth?: { username: string; password: string }
+          onProgress?: (message: string) => void
+          fetch?: typeof fetch
+          force?: boolean
+        } = {
+          url: downstream.url,
+          refUpdates: refUpdatesToPush,
+          backend: this.backend,
+          force: conflictStrategy === 'force-local',
+        }
+        if (downstream.auth) pushOpts.auth = downstream.auth
+        if (progress) pushOpts.onProgress = progress
+        if (downstream.fetch) pushOpts.fetch = downstream.fetch
+
+        const pushResult: PushResult = await sendPack(pushOpts)
+
+        objectsPushed = pushResult.objectsSent
+
+        if (!pushResult.success) {
+          // Mark failed refs in results
+          for (const refResult of pushResult.refResults) {
+            const syncResult = refResults.find((r) => r.ref === refResult.refName)
+            if (syncResult && !refResult.success) {
+              syncResult.updated = false
+            }
+          }
+
+          return {
+            success: false,
+            error: pushResult.error ?? 'Push failed',
+            direction: 'push',
+            refsUpdated: pushResult.refResults.filter((r) => r.success).length,
+            refsSkipped,
+            objectsFetched: objectsPushed,
+            refs: refResults,
+            timestamp: Date.now(),
+          }
+        }
+
+        if (progress) progress(`Push complete: ${objectsPushed} objects sent.`)
+      } catch (error) {
+        return {
+          success: false,
+          error: `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+          direction: 'push',
+          refsUpdated: 0,
+          refsSkipped,
+          objectsFetched: 0,
+          refs: refResults,
+          timestamp: Date.now(),
+        }
+      }
+    } else {
+      if (progress) progress('No refs to push - already up to date.')
+    }
+
+    // Step 6: Update state
     this.state = {
       lastSync: Date.now(),
       lastRemoteRefs: remoteRefMap,
       lastLocalRefs: new Map(filteredRefs.map((r) => [r.name, r.sha])),
     }
 
+    const refsUpdated = refResults.filter((r) => r.updated && r.resolution !== 'skipped').length
+
     return {
       success: true,
       direction: 'push',
       refsUpdated,
       refsSkipped,
-      objectsFetched: 0,
+      objectsFetched: objectsPushed,
       refs: refResults,
       timestamp: Date.now(),
     }
