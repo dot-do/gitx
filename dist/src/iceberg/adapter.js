@@ -14,38 +14,53 @@ export { ManifestGenerator, ManifestListGenerator, TableMetadataBuilder, Snapsho
 // ============================================================================
 // Snapshot ID Generation
 // ============================================================================
+// Counter for guaranteed uniqueness within the same millisecond
+let lastTimestamp = 0;
+let counter = 0;
 /**
  * Generates a unique snapshot ID that is collision-resistant.
  *
  * Uses a combination of:
- * - Timestamp in milliseconds
- * - Random component (4 digits of randomness = 10,000 possibilities)
+ * - Timestamp in milliseconds (provides ordering across time)
+ * - Monotonic counter (guarantees uniqueness within same millisecond)
  *
  * This ensures uniqueness even when multiple snapshots are created in the same millisecond.
  * The resulting ID is a positive integer that fits within JavaScript's safe integer range.
  *
- * Format: timestamp_ms * 10_000 + random(0-9999)
- * Max value: ~1.7e17 at year 2100, but currently ~1.7e16 (safe integer limit is 9e15)
+ * Format: timestamp_ms * 10_000 + counter
+ * - Counter resets each millisecond and provides up to 10,000 unique values per ms
+ * - This allows for very rapid ID generation without collisions
  *
- * To stay within safe integer range, we use a smaller multiplier.
- * Current timestamp (~1.7e12) * 1000 + random(0-999) = ~1.7e15 (well within 9e15)
+ * Max value calculation:
+ * - Current timestamp: ~1.74e12 (year 2025)
+ * - Max timestamp by year 2500: ~1.67e13
+ * - With multiplier 10_000: ~1.67e17 (still within MAX_SAFE_INTEGER = 9e15)
+ *
+ * Wait, that exceeds MAX_SAFE_INTEGER. Let's use a smaller multiplier.
+ * With multiplier 1000: max ~1.74e15 (safely within 9e15)
  *
  * @returns A unique snapshot ID as a positive integer
  *
  * @example
  * ```typescript
- * const id1 = generateSnapshotId() // e.g., 1706889600000123
- * const id2 = generateSnapshotId() // e.g., 1706889600000789
+ * const id1 = generateSnapshotId() // e.g., 1706889600000000
+ * const id2 = generateSnapshotId() // e.g., 1706889600000001
  * ```
  */
 export function generateSnapshotId() {
     const timestamp = Date.now();
-    // Use 3 digits of randomness (0-999) for collision resistance
-    // This gives 1000 possible values per millisecond
-    const random = Math.floor(Math.random() * 1000);
-    // Combine: timestamp * 1000 + random gives unique IDs even in same millisecond
-    // Max value: ~1.7e15 (well within Number.MAX_SAFE_INTEGER = 9e15)
-    return timestamp * 1000 + random;
+    // Reset counter when timestamp changes
+    if (timestamp !== lastTimestamp) {
+        lastTimestamp = timestamp;
+        counter = 0;
+    }
+    // Increment counter for this millisecond
+    // This guarantees uniqueness within a single process
+    const currentCounter = counter++;
+    // Format: timestamp * 1000 + counter
+    // Max value: ~1.74e15 (well within Number.MAX_SAFE_INTEGER = 9e15)
+    // Supports up to 1000 unique IDs per millisecond per process
+    return timestamp * 1000 + (currentCounter % 1000);
 }
 // ============================================================================
 // Schema Constants

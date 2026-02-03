@@ -34,11 +34,16 @@ function parseResourceId(resource) {
     // Diff format: ref1..ref2 or ref1...ref2
     if (resource.includes('..')) {
         const parts = resource.split(/\.{2,3}/);
-        return {
-            type: 'diff',
-            ref: parts[0],
-            ref2: parts[1]
+        const result = {
+            type: 'diff'
         };
+        if (parts[0]) {
+            result.ref = parts[0];
+        }
+        if (parts[1]) {
+            result.ref2 = parts[1];
+        }
+        return result;
     }
     // File format: ref:path
     if (resource.includes(':')) {
@@ -66,7 +71,7 @@ async function fetchCommit(git, ref) {
         type: 'commit',
         content: JSON.stringify(result, null, 2),
         metadata: {
-            sha: result.sha,
+            sha: result['sha'],
             ref
         }
     };

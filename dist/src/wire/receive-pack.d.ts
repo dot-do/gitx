@@ -563,6 +563,17 @@ export interface PackfileValidationOptions {
     allowEmpty?: boolean;
 }
 /**
+ * Default limits for unpacking operations to prevent DoS attacks.
+ */
+export declare const UNPACK_LIMITS: {
+    /** Default maximum number of objects in a single packfile */
+    readonly MAX_OBJECT_COUNT: 100000;
+    /** Default maximum total uncompressed size (1GB) */
+    readonly MAX_TOTAL_SIZE: number;
+    /** Default maximum size of a single object (100MB) */
+    readonly MAX_SINGLE_OBJECT_SIZE: number;
+};
+/**
  * Unpack options.
  *
  * @description
@@ -575,6 +586,24 @@ export interface UnpackOptions {
     onProgress?: (message: string) => void;
     /** Use quarantine area for unpacking (isolates objects until validation passes) */
     useQuarantine?: boolean;
+    /**
+     * Maximum number of objects allowed in a packfile.
+     * Prevents DoS attacks from packfiles with excessive object counts.
+     * @default 100000
+     */
+    maxObjectCount?: number;
+    /**
+     * Maximum total uncompressed size of all objects in bytes.
+     * Prevents DoS attacks from packfiles that decompress to huge sizes.
+     * @default 1073741824 (1GB)
+     */
+    maxTotalSize?: number;
+    /**
+     * Maximum size of a single object in bytes.
+     * Prevents DoS attacks from extremely large individual objects.
+     * @default 104857600 (100MB)
+     */
+    maxSingleObjectSize?: number;
 }
 /**
  * Quarantine environment for packfile unpacking.
@@ -795,16 +824,23 @@ export declare function validatePackfile(packfile: Uint8Array, options?: Packfil
  * Extracts and stores objects from a packfile into the object store.
  * Handles both regular objects and delta-compressed objects.
  *
+ * Security: This function enforces configurable limits to prevent DoS attacks:
+ * - maxObjectCount: Maximum number of objects (default: 100,000)
+ * - maxTotalSize: Maximum total uncompressed size (default: 1GB)
+ * - maxSingleObjectSize: Maximum size of a single object (default: 100MB)
+ *
  * @param packfile - Packfile binary data
  * @param _store - Object store to store unpacked objects
- * @param options - Unpack options
+ * @param options - Unpack options including security limits
  * @returns Unpack result
  *
  * @example
  * ```typescript
  * const result = await unpackObjects(packfile, store, {
  *   resolveDelta: true,
- *   onProgress: (msg) => console.log(msg)
+ *   onProgress: (msg) => console.log(msg),
+ *   maxObjectCount: 50000,  // Custom limit
+ *   maxTotalSize: 500 * 1024 * 1024,  // 500MB
  * })
  * if (result.success) {
  *   console.log('Unpacked', result.objectsUnpacked, 'objects')

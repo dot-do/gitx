@@ -11,6 +11,8 @@
  * - Cloudflare Workers (via adapter layer)
  * - Any ES2022+ JavaScript runtime
  *
+ * NOTE: Some types are aliased to avoid conflicts with other modules.
+ *
  * @module @dotdo/gitx
  *
  * @example
@@ -25,13 +27,13 @@
  *   // Validation
  *   isValidSha, isValidObjectType, isValidMode,
  *   // Storage interfaces
- *   ObjectStore, StorageBackend, CommitProvider,
+ *   CoreObjectStore, StorageBackend, CommitProvider,
  *   // Refs
  *   Ref, validateRefName, isBranchRef, isTagRef,
  *   // Pack format
- *   PackHeader, PackEntry, parseDeltaInstructions, applyDelta,
+ *   CorePackHeader, PackEntry, parseDeltaInstructions, applyDelta,
  *   // Protocol
- *   encodePktLine, parsePktLines, parseRefAdvertisements,
+ *   coreEncodePktLine, parsePktLines, parseRefAdvertisements,
  * } from '@dotdo/gitx'
  * ```
  */
@@ -115,22 +117,22 @@ export {
 } from './refs'
 
 // ============================================================================
-// Pack Format Types and Utilities
+// Pack Format Types and Utilities - aliased to avoid conflicts with pack/barrel.ts
 // ============================================================================
 
 export {
   // Types
-  type PackHeader,
+  type PackHeader as CorePackHeader,
   type PackEntryType,
   type PackEntry,
-  type PackIndexEntry,
-  type PackIndex,
+  type PackIndexEntry as CorePackIndexEntry,
+  type PackIndex as CorePackIndex,
   type DeltaInstructionType,
   type DeltaInstruction,
   type ParsedDelta,
 
   // Constants
-  PACK_SIGNATURE,
+  PACK_SIGNATURE as CORE_PACK_SIGNATURE,
   PACK_IDX_SIGNATURE,
   PACK_TYPE_NUMBERS,
   PACK_NUMBER_TO_TYPE,
@@ -149,7 +151,7 @@ export {
 } from './pack'
 
 // ============================================================================
-// Storage and Provider Interfaces
+// Storage and Provider Interfaces - aliased to avoid conflicts with ops module
 // ============================================================================
 
 export {
@@ -158,7 +160,7 @@ export {
   type BasicObjectStore,
   type RefObjectStore,
   type TreeDiffObjectStore,
-  type ObjectStore,
+  type ObjectStore as CoreObjectStore,
   type CommitProvider,
   type BasicCommitProvider,
   type CASBackend,
@@ -167,7 +169,7 @@ export {
   type StorageBackend,
   type HashFunction,
   type CompressionProvider,
-  type ValidationResult,
+  type ValidationResult as CoreValidationResult,
   type OperationResult,
   type WalkOptions,
   type FileEntry,
@@ -175,7 +177,7 @@ export {
 } from './types'
 
 // ============================================================================
-// Git Wire Protocol Types and Utilities
+// Git Wire Protocol Types and Utilities - aliased to avoid conflicts with wire module
 // ============================================================================
 
 export {
@@ -186,7 +188,7 @@ export {
   type UploadPackRequest,
   type UploadPackResponse,
   type ReceivePackRequest,
-  type RefUpdate,
+  type RefUpdate as CoreRefUpdate,
   type ReceivePackResponse,
 
   // Constants
@@ -195,7 +197,7 @@ export {
   SIDE_BAND,
 
   // Pkt-line utilities
-  encodePktLine,
+  encodePktLine as coreEncodePktLine,
   flushPkt,
   delimPkt,
   responseEndPkt,
@@ -203,7 +205,7 @@ export {
   parsePktLine,
 
   // Capability utilities
-  parseCapabilities,
+  parseCapabilities as coreParseCapabilities,
   formatCapabilities,
   hasCapability,
   getCapabilityValue,

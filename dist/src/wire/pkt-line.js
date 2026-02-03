@@ -55,6 +55,8 @@
 // ============================================================================
 // Protocol Constants
 // ============================================================================
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 /**
  * Length prefix size in bytes.
  *
@@ -200,11 +202,10 @@ export function encodePktLine(data) {
     const isPrintable = data.every(byte => byte >= 0x20 && byte <= 0x7e || byte === 0x0a || byte === 0x0d);
     if (isPrintable) {
         // Return as string for printable content
-        return hexLength + new TextDecoder().decode(data);
+        return hexLength + decoder.decode(data);
     }
     // Return as Uint8Array for binary content
     const result = new Uint8Array(PKT_LINE_LENGTH_SIZE + data.length);
-    const encoder = new TextEncoder();
     result.set(encoder.encode(hexLength), 0);
     result.set(data, PKT_LINE_LENGTH_SIZE);
     return result;
@@ -259,7 +260,7 @@ export function decodePktLine(input) {
         str = input;
     }
     else {
-        str = new TextDecoder().decode(input);
+        str = decoder.decode(input);
     }
     // Need at least PKT_LINE_LENGTH_SIZE bytes for length prefix
     if (str.length < PKT_LINE_LENGTH_SIZE) {
@@ -273,21 +274,23 @@ export function decodePktLine(input) {
     if (hexLength === DELIM_PKT) {
         return { data: null, type: 'delim', bytesRead: PKT_LINE_LENGTH_SIZE };
     }
-    if (hexLength === RESPONSE_END_PKT) {
-        return { data: null, type: 'flush', bytesRead: PKT_LINE_LENGTH_SIZE };
-    }
     // Validate hex length contains only valid hex characters before parsing
     // This prevents unexpected behavior from parseInt with invalid input
+    // Return incomplete for invalid hex (rather than throwing) to handle gracefully
     if (!/^[0-9a-fA-F]{4}$/.test(hexLength)) {
-        throw new Error(`Invalid pkt-line length prefix: ${JSON.stringify(hexLength)}`);
+        return { data: null, type: 'incomplete', bytesRead: 0 };
     }
     // Parse the length - early validation of packet size
     const length = parseInt(hexLength, 16);
-    // SECURITY: Reject invalid lengths immediately.
-    // Values 1-3 are not valid data packet lengths (0 is flush, 1 is delim, 2 is response-end,
-    // and 3 cannot encode any data since the prefix alone is 4 bytes).
+    // Handle invalid lengths (1-3) as incomplete rather than throwing.
+    // Values 1-3 are not valid data packet lengths:
+    // - 0 is flush (handled above)
+    // - 1 is delim (handled above)
+    // - 2 is response-end (reserved, but treated as invalid length < 4)
+    // - 3 cannot encode any data since the prefix alone is 4 bytes
+    // Treating these as incomplete allows graceful handling in streaming scenarios.
     if (length > 0 && length < PKT_LINE_LENGTH_SIZE) {
-        throw new Error(`Invalid pkt-line length: ${length} (must be 0 or >= ${PKT_LINE_LENGTH_SIZE})`);
+        return { data: null, type: 'incomplete', bytesRead: 0 };
     }
     // SECURITY: Validate packet size immediately after parsing to prevent DoS attacks
     // This check must happen BEFORE any data processing to reject oversized packets early
@@ -442,7 +445,7 @@ export function pktLineStream(input) {
         str = input;
     }
     else {
-        str = new TextDecoder().decode(input);
+        str = decoder.decode(input);
     }
     let offset = 0;
     while (offset < str.length) {

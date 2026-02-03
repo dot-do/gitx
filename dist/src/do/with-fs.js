@@ -133,7 +133,7 @@ export function withFs(Base, options = {}) {
         /**
          * Static list of capabilities for introspection.
          */
-        static capabilities = [...(Base.capabilities || []), 'fs'];
+        static capabilities = [...(Base['capabilities'] || []), 'fs'];
         /**
          * Internal storage for the lazily initialized FsModule.
          */
@@ -152,10 +152,10 @@ export function withFs(Base, options = {}) {
             this[FS_OPTIONS_SYMBOL] = options;
             // Extend $ context if contextMode is enabled
             if (options.contextMode) {
-                const dollarContext = this.$;
+                const dollarContext = this['$'];
                 if (dollarContext) {
                     const self = this;
-                    this.$ = new Proxy(dollarContext, {
+                    this['$'] = new Proxy(dollarContext, {
                         get(target, prop) {
                             if (prop === 'fs') {
                                 return self.fs;
@@ -203,13 +203,13 @@ export function withFs(Base, options = {}) {
             }
             // If no SQL factory provided, try common patterns
             if (!sql) {
-                const ctx = this.ctx;
-                const state = this.state;
+                const ctx = this['ctx'];
+                const state = this['state'];
                 // Try ctx.storage.sql (dotdo pattern)
-                sql = ctx?.storage?.sql;
+                sql = (ctx?.['storage']?.['sql']);
                 // Try state.storage.sql (CF DO pattern)
                 if (!sql) {
-                    sql = state?.storage?.sql;
+                    sql = (state?.['storage']?.['sql']);
                 }
             }
             // Create a mock SQL storage if none available (for testing)
@@ -226,16 +226,20 @@ export function withFs(Base, options = {}) {
             if (opts.getArchive) {
                 archive = opts.getArchive(this);
             }
-            // Build module options
-            const moduleOptions = {
-                sql,
-                r2,
-                archive,
-                basePath: opts.basePath,
-                hotMaxSize: opts.hotMaxSize,
-                defaultMode: opts.defaultMode,
-                defaultDirMode: opts.defaultDirMode,
-            };
+            // Build module options - only include defined values
+            const moduleOptions = { sql };
+            if (r2 !== undefined)
+                moduleOptions.r2 = r2;
+            if (archive !== undefined)
+                moduleOptions.archive = archive;
+            if (opts.basePath !== undefined)
+                moduleOptions.basePath = opts.basePath;
+            if (opts.hotMaxSize !== undefined)
+                moduleOptions.hotMaxSize = opts.hotMaxSize;
+            if (opts.defaultMode !== undefined)
+                moduleOptions.defaultMode = opts.defaultMode;
+            if (opts.defaultDirMode !== undefined)
+                moduleOptions.defaultDirMode = opts.defaultDirMode;
             return new FsModule(moduleOptions);
         }
         /**
@@ -248,8 +252,8 @@ export function withFs(Base, options = {}) {
                 return true;
             // Check if parent class has the hasCapability method
             const baseProto = Base.prototype;
-            if (baseProto && typeof baseProto.hasCapability === 'function') {
-                return baseProto.hasCapability.call(this, name);
+            if (baseProto && typeof baseProto['hasCapability'] === 'function') {
+                return baseProto['hasCapability'].call(this, name);
             }
             return false;
         }

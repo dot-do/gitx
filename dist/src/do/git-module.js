@@ -28,6 +28,8 @@
  * }
  * ```
  */
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 // ============================================================================
 // GitModule Class
 // ============================================================================
@@ -151,11 +153,15 @@ export class GitModule {
     constructor(options) {
         this.repo = options.repo;
         this.branch = options.branch ?? 'main';
-        this.path = options.path;
-        this.r2 = options.r2;
-        this.fs = options.fs;
+        if (options.path !== undefined)
+            this.path = options.path;
+        if (options.r2 !== undefined)
+            this.r2 = options.r2;
+        if (options.fs !== undefined)
+            this.fs = options.fs;
         this.objectPrefix = options.objectPrefix ?? 'git/objects';
-        this.storage = options.storage;
+        if (options.storage !== undefined)
+            this.storage = options.storage;
     }
     /**
      * Get the current git binding configuration.
@@ -175,13 +181,17 @@ export class GitModule {
      * ```
      */
     get binding() {
-        return {
+        const binding = {
             repo: this.repo,
             branch: this.branch,
-            path: this.path,
-            commit: this.currentCommit,
-            lastSync: this.lastSyncTime
         };
+        if (this.path !== undefined)
+            binding.path = this.path;
+        if (this.currentCommit !== undefined)
+            binding.commit = this.currentCommit;
+        if (this.lastSyncTime !== undefined)
+            binding.lastSync = this.lastSyncTime;
+        return binding;
     }
     /**
      * Optional initialization hook.
@@ -196,9 +206,13 @@ export class GitModule {
         if (existingRows.length > 0) {
             // Load existing state
             const row = existingRows[0];
-            this.repoId = row.id;
-            this.currentCommit = row.commit ?? undefined;
-            this.lastSyncTime = row.last_sync ? new Date(row.last_sync) : undefined;
+            if (row) {
+                this.repoId = row.id;
+                if (row.commit !== null && row.commit !== undefined)
+                    this.currentCommit = row.commit;
+                if (row.last_sync !== null && row.last_sync !== undefined)
+                    this.lastSyncTime = new Date(row.last_sync);
+            }
             // Load staged files from git_content table
             const stagedRows = this.storage.sql.exec('SELECT path FROM git_content WHERE repo_id = ? AND status = ?', this.repoId, 'staged').toArray();
             for (const staged of stagedRows) {
@@ -212,8 +226,9 @@ export class GitModule {
          VALUES (?, ?, ?, ?, ?, ?)`, this.repo, this.path ?? null, this.branch, this.objectPrefix, now, now);
             // Get the inserted row ID
             const insertedRows = this.storage.sql.exec('SELECT id FROM git WHERE repo = ?', this.repo).toArray();
-            if (insertedRows.length > 0) {
-                this.repoId = insertedRows[0].id;
+            const insertedRow = insertedRows[0];
+            if (insertedRow) {
+                this.repoId = insertedRow.id;
                 // Create the branch record
                 this.storage.sql.exec(`INSERT INTO git_branches (repo_id, name, tracking, created_at, updated_at)
            VALUES (?, ?, 1, ?, ?)`, this.repoId, this.branch, now, now);
@@ -272,7 +287,7 @@ export class GitModule {
             const refObject = await this.r2.get(refKey);
             if (!refObject) {
                 // No ref exists yet - this is a new/empty repository
-                this.currentCommit = undefined;
+                delete this.currentCommit;
                 this.lastSyncTime = new Date();
                 // Persist sync state to database even for empty repos
                 await this.persistSyncState();
@@ -280,7 +295,6 @@ export class GitModule {
                     success: true,
                     objectsFetched: 0,
                     filesWritten: 0,
-                    commit: undefined
                 };
             }
             const commitSha = await refObject.text();
@@ -291,9 +305,9 @@ export class GitModule {
             if (commitObject) {
                 objectsFetched++;
                 // Parse commit to get tree SHA
-                const commitContent = new TextDecoder().decode(commitObject);
+                const commitContent = decoder.decode(commitObject);
                 const treeMatch = commitContent.match(/^tree ([a-f0-9]{40})/m);
-                if (treeMatch) {
+                if (treeMatch && treeMatch[1]) {
                     const treeSha = treeMatch[1];
                     // Recursively sync tree contents
                     const treeResult = await this.syncTree(treeSha, this.path ?? '');
@@ -406,13 +420,15 @@ export class GitModule {
      * ```
      */
     async status() {
-        return {
+        const status = {
             branch: this.branch,
-            head: this.currentCommit,
             staged: Array.from(this.stagedFiles),
             unstaged: [], // Would need working tree comparison
             clean: this.stagedFiles.size === 0
         };
+        if (this.currentCommit !== undefined)
+            status.head = this.currentCommit;
+        return status;
     }
     /**
      * Stage files for commit.
@@ -457,7 +473,6 @@ export class GitModule {
         if (this.stagedFiles.size === 0) {
             throw new Error('Nothing to commit - no files staged');
         }
-        const encoder = new TextEncoder();
         // Create blob objects for each staged file
         const treeEntries = [];
         for (const filePath of this.stagedFiles) {
@@ -532,7 +547,6 @@ export class GitModule {
      * Format: mode name\0sha20bytes (repeated)
      */
     buildTreeContent(entries) {
-        const encoder = new TextEncoder();
         const parts = [];
         for (const entry of entries) {
             const modeAndName = encoder.encode(`${entry.mode} ${entry.name}\0`);
@@ -645,7 +659,6 @@ export class GitModule {
         // Parse tree entries
         // Tree format: mode name\0sha20bytes (repeated)
         let offset = 0;
-        const decoder = new TextDecoder();
         while (offset < treeData.length) {
             // Find the null byte
             let nullIdx = offset;

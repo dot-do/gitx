@@ -106,6 +106,26 @@ export declare class GitBackendAdapter implements GitBackend {
      * reads will reload from SQLite.
      */
     invalidateRefCache(): void;
+    /**
+     * Read a pack file by ID.
+     * @returns null - pack streaming not supported by DO adapter
+     */
+    readPack(_id: string): Promise<ReadableStream<Uint8Array> | null>;
+    /**
+     * Write a pack file from a stream.
+     * @throws Error - pack streaming not supported by DO adapter
+     */
+    writePack(_stream: ReadableStream<Uint8Array>): Promise<string>;
+    /**
+     * List all pack file IDs.
+     * @returns Empty array - no pack files stored
+     */
+    listPacks(): Promise<string[]>;
+    /**
+     * Delete a pack file.
+     * No-op since we don't store pack files.
+     */
+    deletePack(_id: string): Promise<void>;
 }
 /**
  * Create a GitBackend adapter for the given DO storage.

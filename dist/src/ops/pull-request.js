@@ -55,38 +55,42 @@ CREATE INDEX IF NOT EXISTS idx_pr_reviews_state ON pull_request_reviews(state);
 // Row helpers
 // ============================================================================
 function rowToPullRequest(row) {
+    const mergeCommitSha = row['merge_commit_sha'];
+    const mergeMethod = row['merge_method'];
+    const closedAt = row['closed_at'];
     return {
-        number: row.number,
-        title: row.title,
-        description: row.description,
-        status: row.status,
-        sourceBranch: row.source_branch,
-        targetBranch: row.target_branch,
+        number: row['number'],
+        title: row['title'],
+        description: row['description'],
+        status: row['status'],
+        sourceBranch: row['source_branch'],
+        targetBranch: row['target_branch'],
         author: {
-            name: row.author_name,
-            email: row.author_email,
+            name: row['author_name'],
+            email: row['author_email'],
         },
-        labels: JSON.parse(row.labels || '[]'),
-        sourceSha: row.source_sha,
-        targetSha: row.target_sha,
-        mergeCommitSha: row.merge_commit_sha || undefined,
-        mergeMethod: row.merge_method || undefined,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        closedAt: row.closed_at || undefined,
+        labels: JSON.parse(row['labels'] || '[]'),
+        sourceSha: row['source_sha'],
+        targetSha: row['target_sha'],
+        createdAt: row['created_at'],
+        updatedAt: row['updated_at'],
+        ...(mergeCommitSha != null && { mergeCommitSha }),
+        ...(mergeMethod != null && { mergeMethod }),
+        ...(closedAt != null && { closedAt }),
     };
 }
 function rowToReview(row) {
+    const body = row['body'];
     return {
-        id: row.id,
-        prNumber: row.pr_number,
+        id: row['id'],
+        prNumber: row['pr_number'],
         reviewer: {
-            name: row.reviewer_name,
-            email: row.reviewer_email,
+            name: row['reviewer_name'],
+            email: row['reviewer_email'],
         },
-        state: row.state,
-        body: row.body || undefined,
-        createdAt: row.created_at,
+        state: row['state'],
+        createdAt: row['created_at'],
+        ...(body != null && body !== '' && { body }),
     };
 }
 // ============================================================================
@@ -113,25 +117,30 @@ export async function createPullRequest(storage, options) {
     const now = Date.now();
     const status = options.draft ? 'draft' : 'open';
     const labels = JSON.stringify(options.labels ?? []);
-    const result = storage.sqlExec(`INSERT INTO pull_requests (title, description, status, source_branch, target_branch, author_name, author_email, labels, source_sha, target_sha, created_at, updated_at)
+    storage.sqlExec(`INSERT INTO pull_requests (title, description, status, source_branch, target_branch, author_name, author_email, labels, source_sha, target_sha, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, options.title, options.description ?? '', status, options.sourceBranch, options.targetBranch, options.author.name, options.author.email, labels, sourceSha, targetSha, now, now);
     // Fetch the just-inserted row (last_insert_rowid)
     const rows = storage.sqlExec('SELECT * FROM pull_requests WHERE number = last_insert_rowid()').rows;
     if (rows.length === 0) {
         // Fallback: fetch by unique fields
         const fallback = storage.sqlExec('SELECT * FROM pull_requests WHERE source_branch = ? AND target_branch = ? AND created_at = ? ORDER BY number DESC LIMIT 1', options.sourceBranch, options.targetBranch, now).rows;
-        if (fallback.length === 0)
+        const fallbackRow = fallback[0];
+        if (!fallbackRow)
             throw new Error('Failed to create pull request');
-        return rowToPullRequest(fallback[0]);
+        return rowToPullRequest(fallbackRow);
     }
-    return rowToPullRequest(rows[0]);
+    const row = rows[0];
+    if (!row)
+        throw new Error('Failed to create pull request');
+    return rowToPullRequest(row);
 }
 /**
  * Get a single pull request by number.
  */
 export function getPullRequest(storage, prNumber) {
     const rows = storage.sqlExec('SELECT * FROM pull_requests WHERE number = ?', prNumber).rows;
-    return rows.length > 0 ? rowToPullRequest(rows[0]) : null;
+    const row = rows[0];
+    return row ? rowToPullRequest(row) : null;
 }
 /**
  * List pull requests with optional filters.
@@ -174,7 +183,7 @@ export function updatePullRequestStatus(storage, prNumber, status) {
     const now = Date.now();
     const closedAt = status === 'closed' ? now : null;
     storage.sqlExec('UPDATE pull_requests SET status = ?, updated_at = ?, closed_at = ? WHERE number = ?', status, now, closedAt, prNumber);
-    return { ...pr, status, updatedAt: now, closedAt: closedAt ?? undefined };
+    return { ...pr, status, updatedAt: now, ...(closedAt != null && { closedAt }) };
 }
 /**
  * Merge a pull request using the specified method.
@@ -281,7 +290,10 @@ export function addReview(storage, prNumber, reviewer, state, body) {
     // Update PR updated_at
     storage.sqlExec('UPDATE pull_requests SET updated_at = ? WHERE number = ?', now, prNumber);
     const rows = storage.sqlExec('SELECT * FROM pull_request_reviews WHERE pr_number = ? ORDER BY id DESC LIMIT 1', prNumber).rows;
-    return rowToReview(rows[0]);
+    const row = rows[0];
+    if (!row)
+        throw new Error('Failed to create review');
+    return rowToReview(row);
 }
 /**
  * List reviews for a pull request.

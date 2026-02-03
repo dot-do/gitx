@@ -168,12 +168,15 @@ const DEFAULT_TIMEOUT = 5000;
  * Create a GitScope with the provided git binding
  */
 export function createGitScope(git, options) {
-    return {
+    const scope = {
         bindings: { git },
         types: GIT_BINDING_TYPES,
-        timeout: options?.timeout ?? DEFAULT_TIMEOUT,
-        permissions: options?.permissions
+        timeout: options?.timeout ?? DEFAULT_TIMEOUT
     };
+    if (options?.permissions !== undefined) {
+        scope.permissions = options.permissions;
+    }
+    return scope;
 }
 // =============================================================================
 // Security Validation
@@ -227,12 +230,15 @@ export async function executeDo(input, objectStore) {
     // Validate code for dangerous patterns using the sandbox template validation
     const validation = validateUserCode(input.code);
     if (!validation.valid) {
-        return {
+        const errorResult = {
             success: false,
-            error: `Security: ${validation.error}`,
             logs: [],
             duration: performance.now() - startTime
         };
+        if (validation.error) {
+            errorResult.error = `Security: ${validation.error}`;
+        }
+        return errorResult;
     }
     // Additional security checks
     const securityCheck = validateSecurity(input.code);
@@ -247,25 +253,31 @@ export async function executeDo(input, objectStore) {
     // Check for syntax errors
     const syntaxCheck = checkSyntax(input.code);
     if (!syntaxCheck.valid) {
-        return {
+        const syntaxResult = {
             success: false,
-            error: syntaxCheck.error,
             logs: [],
             duration: performance.now() - startTime
         };
+        if (syntaxCheck.error) {
+            syntaxResult.error = syntaxCheck.error;
+        }
+        return syntaxResult;
     }
     // Execute using miniflare evaluator - git binding is injected via the evaluator
     const result = await evaluateWithMiniflare(input.code, {
         timeout,
         objectStore
     });
-    return {
+    const output = {
         success: result.success,
         result: result.value,
-        error: result.error,
         logs: result.logs,
         duration: result.duration
     };
+    if (result.error) {
+        output.error = result.error;
+    }
+    return output;
 }
 /**
  * Create a do handler that uses the git scope
@@ -278,10 +290,10 @@ export async function executeDo(input, objectStore) {
  * @param env - Optional worker environment with LOADER binding (from cloudflare:workers)
  * @returns Handler function for the do tool
  */
-export function createDoHandler(scope, env) {
+export function createDoHandler(scope, _env) {
     // Use @dotdo/mcp's createDoHandler which uses ai-evaluate internally
     // The git binding is passed through scope.bindings and made available via RPC
-    const baseHandler = createBaseDoHandler(scope, env);
+    const baseHandler = createBaseDoHandler(scope);
     // Wrap to handle timeout parameter in DoToolInput
     return async (input) => {
         // If a custom timeout is specified, create a new scope with that timeout
@@ -290,7 +302,7 @@ export function createDoHandler(scope, env) {
                 ...scope,
                 timeout: input.timeout
             };
-            const handlerWithTimeout = createBaseDoHandler(scopeWithTimeout, env);
+            const handlerWithTimeout = createBaseDoHandler(scopeWithTimeout);
             return handlerWithTimeout({ code: input.code });
         }
         return baseHandler({ code: input.code });

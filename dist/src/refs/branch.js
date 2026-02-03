@@ -199,14 +199,20 @@ export class BranchManager {
             sha,
             isCurrent,
             isRemote: false,
-            tracking
         };
+        if (tracking !== undefined) {
+            branch.tracking = tracking;
+        }
         // If dryRun, return without actually creating
         if (options?.dryRun) {
             return branch;
         }
         // Create the ref
-        await this.storage.updateRef(branchRef, sha, { create: true, force: options?.force });
+        const updateOptions = { create: true };
+        if (options?.force !== undefined) {
+            updateOptions.force = options.force;
+        }
+        await this.storage.updateRef(branchRef, sha, updateOptions);
         return branch;
     }
     /**
@@ -326,14 +332,20 @@ export class BranchManager {
             sha,
             isCurrent: wasCurrent ?? false,
             isRemote: false,
-            tracking: oldTracking
         };
+        if (oldTracking !== undefined) {
+            branch.tracking = oldTracking;
+        }
         // If dryRun, return without actually renaming
         if (options?.dryRun) {
             return branch;
         }
         // Create new ref with the same SHA
-        await this.storage.updateRef(newRef, sha, { create: true, force: options?.force });
+        const renameUpdateOptions = { create: true };
+        if (options?.force !== undefined) {
+            renameUpdateOptions.force = options.force;
+        }
+        await this.storage.updateRef(newRef, sha, renameUpdateOptions);
         // Delete old ref
         await this.storage.deleteRef(oldRef);
         // If this was the current branch, update HEAD to point to new branch
@@ -384,14 +396,20 @@ export class BranchManager {
                     if (!regex.test(name))
                         continue;
                 }
-                branches.push({
+                const localBranch = {
                     name,
                     ref: ref.name,
                     sha: ref.target,
                     isCurrent: currentBranch?.name === name,
                     isRemote: false,
-                    tracking: options?.includeTracking ? this.trackingInfo.get(name) : undefined
-                });
+                };
+                if (options?.includeTracking) {
+                    const trackingInfo = this.trackingInfo.get(name);
+                    if (trackingInfo !== undefined) {
+                        localBranch.tracking = trackingInfo;
+                    }
+                }
+                branches.push(localBranch);
             }
         }
         // List remote branches if requested
@@ -445,14 +463,18 @@ export class BranchManager {
         if (!ref)
             return null;
         const name = normalizeBranchName(branchRef);
-        return {
+        const currentBranch = {
             name,
             ref: branchRef,
             sha: ref.target,
             isCurrent: true,
             isRemote: false,
-            tracking: this.trackingInfo.get(name)
         };
+        const currentTracking = this.trackingInfo.get(name);
+        if (currentTracking !== undefined) {
+            currentBranch.tracking = currentTracking;
+        }
+        return currentBranch;
     }
     /**
      * Get a specific branch by name.
@@ -478,14 +500,18 @@ export class BranchManager {
         if (!ref)
             return null;
         const currentBranch = await this.getCurrentBranch();
-        return {
+        const result = {
             name: normalizedName,
             ref: branchRef,
             sha: ref.target,
             isCurrent: currentBranch?.name === normalizedName,
             isRemote: false,
-            tracking: this.trackingInfo.get(normalizedName)
         };
+        const branchTracking = this.trackingInfo.get(normalizedName);
+        if (branchTracking !== undefined) {
+            result.tracking = branchTracking;
+        }
+        return result;
     }
     /**
      * Check if a branch exists.

@@ -307,14 +307,53 @@ export function createMemoryBackend() {
             packs.set(packName, new Uint8Array(pack));
         },
         // =========================================================================
-        // Extended Pack Operations
+        // Pack Streaming Operations (implements GitBackend interface)
         // =========================================================================
-        async readPack(name) {
-            const pack = packs.get(name);
-            return pack ? new Uint8Array(pack) : null;
+        async readPack(id) {
+            const pack = packs.get(id);
+            if (!pack) {
+                return null;
+            }
+            // Return a ReadableStream that emits the pack data
+            const data = new Uint8Array(pack);
+            return new ReadableStream({
+                start(controller) {
+                    controller.enqueue(data);
+                    controller.close();
+                }
+            });
+        },
+        async writePack(stream) {
+            // Consume the stream and collect all chunks
+            const reader = stream.getReader();
+            const chunks = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                chunks.push(value);
+            }
+            // Combine chunks into single Uint8Array
+            const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            const data = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+                data.set(chunk, offset);
+                offset += chunk.length;
+            }
+            // Compute SHA-1 hash for content-addressable ID
+            const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+            const packId = Array.from(new Uint8Array(hashBuffer))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+            packs.set(packId, data);
+            return packId;
         },
         async listPacks() {
             return Array.from(packs.keys());
+        },
+        async deletePack(id) {
+            packs.delete(id);
         },
         // =========================================================================
         // Symbolic Ref Operations
@@ -366,6 +405,91 @@ export function createMemoryBackend() {
             }
             packs.clear();
             symbolicRefs.clear();
+        },
+    };
+}
+// ============================================================================
+// MockBackend Implementation
+// ============================================================================
+/**
+ * Create a mock GitBackend with call recording for testing.
+ *
+ * @description
+ * Creates a MockBackend that wraps a MemoryBackend with call recording.
+ * All method calls are recorded with their arguments and timestamps.
+ *
+ * @returns MockBackend instance
+ *
+ * @example
+ * ```typescript
+ * const backend = createMockBackend()
+ *
+ * // Use the backend
+ * await backend.readObject(sha)
+ * await backend.writeRef('refs/heads/main', sha)
+ *
+ * // Inspect calls
+ * const calls = backend.getCalls()
+ * const refCalls = backend.getCallsFor('writeRef')
+ *
+ * // Clear for next test
+ * backend.clearCalls()
+ * ```
+ */
+export function createMockBackend() {
+    // Create underlying memory backend
+    const memoryBackend = createMemoryBackend();
+    // Call recording storage
+    const calls = [];
+    /**
+     * Record a method call with its arguments.
+     */
+    function recordCall(method, args) {
+        calls.push({
+            method,
+            args,
+            timestamp: Date.now(),
+        });
+    }
+    /**
+     * Wrap a method to record calls before executing.
+     */
+    function wrapMethod(method, fn) {
+        return ((...args) => {
+            recordCall(method, args);
+            return fn(...args);
+        });
+    }
+    return {
+        // Wrap all GitBackend methods
+        readObject: wrapMethod('readObject', memoryBackend.readObject.bind(memoryBackend)),
+        writeObject: wrapMethod('writeObject', memoryBackend.writeObject.bind(memoryBackend)),
+        hasObject: wrapMethod('hasObject', memoryBackend.hasObject.bind(memoryBackend)),
+        readRef: wrapMethod('readRef', memoryBackend.readRef.bind(memoryBackend)),
+        writeRef: wrapMethod('writeRef', memoryBackend.writeRef.bind(memoryBackend)),
+        deleteRef: wrapMethod('deleteRef', memoryBackend.deleteRef.bind(memoryBackend)),
+        listRefs: wrapMethod('listRefs', memoryBackend.listRefs.bind(memoryBackend)),
+        readPackedRefs: wrapMethod('readPackedRefs', memoryBackend.readPackedRefs.bind(memoryBackend)),
+        writePackfile: wrapMethod('writePackfile', memoryBackend.writePackfile.bind(memoryBackend)),
+        readPack: wrapMethod('readPack', memoryBackend.readPack.bind(memoryBackend)),
+        writePack: wrapMethod('writePack', memoryBackend.writePack.bind(memoryBackend)),
+        listPacks: wrapMethod('listPacks', memoryBackend.listPacks.bind(memoryBackend)),
+        deletePack: wrapMethod('deletePack', memoryBackend.deletePack.bind(memoryBackend)),
+        // MemoryBackend-specific methods (not recorded)
+        clear: memoryBackend.clear.bind(memoryBackend),
+        writeSymbolicRef: memoryBackend.writeSymbolicRef.bind(memoryBackend),
+        readSymbolicRef: memoryBackend.readSymbolicRef.bind(memoryBackend),
+        compareAndSwapRef: memoryBackend.compareAndSwapRef.bind(memoryBackend),
+        deleteObject: memoryBackend.deleteObject.bind(memoryBackend),
+        // MockBackend-specific methods
+        getCalls() {
+            return [...calls];
+        },
+        getCallsFor(method) {
+            return calls.filter(call => call.method === method);
+        },
+        clearCalls() {
+            calls.length = 0;
         },
     };
 }

@@ -37,7 +37,7 @@ export {
   type IcebergSchema,
   type IcebergPartitionSpec,
   type IcebergSortOrder,
-  type IcebergSnapshot,
+  type IcebergSnapshot as IcebergLegacySnapshot,
   type LegacySnapshotLogEntry as SnapshotLogEntry,
   type IcebergTableMetadata,
   type CreateTableMetadataOptions,
@@ -92,11 +92,12 @@ export {
 } from './adapter'
 
 // Re-export full @dotdo/iceberg types for advanced usage
+// Aliased to avoid conflicts with src/export/index.ts
 export type {
-  TableMetadata,
+  TableMetadata as IcebergCoreTableMetadata,
   Snapshot,
   ManifestFile,
-  DataFile,
+  DataFile as IcebergCoreDataFile,
   PartitionSpec,
   SortOrder,
 } from './adapter'

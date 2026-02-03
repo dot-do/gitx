@@ -89,14 +89,18 @@ export class CloudflareContainerExecutor {
      * @param options - Configuration options
      */
     constructor(options = {}) {
-        this.sandbox = options.sandbox;
-        this.container = options.container;
+        if (options.sandbox !== undefined)
+            this.sandbox = options.sandbox;
+        if (options.container !== undefined)
+            this.container = options.container;
         this.sessionId = options.sessionId ?? crypto.randomUUID();
         this.defaultCwd = options.cwd ?? '/';
         this.defaultTimeout = options.timeout ?? 30000;
         this.defaultEnv = options.env ?? {};
-        this.wsEndpoint = options.wsEndpoint;
-        this.httpExecEndpoint = options.httpExecEndpoint;
+        if (options.wsEndpoint !== undefined)
+            this.wsEndpoint = options.wsEndpoint;
+        if (options.httpExecEndpoint !== undefined)
+            this.httpExecEndpoint = options.httpExecEndpoint;
         this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
         // Initialize session state
         this.session = {
@@ -124,15 +128,24 @@ export class CloudflareContainerExecutor {
         const env = { ...this.session.env, ...options?.env };
         // Try sandbox SDK first
         if (this.sandbox) {
-            return this.executeViaSandbox(command, { cwd, timeout, env, stdin: options?.stdin });
+            const sandboxOpts = { cwd, timeout, env };
+            if (options?.stdin !== undefined)
+                sandboxOpts.stdin = options.stdin;
+            return this.executeViaSandbox(command, sandboxOpts);
         }
         // Try HTTP exec endpoint
         if (this.httpExecEndpoint) {
-            return this.executeViaHttp(command, { cwd, timeout, env, stdin: options?.stdin });
+            const httpOpts = { cwd, timeout, env };
+            if (options?.stdin !== undefined)
+                httpOpts.stdin = options.stdin;
+            return this.executeViaHttp(command, httpOpts);
         }
         // Try container fetch with custom exec endpoint
         if (this.container) {
-            return this.executeViaContainer(command, { cwd, timeout, env, stdin: options?.stdin });
+            const containerOpts = { cwd, timeout, env };
+            if (options?.stdin !== undefined)
+                containerOpts.stdin = options.stdin;
+            return this.executeViaContainer(command, containerOpts);
         }
         // No execution backend available
         return {
@@ -492,12 +505,16 @@ export class CloudflareContainerExecutor {
     async spawnViaExec(command, execOptions, spawnOptions) {
         const pid = this.pidCounter++;
         const executeAndStream = async () => {
-            const result = await this.execute(command, {
-                cwd: execOptions.cwd,
-                timeout: execOptions.timeout,
-                env: execOptions.env,
-                stdin: execOptions.stdin,
-            });
+            const opts = {};
+            if (execOptions.cwd !== undefined)
+                opts.cwd = execOptions.cwd;
+            if (execOptions.timeout !== undefined)
+                opts.timeout = execOptions.timeout;
+            if (execOptions.env !== undefined)
+                opts.env = execOptions.env;
+            if (execOptions.stdin !== undefined)
+                opts.stdin = execOptions.stdin;
+            const result = await this.execute(command, opts);
             // Simulate streaming by emitting all output at once
             if (result.stdout) {
                 spawnOptions?.onStdout?.(result.stdout);
@@ -679,7 +696,10 @@ export function createContainerExecutor(options = {}) {
  * @returns A new CloudflareContainerExecutor instance
  */
 export function createSandboxExecutor(sandbox, sessionId) {
-    return new CloudflareContainerExecutor({ sandbox, sessionId });
+    const opts = { sandbox };
+    if (sessionId !== undefined)
+        opts.sessionId = sessionId;
+    return new CloudflareContainerExecutor(opts);
 }
 /**
  * Create an executor from an HTTP exec endpoint.
@@ -689,7 +709,10 @@ export function createSandboxExecutor(sandbox, sessionId) {
  * @returns A new CloudflareContainerExecutor instance
  */
 export function createHttpExecutor(endpoint, sessionId) {
-    return new CloudflareContainerExecutor({ httpExecEndpoint: endpoint, sessionId });
+    const opts = { httpExecEndpoint: endpoint };
+    if (sessionId !== undefined)
+        opts.sessionId = sessionId;
+    return new CloudflareContainerExecutor(opts);
 }
 /**
  * Create an executor from a WebSocket endpoint.
@@ -699,7 +722,10 @@ export function createHttpExecutor(endpoint, sessionId) {
  * @returns A new CloudflareContainerExecutor instance
  */
 export function createWebSocketExecutor(endpoint, sessionId) {
-    return new CloudflareContainerExecutor({ wsEndpoint: endpoint, sessionId });
+    const opts = { wsEndpoint: endpoint };
+    if (sessionId !== undefined)
+        opts.sessionId = sessionId;
+    return new CloudflareContainerExecutor(opts);
 }
 // ============================================================================
 // Type Guards

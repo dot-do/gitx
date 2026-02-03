@@ -55,6 +55,17 @@ export interface PackedRefs {
     peeled?: Map<string, string>;
 }
 /**
+ * Represents a recorded method call for MockBackend.
+ */
+export interface MethodCall {
+    /** Name of the method that was called */
+    method: string;
+    /** Arguments passed to the method */
+    args: unknown[];
+    /** Timestamp of the call (milliseconds since epoch) */
+    timestamp: number;
+}
+/**
  * Storage backend interface for Git operations.
  *
  * @description
@@ -224,6 +235,33 @@ export interface GitBackend {
      * ```
      */
     writePackfile(pack: Uint8Array): Promise<void>;
+    /**
+     * Read a pack file as a stream.
+     *
+     * @param id - Pack file ID
+     * @returns ReadableStream of pack data, or null if not found
+     */
+    readPack(id: string): Promise<ReadableStream<Uint8Array> | null>;
+    /**
+     * Write a pack file from a stream.
+     *
+     * @param stream - ReadableStream of pack data
+     * @returns Pack ID (content-addressable)
+     */
+    writePack(stream: ReadableStream<Uint8Array>): Promise<string>;
+    /**
+     * List all pack file IDs.
+     *
+     * @returns Array of pack IDs
+     */
+    listPacks(): Promise<string[]>;
+    /**
+     * Delete a pack file.
+     *
+     * @param id - Pack file ID to delete
+     * @description Idempotent - no error if pack doesn't exist
+     */
+    deletePack(id: string): Promise<void>;
 }
 /**
  * Memory-backed GitBackend implementation for testing.
@@ -239,19 +277,6 @@ export interface MemoryBackend extends GitBackend {
      * Resets the backend to a clean state. Useful for test isolation.
      */
     clear(): void;
-    /**
-     * Read a pack file by name.
-     *
-     * @param name - Name of the pack file
-     * @returns Pack data or null if not found
-     */
-    readPack(name: string): Promise<Uint8Array | null>;
-    /**
-     * List all pack files.
-     *
-     * @returns Array of pack file names
-     */
-    listPacks(): Promise<string[]>;
     /**
      * Write a symbolic reference.
      *
@@ -283,6 +308,32 @@ export interface MemoryBackend extends GitBackend {
     deleteObject(sha: string): Promise<void>;
 }
 /**
+ * Mock GitBackend implementation with call recording for testing.
+ *
+ * @description
+ * Extends MemoryBackend with methods to record and inspect method calls.
+ * Useful for verifying that certain methods are called with expected arguments.
+ */
+export interface MockBackend extends MemoryBackend {
+    /**
+     * Get all recorded method calls.
+     *
+     * @returns Array of MethodCall objects in call order
+     */
+    getCalls(): MethodCall[];
+    /**
+     * Get recorded calls for a specific method.
+     *
+     * @param method - Method name to filter by
+     * @returns Array of MethodCall objects for that method
+     */
+    getCallsFor(method: string): MethodCall[];
+    /**
+     * Clear all recorded calls.
+     */
+    clearCalls(): void;
+}
+/**
  * Create a memory-backed GitBackend for testing.
  *
  * @description
@@ -303,4 +354,30 @@ export interface MemoryBackend extends GitBackend {
  * ```
  */
 export declare function createMemoryBackend(): MemoryBackend;
+/**
+ * Create a mock GitBackend with call recording for testing.
+ *
+ * @description
+ * Creates a MockBackend that wraps a MemoryBackend with call recording.
+ * All method calls are recorded with their arguments and timestamps.
+ *
+ * @returns MockBackend instance
+ *
+ * @example
+ * ```typescript
+ * const backend = createMockBackend()
+ *
+ * // Use the backend
+ * await backend.readObject(sha)
+ * await backend.writeRef('refs/heads/main', sha)
+ *
+ * // Inspect calls
+ * const calls = backend.getCalls()
+ * const refCalls = backend.getCallsFor('writeRef')
+ *
+ * // Clear for next test
+ * backend.clearCalls()
+ * ```
+ */
+export declare function createMockBackend(): MockBackend;
 //# sourceMappingURL=backend.d.ts.map

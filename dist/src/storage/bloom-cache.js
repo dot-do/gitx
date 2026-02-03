@@ -63,7 +63,11 @@ export class BloomFilter {
         const hashes = this.getHashes(sha);
         for (const h of hashes) {
             const bit = h % this.numBits;
-            this.bits[bit >>> 3] |= 1 << (bit & 7);
+            const byteIndex = bit >>> 3;
+            const byte = this.bits[byteIndex];
+            if (byte !== undefined) {
+                this.bits[byteIndex] = byte | (1 << (bit & 7));
+            }
         }
         this._count++;
     }
@@ -75,7 +79,8 @@ export class BloomFilter {
         const hashes = this.getHashes(sha);
         for (const h of hashes) {
             const bit = h % this.numBits;
-            if ((this.bits[bit >>> 3] & (1 << (bit & 7))) === 0) {
+            const byte = this.bits[bit >>> 3];
+            if (byte === undefined || (byte & (1 << (bit & 7))) === 0) {
                 return false;
             }
         }
@@ -178,7 +183,7 @@ export class SegmentedBloomFilter {
      */
     add(sha) {
         let current = this.segments[this.segments.length - 1];
-        if (current.count >= this.segmentThreshold) {
+        if (!current || current.count >= this.segmentThreshold) {
             current = new BloomFilter(this.filterBits, this.hashCount);
             this.segments.push(current);
             this.maybeCompact();
@@ -254,12 +259,21 @@ export class SegmentedBloomFilter {
         for (const seg of oldSegments) {
             const bits = seg.serialize();
             for (let i = 0; i < mergedBits.length; i++) {
-                mergedBits[i] |= bits[i];
+                const currentByte = mergedBits[i];
+                const newByte = bits[i];
+                if (currentByte !== undefined && newByte !== undefined) {
+                    mergedBits[i] = currentByte | newByte;
+                }
             }
             mergedCount += seg.count;
         }
         merged.load(mergedBits, mergedCount);
-        this.segments = [merged, newest];
+        if (newest) {
+            this.segments = [merged, newest];
+        }
+        else {
+            this.segments = [merged];
+        }
     }
     /**
      * Trigger compaction if we have exceeded maxSegments.
@@ -328,9 +342,10 @@ export class BloomCache {
         // Load persisted segments (or legacy single filter at id=1)
         const result = this.storage.sql.exec(`SELECT id, filter_data, item_count FROM ${BLOOM_TABLE} ORDER BY id ASC`);
         const rows = typedQuery(result, validateRow(['id', 'filter_data', 'item_count']));
-        if (rows.length === 1 && rows[0].id === 1) {
+        const firstRow = rows[0];
+        if (rows.length === 1 && firstRow && firstRow.id === 1) {
             // Legacy single-filter format or single segment - load as legacy
-            this.filter.loadLegacy(new Uint8Array(rows[0].filter_data), rows[0].item_count);
+            this.filter.loadLegacy(new Uint8Array(firstRow.filter_data), firstRow.item_count);
         }
         else if (rows.length > 0) {
             // Multi-segment format
@@ -353,8 +368,9 @@ export class BloomCache {
             // Evict old entries if over limit
             const countResult = this.storage.sql.exec(`SELECT COUNT(*) as cnt FROM ${SHA_CACHE_TABLE}`);
             const countRows = typedQuery(countResult, validateRow(['cnt']));
-            if (countRows.length > 0 && countRows[0].cnt > this.options.exactCacheLimit) {
-                const excess = countRows[0].cnt - this.options.exactCacheLimit;
+            const countRow = countRows[0];
+            if (countRow && countRow.cnt > this.options.exactCacheLimit) {
+                const excess = countRow.cnt - this.options.exactCacheLimit;
                 this.storage.sql.exec(`DELETE FROM ${SHA_CACHE_TABLE} WHERE sha IN (
             SELECT sha FROM ${SHA_CACHE_TABLE} ORDER BY added_at ASC LIMIT ?
           )`, excess);
@@ -419,8 +435,9 @@ export class BloomCache {
             return null;
         const result = this.storage.sql.exec(`SELECT sha FROM ${SHA_CACHE_TABLE} WHERE sha >= ? AND sha < ? LIMIT 2`, prefix, prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1));
         const rows = typedQuery(result, validateRow(['sha']));
-        if (rows.length === 1) {
-            return rows[0].sha;
+        const firstRow = rows[0];
+        if (rows.length === 1 && firstRow) {
+            return firstRow.sha;
         }
         if (rows.length > 1) {
             throw new Error(`Ambiguous SHA prefix: ${prefix}`);
@@ -436,7 +453,8 @@ export class BloomCache {
             return null;
         const result = this.storage.sql.exec(`SELECT type, size FROM ${SHA_CACHE_TABLE} WHERE sha = ?`, sha);
         const rows = typedQuery(result, validateRow(['type', 'size']));
-        return rows.length > 0 ? rows[0] : null;
+        const firstRow = rows[0];
+        return firstRow ?? null;
     }
     /**
      * Persist the bloom filter to SQLite.
@@ -449,7 +467,10 @@ export class BloomCache {
         // Replace all existing rows with current segments
         this.storage.sql.exec(`DELETE FROM ${BLOOM_TABLE}`);
         for (let i = 0; i < segments.length; i++) {
-            this.storage.sql.exec(`INSERT INTO ${BLOOM_TABLE} (id, filter_data, item_count, updated_at) VALUES (?, ?, ?, ?)`, i + 1, segments[i].data, segments[i].count, now);
+            const seg = segments[i];
+            if (seg) {
+                this.storage.sql.exec(`INSERT INTO ${BLOOM_TABLE} (id, filter_data, item_count, updated_at) VALUES (?, ?, ?, ?)`, i + 1, seg.data, seg.count, now);
+            }
         }
     }
     /**
@@ -460,7 +481,8 @@ export class BloomCache {
         if (this.options.enableExactCache && this.initialized) {
             const result = this.storage.sql.exec(`SELECT COUNT(*) as cnt FROM ${SHA_CACHE_TABLE}`);
             const rows = typedQuery(result, validateRow(['cnt']));
-            exactCacheSize = rows.length > 0 ? rows[0].cnt : 0;
+            const firstRow = rows[0];
+            exactCacheSize = firstRow ? firstRow.cnt : 0;
         }
         return {
             bloomItems: this.filter.count,

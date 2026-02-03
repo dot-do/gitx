@@ -183,7 +183,63 @@ function computeAdler32(data) {
     return ((b << 16) | a) >>> 0;
 }
 // =============================================================================
+// Node.js zlib implementation (if available)
+// =============================================================================
+// Try to import Node's zlib module at module load time
+let nodeZlibModule = null;
+try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    nodeZlibModule = require('zlib');
+}
+catch {
+    nodeZlibModule = null;
+}
+function createNodeZlibInflateClass(zlib) {
+    return class NodeZlibInflate {
+        result = new Uint8Array(0);
+        err = 0;
+        msg;
+        ended = false;
+        strm = {};
+        push(data, _final) {
+            try {
+                // Use info: true to get bytes consumed
+                const result = zlib.inflateSync(Buffer.from(data), { info: true });
+                const { buffer, engine } = result;
+                this.result = new Uint8Array(buffer);
+                // bytesWritten is the number of input bytes consumed
+                this.strm.next_in = engine.bytesWritten;
+                this.strm.avail_in = data.length - engine.bytesWritten;
+                this.ended = true;
+            }
+            catch (e) {
+                this.err = 1;
+                this.msg = e instanceof Error ? e.message : 'Unknown error';
+            }
+        }
+    };
+}
+class NodeZlibImpl {
+    zlib;
+    Inflate;
+    constructor(zlib) {
+        this.zlib = zlib;
+        this.Inflate = createNodeZlibInflateClass(zlib);
+    }
+    deflate(data) {
+        const result = this.zlib.deflateSync(Buffer.from(data));
+        return new Uint8Array(result);
+    }
+    inflate(data) {
+        const result = this.zlib.inflateSync(Buffer.from(data));
+        return new Uint8Array(result);
+    }
+}
+// =============================================================================
 // Export
 // =============================================================================
-export const pako = new ZlibImpl();
+// Use Node's zlib if available, otherwise use the minimal shim
+export const pako = nodeZlibModule
+    ? new NodeZlibImpl(nodeZlibModule)
+    : new ZlibImpl();
 //# sourceMappingURL=pako-shim.js.map

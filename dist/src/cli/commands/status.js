@@ -292,13 +292,17 @@ export async function getBranchInfo(cwd) {
             behind = 0;
         }
     }
-    return {
+    const result = {
         name: branchName,
-        upstream: upstreamName,
-        ahead,
-        behind,
         detached: false
     };
+    if (upstreamName !== undefined)
+        result.upstream = upstreamName;
+    if (ahead !== undefined)
+        result.ahead = ahead;
+    if (behind !== undefined)
+        result.behind = behind;
+    return result;
 }
 /**
  * Format status output for display (long format).

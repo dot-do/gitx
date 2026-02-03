@@ -145,9 +145,13 @@ export class LRUCache {
     constructor(options) {
         this.maxCount = options?.maxCount ?? Infinity;
         this.maxBytes = options?.maxBytes ?? Infinity;
-        this.defaultTTL = options?.defaultTTL;
         this.sizeCalculator = options?.sizeCalculator ?? defaultSizeCalculator;
-        this.onEvict = options?.onEvict;
+        if (options?.defaultTTL !== undefined) {
+            this.defaultTTL = options.defaultTTL;
+        }
+        if (options?.onEvict !== undefined) {
+            this.onEvict = options.onEvict;
+        }
     }
     /**
      * Checks if an entry is expired.

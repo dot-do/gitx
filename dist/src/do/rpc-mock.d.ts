@@ -183,7 +183,7 @@ export interface CancellableAsyncIterator<T> extends AsyncIterator<T> {
 /**
  * Create a DO client with magic proxy
  */
-export declare function DO(url: string, options?: Partial<DOClientOptions>): MagicProxy;
+export declare function DO(_url: string, _options?: Partial<DOClientOptions>): MagicProxy;
 /**
  * Create an RPC client
  */
@@ -214,7 +214,7 @@ export type RPCMethodValue = ((...args: RPCArg[]) => Promise<RPCArg | void> | RP
  * Durable Object instance type for RPC handler.
  * @template T - The methods/properties exposed by this DO (defaults to Record<string, RPCMethodValue>)
  */
-export interface RPCDOInstance<T extends Record<string, RPCMethodValue> = Record<string, RPCMethodValue>> {
+export interface RPCDOInstance<_T extends Record<string, RPCMethodValue> = Record<string, RPCMethodValue>> {
     [key: string]: RPCMethodValue;
 }
 /**
@@ -231,11 +231,11 @@ export interface RPCDOState {
  * Create RPC handler from a DO instance
  * @template TInstance - The type of the DO instance
  */
-export declare function createRPCHandler<TInstance extends RPCDOInstance>(instance: TInstance, state: RPCDOState, options?: RPCHandlerOptions): RPCHandler;
+export declare function createRPCHandler<TInstance extends RPCDOInstance>(_instance: TInstance, _state: RPCDOState, _options?: RPCHandlerOptions): RPCHandler;
 /**
  * RPC decorator for methods (placeholder)
  */
-export declare function rpc<T>(target: T, propertyKey: string, descriptor: PropertyDescriptor): PropertyDescriptor;
+export declare function rpc<T>(_target: T, _propertyKey: string, descriptor: PropertyDescriptor): PropertyDescriptor;
 /**
  * Create a stream response
  */

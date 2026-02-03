@@ -10,6 +10,7 @@ import { parquetWriteBuffer, encodeVariant } from 'hyparquet-writer';
 import * as lz4js from 'lz4js';
 import { R2DataCatalog, IcebergTableManager, createDataFile, } from '../export/iceberg';
 import { COMMITS_SCHEMA, REFS_SCHEMA } from '../export/schemas';
+const decoder = new TextDecoder();
 // ============================================================================
 // LZ4 Compression
 // ============================================================================
@@ -330,7 +331,7 @@ async function readCommitsFromStorage(store) {
  */
 function parseCommitObject(sha, data) {
     try {
-        const content = new TextDecoder().decode(data);
+        const content = decoder.decode(data);
         const lines = content.split('\n');
         let treeSha = '';
         const parentShas = [];

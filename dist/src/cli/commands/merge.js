@@ -180,10 +180,10 @@ async function parseGitConfig(cwd) {
         const content = await fs.readFile(configPath, 'utf8');
         const nameMatch = content.match(/name\s*=\s*(.+)/m);
         const emailMatch = content.match(/email\s*=\s*(.+)/m);
-        if (nameMatch) {
+        if (nameMatch && nameMatch[1]) {
             result.userName = nameMatch[1].trim();
         }
-        if (emailMatch) {
+        if (emailMatch && emailMatch[1]) {
             result.userEmail = emailMatch[1].trim();
         }
     }
@@ -224,20 +224,27 @@ function levenshteinDistance(a, b) {
     for (let i = 0; i <= b.length; i++) {
         matrix[i] = [i];
     }
-    for (let j = 0; j <= a.length; j++) {
-        matrix[0][j] = j;
+    const firstRow = matrix[0];
+    if (firstRow) {
+        for (let j = 0; j <= a.length; j++) {
+            firstRow[j] = j;
+        }
     }
     for (let i = 1; i <= b.length; i++) {
+        const row = matrix[i];
+        const prevRow = matrix[i - 1];
+        if (!row || !prevRow)
+            continue;
         for (let j = 1; j <= a.length; j++) {
             if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                matrix[i][j] = matrix[i - 1][j - 1];
+                row[j] = prevRow[j - 1] ?? 0;
             }
             else {
-                matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+                row[j] = Math.min((prevRow[j - 1] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prevRow[j] ?? 0) + 1);
             }
         }
     }
-    return matrix[b.length][a.length];
+    return matrix[b.length]?.[a.length] ?? 0;
 }
 /**
  * Find similar branch name for suggestion
@@ -347,12 +354,15 @@ export async function getMergeStatus(cwd) {
         }
         await findConflictedFiles(cwd);
     }
-    return {
+    const status = {
         inProgress,
-        mergeHead,
-        origHead,
         unresolvedConflicts
     };
+    if (mergeHead !== undefined)
+        status.mergeHead = mergeHead;
+    if (origHead !== undefined)
+        status.origHead = origHead;
+    return status;
 }
 /**
  * Merge a branch or branches into the current branch.
@@ -484,9 +494,10 @@ export async function mergeBranches(cwd, target, options) {
         await fs.writeFile(path.join(cwd, '.git', 'MERGE_MSG'), `Merge branch '${targets[0]}'\n`);
         // Write conflict markers to files
         const conflictContent = await getConflictContent(cwd);
+        const firstTargetSha = targetShas[0] ?? '';
         for (const file of conflictedFiles) {
             const content = conflictContent[file] || { ours: 'our content', theirs: 'their content' };
-            await writeConflictMarkers(cwd, file, content.ours, content.theirs, targetShas[0]);
+            await writeConflictMarkers(cwd, file, content.ours, content.theirs, firstTargetSha);
         }
         return {
             status: 'conflicted',
@@ -495,7 +506,7 @@ export async function mergeBranches(cwd, target, options) {
         };
     }
     // Check if diverged (need 3-way merge)
-    const diverged = await areBranchesDiverged(cwd, head.branch || currentSha, targets[0]);
+    const diverged = await areBranchesDiverged(cwd, head.branch || currentSha, targets[0] ?? '');
     // Handle squash merge
     if (options?.squash) {
         // Don't update HEAD, just stage changes
@@ -556,15 +567,17 @@ export async function mergeBranches(cwd, target, options) {
             const headPath = path.join(cwd, '.git', 'HEAD');
             await fs.writeFile(headPath, targetShas[0] + '\n');
         }
-        return {
+        const ffResult = {
             status: 'fast-forward',
-            newHead: targetShas[0],
             stats: {
                 filesChanged: 1,
                 insertions: 0,
                 deletions: 0
             }
         };
+        if (targetShas[0] !== undefined)
+            ffResult.newHead = targetShas[0];
+        return ffResult;
     }
     // Check if fast-forward only flag is set
     if (options?.fastForwardOnly) {
@@ -580,7 +593,7 @@ export async function mergeBranches(cwd, target, options) {
     }
     // Three-way merge (or forced non-fast-forward)
     const mergeCommitSha = generateSha();
-    const message = options?.message ?? `Merge branch '${targets[0]}'`;
+    const message = options?.message ?? `Merge branch '${targets[0] ?? ''}'`;
     // Update the branch ref
     if (head.branch) {
         const refPath = path.join(cwd, '.git', 'refs', 'heads', ...head.branch.split('/'));
@@ -591,18 +604,25 @@ export async function mergeBranches(cwd, target, options) {
         const headPath = path.join(cwd, '.git', 'HEAD');
         await fs.writeFile(headPath, mergeCommitSha + '\n');
     }
-    return {
+    const mergeResult = {
         status: 'merged',
         newHead: mergeCommitSha,
         mergeCommitSha,
         message,
-        parents: [currentSha, targetShas[0]],
         stats: {
             filesChanged: 1,
             insertions: 0,
             deletions: 0
         }
     };
+    const firstTargetSha = targetShas[0];
+    if (firstTargetSha !== undefined) {
+        mergeResult.parents = [currentSha, firstTargetSha];
+    }
+    else {
+        mergeResult.parents = [currentSha];
+    }
+    return mergeResult;
 }
 /**
  * Abort an in-progress merge.
@@ -813,7 +833,7 @@ export async function mergeCommand(ctx) {
         mergeOptions.strategyOption = String(options['strategy-option'] || options['strategyOption']);
     }
     try {
-        const result = await mergeBranches(cwd, branchArgs.length > 1 ? branchArgs : branchArgs[0], mergeOptions);
+        const result = await mergeBranches(cwd, branchArgs.length > 1 ? branchArgs : (branchArgs[0] ?? ''), mergeOptions);
         switch (result.status) {
             case 'fast-forward':
                 stdout(`Fast-forward`);

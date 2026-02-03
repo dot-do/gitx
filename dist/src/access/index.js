@@ -14,7 +14,7 @@
  * import {
  *   AccessControl,
  *   InMemoryPermissionStorage,
- *   AuthContext,
+ *   AccessAuthContext,
  *   Permission,
  *   hasPermission,
  *   checkAccess,
@@ -33,7 +33,7 @@
  * })
  *
  * // Check permission
- * const auth: AuthContext = { authenticated: true, userId: 'user-123' }
+ * const auth: AccessAuthContext = { authenticated: true, userId: 'user-123' }
  * const result = await accessControl.checkOperation(auth, 'org/repo', 'push')
  * if (result.allowed) {
  *   // Proceed with operation

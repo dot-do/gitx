@@ -11,6 +11,8 @@
  * @module do/rpc
  */
 import { RPCError, ErrorCodes, } from './rpc-mock';
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 // Re-export rpc.do types and functions
 export { RPCError, ErrorCodes, } from './rpc-mock';
 class SimpleEventEmitter {
@@ -83,8 +85,8 @@ export class RPCGitBackend extends SimpleEventEmitter {
             maxSize: options.batching?.maxSize ?? 10,
             delayMs: options.batching?.delayMs ?? 50,
         };
-        this.serializer = options.serializer;
-        this.onTokenRefresh = options.onTokenRefresh;
+        this.serializer = options.serializer ?? undefined;
+        this.onTokenRefresh = options.onTokenRefresh ?? undefined;
         this.maxRefreshAttempts = options.maxRefreshAttempts ?? 3;
     }
     get connectionState() {
@@ -265,7 +267,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
                     data = this.serializer.decode(event.data);
                 }
                 else {
-                    const text = new TextDecoder().decode(event.data);
+                    const text = decoder.decode(event.data);
                     data = JSON.parse(text);
                 }
             }
@@ -384,7 +386,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
         }
     }
     rejectPendingCalls(error) {
-        for (const [id, pending] of this.pendingCalls) {
+        for (const [_id, pending] of this.pendingCalls) {
             clearTimeout(pending.timeout);
             pending.reject(error);
         }
@@ -426,7 +428,7 @@ export class RPCGitBackend extends SimpleEventEmitter {
         // Push operations are not idempotent
         const nonIdempotent = ['push', 'commit', 'createBlob', 'createTree', 'createTag', 'updateRef', 'batchCommit'];
         const methodName = path[path.length - 1];
-        return !nonIdempotent.includes(methodName);
+        return methodName !== undefined && !nonIdempotent.includes(methodName);
     }
     createProxy(path) {
         const self = this;
@@ -458,11 +460,11 @@ export class RPCGitBackend extends SimpleEventEmitter {
         const lastArg = args[args.length - 1];
         if (lastArg && typeof lastArg === 'object') {
             const options = lastArg;
-            if (typeof options.timeout === 'number') {
-                callTimeout = options.timeout;
+            if (typeof options['timeout'] === 'number') {
+                callTimeout = options['timeout'];
             }
-            if (typeof options.onProgress === 'function') {
-                onProgress = options.onProgress;
+            if (typeof options['onProgress'] === 'function') {
+                onProgress = options['onProgress'];
             }
         }
         // Auto-connect if not connected
@@ -572,13 +574,13 @@ export class RPCGitBackend extends SimpleEventEmitter {
     serializeBinary(msg) {
         // Simple binary format: JSON envelope with binary data appended
         // Format: [4 bytes length][JSON string][binary data...]
-        const jsonPart = JSON.stringify(msg, (key, value) => {
+        const jsonPart = JSON.stringify(msg, (_key, value) => {
             if (value instanceof Uint8Array) {
                 return { __binary__: true, offset: 0, length: value.length };
             }
             return value;
         });
-        const jsonBytes = new TextEncoder().encode(jsonPart);
+        const jsonBytes = encoder.encode(jsonPart);
         const binaryParts = this.extractBinaryParts(msg);
         let totalBinaryLength = 0;
         for (const part of binaryParts) {
@@ -706,7 +708,7 @@ export class RPCGitDO {
         lines.push('');
         lines.push(message);
         const content = lines.join('\n');
-        const data = new TextEncoder().encode(content);
+        const data = encoder.encode(content);
         // Generate SHA
         const sha = await this.hashObject('commit', data);
         // Store commit
@@ -739,7 +741,7 @@ export class RPCGitDO {
             ],
         };
     }
-    async cloneStream(options) {
+    async cloneStream(_options) {
         let cancelled = false;
         let index = 0;
         const phases = [
@@ -754,7 +756,7 @@ export class RPCGitDO {
                     return { done: true, value: undefined };
                 }
                 const value = phases[index++];
-                return { done: false, value };
+                return { done: false, value: value };
             },
             cancel() {
                 cancelled = true;
@@ -790,7 +792,7 @@ export class RPCGitDO {
         }
         // Determine type from content (simplified)
         let type = 'blob';
-        const content = new TextDecoder().decode(data);
+        const content = decoder.decode(data);
         if (content.startsWith('tree '))
             type = 'commit';
         else if (content.includes('\0'))
@@ -831,7 +833,7 @@ export class RPCGitDO {
     async getTree(sha) {
         const obj = await this.getObject(sha).catch(() => null);
         if (!obj) {
-            return { entries: undefined };
+            return {};
         }
         // Parse tree object (simplified)
         return { entries: [] };
@@ -846,7 +848,7 @@ export class RPCGitDO {
         // Build tree object
         const parts = [];
         for (const entry of options.entries) {
-            const mode = new TextEncoder().encode(`${entry.mode} ${entry.name}\0`);
+            const mode = encoder.encode(`${entry.mode} ${entry.name}\0`);
             const shaBytes = this.hexToBytes(entry.sha);
             parts.push(new Uint8Array([...mode, ...shaBytes]));
         }
@@ -877,7 +879,7 @@ export class RPCGitDO {
             lines.push(message);
         }
         const content = lines.join('\n');
-        const data = new TextEncoder().encode(content);
+        const data = encoder.encode(content);
         const sha = await this.hashObject('tag', data);
         await this.state.storage.put(`objects/${sha}`, data);
         await this.state.storage.put(`refs/tags/${name}`, sha);
@@ -901,7 +903,7 @@ export class RPCGitDO {
     }
     async merge(options) {
         // Simplified merge - just create a merge commit
-        const sha = await this.hashObject('commit', new TextEncoder().encode(`merge ${options.source} into ${options.target}`));
+        const sha = await this.hashObject('commit', encoder.encode(`merge ${options.source} into ${options.target}`));
         return { sha, conflicts: [] };
     }
     async receivePack(data) {
@@ -949,6 +951,9 @@ export class RPCGitDO {
         const results = [];
         for (let i = 0; i < commits.length; i++) {
             const commit = commits[i];
+            if (!commit) {
+                continue;
+            }
             // Check for simulated invalid tree
             if (commit.tree === 'invalid-tree' && options?.atomic) {
                 // Rollback - remove any stored objects
@@ -985,7 +990,7 @@ export class RPCGitDO {
     // Helper Methods
     // ============================================================================
     async hashObject(type, data) {
-        const header = new TextEncoder().encode(`${type} ${data.length}\0`);
+        const header = encoder.encode(`${type} ${data.length}\0`);
         const fullData = new Uint8Array(header.length + data.length);
         fullData.set(header);
         fullData.set(data, header.length);
@@ -1015,8 +1020,7 @@ export function createRPCGitBackend(options) {
 /**
  * Create an RPC handler for a DO instance
  */
-export function createRPCHandler(instance, state, options) {
-    const doState = state;
+export function createRPCHandler(instance, _state, _options) {
     return {
         async fetch(request) {
             // Check for WebSocket upgrade
@@ -1033,7 +1037,7 @@ export function createRPCHandler(instance, state, options) {
                     server.addEventListener('message', async (event) => {
                         try {
                             const data = JSON.parse(event.data);
-                            const result = await handleRPCRequest(instance, data, request, options);
+                            const result = await handleRPCRequest(instance, data, request, _options);
                             server.send(JSON.stringify(result));
                         }
                         catch (error) {
@@ -1065,7 +1069,7 @@ export function createRPCHandler(instance, state, options) {
             if (request.method === 'POST') {
                 try {
                     const body = await request.json();
-                    const result = await handleRPCRequest(instance, body, request, options);
+                    const result = await handleRPCRequest(instance, body, request, _options);
                     return new Response(JSON.stringify(result), {
                         status: 200,
                         headers: { 'Content-Type': 'application/json' },
@@ -1102,7 +1106,7 @@ async function handleRPCRequest(instance, request, httpRequest, options) {
         if (authHeader) {
             // Parse JWT and check permissions
             const scopes = parseJWTScopes(authHeader);
-            const methodName = path[path.length - 1];
+            const methodName = path[path.length - 1] ?? '';
             // Check if operation requires push scope
             if (['push', 'commit', 'updateRef'].includes(methodName)) {
                 if (!scopes.includes('git:push') && !scopes.includes('git:admin')) {
@@ -1170,7 +1174,7 @@ async function handleRPCRequest(instance, request, httpRequest, options) {
             timestamp: Date.now(),
         };
         // Add stack trace if not in production
-        if (!options?.production && error instanceof Error) {
+        if (!options?.production && error instanceof Error && error.stack) {
             errorResponse.error.stack = error.stack;
         }
         return errorResponse;
@@ -1185,7 +1189,10 @@ function parseJWTScopes(authHeader) {
         const parts = token.split('.');
         if (parts.length !== 3)
             return [];
-        const payload = JSON.parse(atob(parts[1]));
+        const payloadPart = parts[1];
+        if (!payloadPart)
+            return [];
+        const payload = JSON.parse(atob(payloadPart));
         return payload.scopes || [];
     }
     catch {

@@ -41,7 +41,7 @@ async function getCurrentBranch(gitDir) {
     try {
         const headContent = await fs.readFile(path.join(gitDir, 'HEAD'), 'utf8');
         const match = headContent.match(/^ref: refs\/heads\/(.+)\n?$/);
-        if (match) {
+        if (match && match[1]) {
             return match[1];
         }
         return 'HEAD';
@@ -424,7 +424,10 @@ export async function stashPop(cwd, options) {
         throw new Error(`stash@{${index}} does not exist`);
     }
     // Apply the stash first
-    const applyResult = await stashApply(cwd, { ref: formatStashRef(index), index: options?.index });
+    const applyOpts = { ref: formatStashRef(index) };
+    if (options?.index !== undefined)
+        applyOpts.index = options.index;
+    const applyResult = await stashApply(cwd, applyOpts);
     if (!applyResult.success) {
         return applyResult;
     }

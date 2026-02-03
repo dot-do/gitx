@@ -29,11 +29,11 @@
  * }
  * ```
  */
+import { WireError } from '../errors';
 /**
  * Error thrown when a path security violation is detected.
  */
-export declare class PathSecurityError extends Error {
-    readonly code: string;
+export declare class PathSecurityError extends WireError {
     constructor(message: string, code?: string);
 }
 /**

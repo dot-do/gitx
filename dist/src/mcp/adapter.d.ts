@@ -413,6 +413,8 @@ export declare class MCPAdapter {
     private resources;
     /** @internal */
     private prompts;
+    /** @internal Build a success response with proper id handling */
+    private successResponse;
     /**
      * Create a new MCP adapter instance.
      *

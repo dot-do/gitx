@@ -213,8 +213,9 @@ export class RefLog {
             this.nextVersion = 1;
         }
         // Invalidate snapshot if it's beyond the rollback point
-        if (this.latestSnapshot && this.latestSnapshot.version >= fromVersion) {
-            this.latestSnapshot = undefined;
+        if (this.latestSnapshot !== undefined && this.latestSnapshot.version >= fromVersion) {
+            // Cast through unknown to bypass private access check
+            delete this.latestSnapshot;
         }
         return removed;
     }

@@ -24,11 +24,6 @@
  *
  * @module storage/chunk-compactor
  */
-/**
- * Default threshold for considering a blob "small" and eligible for compaction.
- * Blobs smaller than this will be packed together into super-chunks.
- * Default: 64KB (blobs under 64KB can be efficiently packed)
- */
 export declare const DEFAULT_COMPACTION_THRESHOLD: number;
 /**
  * Minimum number of small blobs needed to trigger compaction.

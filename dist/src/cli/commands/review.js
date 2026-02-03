@@ -148,25 +148,31 @@ Examples:
     let headBranch = 'HEAD';
     if (args.length >= 2) {
         // gitx review base head
-        baseBranch = args[0];
-        headBranch = args[1];
+        const arg0 = args[0];
+        const arg1 = args[1];
+        if (arg0)
+            baseBranch = arg0;
+        if (arg1)
+            headBranch = arg1;
     }
     else if (args.length === 1) {
         const arg = args[0];
-        // Check for range syntax (base..head or base...head)
-        if (arg.includes('...')) {
-            const parts = arg.split('...');
-            baseBranch = parts[0] || 'main';
-            headBranch = parts[1] || 'HEAD';
-        }
-        else if (arg.includes('..')) {
-            const parts = arg.split('..');
-            baseBranch = parts[0] || 'main';
-            headBranch = parts[1] || 'HEAD';
-        }
-        else {
-            // Single argument - compare against main
-            headBranch = arg;
+        if (arg) {
+            // Check for range syntax (base..head or base...head)
+            if (arg.includes('...')) {
+                const parts = arg.split('...');
+                baseBranch = parts[0] || 'main';
+                headBranch = parts[1] || 'HEAD';
+            }
+            else if (arg.includes('..')) {
+                const parts = arg.split('..');
+                baseBranch = parts[0] || 'main';
+                headBranch = parts[1] || 'HEAD';
+            }
+            else {
+                // Single argument - compare against main
+                headBranch = arg;
+            }
         }
     }
     try {
@@ -316,13 +322,16 @@ export async function getCommitRange(repoPath, baseBranch, headBranch) {
     const headCommit = await resolveBranchToSha(repoPath, headBranch);
     // Determine if these are branch names or direct SHAs
     const isBranchName = (ref) => !isFullSha(ref) && !isAbbreviatedSha(ref);
-    return {
+    const result = {
         baseCommit,
         headCommit,
-        baseBranch: isBranchName(baseBranch) ? baseBranch : undefined,
-        headBranch: isBranchName(headBranch) ? headBranch : undefined,
         commitCount: baseCommit === headCommit ? 0 : 1 // Simplified for tests
     };
+    if (isBranchName(baseBranch))
+        result.baseBranch = baseBranch;
+    if (isBranchName(headBranch))
+        result.headBranch = headBranch;
+    return result;
 }
 /**
  * Calculate review summary from changed files.

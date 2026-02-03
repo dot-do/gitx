@@ -22,11 +22,11 @@
  * } from 'gitx.do/iceberg'
  * ```
  */
-export { createTableMetadata, addSnapshot, serializeMetadata, GIT_OBJECTS_ICEBERG_SCHEMA, type IcebergField, type IcebergSchema, type IcebergPartitionSpec, type IcebergSortOrder, type IcebergSnapshot, type LegacySnapshotLogEntry as SnapshotLogEntry, type IcebergTableMetadata, type CreateTableMetadataOptions, type AddSnapshotOptions, } from './adapter';
+export { createTableMetadata, addSnapshot, serializeMetadata, GIT_OBJECTS_ICEBERG_SCHEMA, type IcebergField, type IcebergSchema, type IcebergPartitionSpec, type IcebergSortOrder, type IcebergSnapshot as IcebergLegacySnapshot, type LegacySnapshotLogEntry as SnapshotLogEntry, type IcebergTableMetadata, type CreateTableMetadataOptions, type AddSnapshotOptions, } from './adapter';
 export { createManifestEntry, createManifest, serializeManifest, createManifestList, serializeManifestList, FIELD_ID_MAP, type ColumnStat, type DataFileInput, type LegacyIcebergDataFile as IcebergDataFile, type ManifestEntry, type Manifest, type ManifestListEntry, type ManifestList, type CreateManifestOptions, type CreateManifestListOptions, } from './adapter';
 export { createIcebergFlushHandler, } from './flush-handler';
 export { ManifestGenerator, ManifestListGenerator, TableMetadataBuilder, SnapshotBuilder, SnapshotManager, generateUUID, generateSnapshotId, } from './adapter';
 export { toLegacySchema, fromLegacySchema, toLegacyTableMetadata, fromLegacyTableMetadata, } from './adapter';
-export type { TableMetadata, Snapshot, ManifestFile, DataFile, PartitionSpec, SortOrder, } from './adapter';
+export type { TableMetadata as IcebergCoreTableMetadata, Snapshot, ManifestFile, DataFile as IcebergCoreDataFile, PartitionSpec, SortOrder, } from './adapter';
 export * as iceberg from '@dotdo/iceberg';
 //# sourceMappingURL=index.d.ts.map

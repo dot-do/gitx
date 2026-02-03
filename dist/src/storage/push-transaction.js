@@ -86,8 +86,12 @@ export class PushTransaction {
             }
             else {
                 // New: PushTransactionOptions
-                this.orphanCleanup = optionsOrCleanup.orphanCleanup;
-                this.refLog = optionsOrCleanup.refLog;
+                if (optionsOrCleanup.orphanCleanup !== undefined) {
+                    this.orphanCleanup = optionsOrCleanup.orphanCleanup;
+                }
+                if (optionsOrCleanup.refLog !== undefined) {
+                    this.refLog = optionsOrCleanup.refLog;
+                }
                 this.branchProtectionRules = optionsOrCleanup.branchProtectionRules ?? [];
                 if (optionsOrCleanup.maxBufferBytes !== undefined) {
                     this.maxBufferBytes = optionsOrCleanup.maxBufferBytes;

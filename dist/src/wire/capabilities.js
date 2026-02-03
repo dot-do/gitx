@@ -310,11 +310,11 @@ export function parseRefAdvertisement(line, isFirst) {
             throw new Error('Invalid OID length in ref advertisement');
         }
     }
-    return {
-        oid,
-        name,
-        capabilities,
-    };
+    const result = { oid, name };
+    if (capabilities !== undefined) {
+        result.capabilities = capabilities;
+    }
+    return result;
 }
 /**
  * Parse protocol v2 capability advertisement.
@@ -376,6 +376,8 @@ export function parseServerCapabilitiesV2(lines) {
     // Process each line after "version 2"
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
+        if (!line)
+            continue;
         const eqIndex = line.indexOf('=');
         if (eqIndex === -1) {
             // This is a command without a value
@@ -401,13 +403,18 @@ export function parseServerCapabilitiesV2(lines) {
             }
         }
     }
-    return {
+    const result = {
         version: 2,
         commands,
-        agent,
-        objectFormat,
         capabilities,
     };
+    if (agent !== undefined) {
+        result.agent = agent;
+    }
+    if (objectFormat !== undefined) {
+        result.objectFormat = objectFormat;
+    }
+    return result;
 }
 // ============================================================================
 // Building Functions
@@ -544,6 +551,8 @@ export function buildFetchRequest(request) {
     const lines = [];
     for (let i = 0; i < request.wants.length; i++) {
         const oid = request.wants[i];
+        if (!oid)
+            continue;
         if (i === 0) {
             // First want line includes capabilities
             lines.push(buildWantLine(oid, request.capabilities));

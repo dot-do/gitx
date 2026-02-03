@@ -147,7 +147,7 @@ export class CLI {
             }
             else {
                 this.stdout(this.getHelp());
-                return { exitCode: 0, command: parsed.command };
+                return { exitCode: 0 };
             }
         }
         // Check for version flag (only when no command is specified)
@@ -500,6 +500,8 @@ export function parseArgs(args) {
     // Find command from positional args
     for (let i = 0; i < positionalArgs.length; i++) {
         const arg = positionalArgs[i];
+        if (arg === undefined)
+            continue;
         if (!command && SUBCOMMANDS.includes(arg)) {
             command = arg;
         }
@@ -543,13 +545,16 @@ export function parseArgs(args) {
     if (options['port'] !== undefined && typeof options['port'] === 'string') {
         options['port'] = parseInt(options['port'], 10);
     }
-    return {
-        command,
+    const result = {
         args: commandArgs,
         options,
         rawArgs,
         cwd
     };
+    if (command !== undefined) {
+        result.command = command;
+    }
+    return result;
 }
 /**
  * Convenience function to create a CLI and run it with the provided arguments.
@@ -575,10 +580,14 @@ export function parseArgs(args) {
  * })
  */
 export async function runCLI(args, options = {}) {
-    const cli = createCLI({
-        stdout: options.stdout,
-        stderr: options.stderr
-    });
+    const cliOptions = {};
+    if (options.stdout) {
+        cliOptions.stdout = options.stdout;
+    }
+    if (options.stderr) {
+        cliOptions.stderr = options.stderr;
+    }
+    const cli = createCLI(cliOptions);
     // Register built-in command handlers
     cli.registerCommand('checkout', checkoutCommand);
     return cli.run(args);

@@ -48,7 +48,7 @@ import { hashObject, HashCache } from '../utils/hash';
 import { DEFAULT_HASH_CACHE_SIZE } from '../constants';
 import { assertValidTreeEntries, sortTreeEntries, serializeTreeEntries, parseTreeEntries } from '../utils/tree';
 import { typedQuery, validateRow } from '../utils/sql-validate';
-import { CHUNK_SIZE, shouldChunk, getChunkKey, splitIntoChunks, reassembleChunks } from '../storage/chunk-utils';
+import { shouldChunk, getChunkKey, splitIntoChunks, reassembleChunks } from '../storage/chunk-utils';
 // ============================================================================
 // Constants
 // ============================================================================
@@ -61,14 +61,6 @@ const LARGE_BLOB_THRESHOLD = 1024 * 1024;
  * Chunk size for streaming operations (64KB).
  */
 const STREAM_CHUNK_SIZE = 64 * 1024;
-/**
- * Chunk size for blob storage (2MB).
- * DO SQLite charges per row read/write, not per-byte.
- * By chunking large blobs into 2MB segments, we optimize storage costs.
- * Objects >= BLOB_CHUNK_SIZE will be chunked.
- * @deprecated Use CHUNK_SIZE from chunk-utils.ts instead
- */
-export const BLOB_CHUNK_SIZE = CHUNK_SIZE;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 // Default cache configuration
@@ -152,14 +144,15 @@ export class SqliteObjectStore {
     constructor(storage, options) {
         this.storage = storage;
         this.options = options ?? {};
-        this.logger = options?.logger;
+        this.logger = options?.logger ?? undefined;
         this.backend = options?.backend ?? null;
         // Initialize LRU cache for hot tier objects with improved eviction strategy
         // Uses size-aware eviction with priority for smaller objects to maximize cache utilization
+        const cacheTTL = options?.cacheTTL;
         this.cache = new LRUCache({
             maxCount: options?.cacheMaxCount ?? DEFAULT_CACHE_MAX_COUNT,
             maxBytes: options?.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES,
-            defaultTTL: options?.cacheTTL,
+            ...(cacheTTL !== undefined ? { defaultTTL: cacheTTL } : {}),
             sizeCalculator: (obj) => {
                 const stored = obj;
                 // 100 bytes overhead for metadata, plus actual data size
@@ -249,6 +242,8 @@ export class SqliteObjectStore {
             // Store each chunk
             for (let i = 0; i < chunkCount; i++) {
                 const chunkData = chunks[i];
+                if (!chunkData)
+                    continue;
                 const chunkKey = getChunkKey(sha, i);
                 this.storage.sql.exec('INSERT OR REPLACE INTO objects (sha, type, size, data, created_at) VALUES (?, ?, ?, ?, ?)', chunkKey, 'blob_chunk', chunkData.length, chunkData, now);
             }
@@ -549,8 +544,9 @@ export class SqliteObjectStore {
         // Check object_index first (covers both chunked and non-chunked objects)
         const result = this.storage.sql.exec('SELECT sha FROM object_index WHERE sha >= ? AND sha < ? LIMIT 2', prefix, upperBound);
         const rows = typedQuery(result, validateRow(['sha']));
-        if (rows.length === 1) {
-            return rows[0].sha;
+        const firstRow = rows[0];
+        if (rows.length === 1 && firstRow) {
+            return firstRow.sha;
         }
         if (rows.length > 1) {
             throw new Error(`Ambiguous SHA prefix: ${prefix}`);
@@ -558,8 +554,9 @@ export class SqliteObjectStore {
         // Fall back to objects table (in case object_index is out of sync)
         const objResult = this.storage.sql.exec('SELECT sha FROM objects WHERE sha >= ? AND sha < ? LIMIT 2', prefix, upperBound);
         const objRows = typedQuery(objResult, validateRow(['sha']));
-        if (objRows.length === 1) {
-            return objRows[0].sha;
+        const firstObjRow = objRows[0];
+        if (objRows.length === 1 && firstObjRow) {
+            return firstObjRow.sha;
         }
         if (objRows.length > 1) {
             throw new Error(`Ambiguous SHA prefix: ${prefix}`);
@@ -644,9 +641,9 @@ export class SqliteObjectStore {
         // Check object_index first to see if this is a chunked blob
         const indexResult = this.storage.sql.exec('SELECT sha, tier, size, type, chunked, chunk_count FROM object_index WHERE sha = ?', sha);
         const indexRows = typedQuery(indexResult, validateRow(['sha', 'tier', 'size', 'type', 'chunked', 'chunk_count']));
-        if (indexRows.length > 0 && indexRows[0].chunked === 1) {
+        const indexEntry = indexRows[0];
+        if (indexRows.length > 0 && indexEntry && indexEntry.chunked === 1) {
             // This is a chunked blob - reassemble from chunks using shared chunk-utils
-            const indexEntry = indexRows[0];
             const chunkCount = indexEntry.chunk_count;
             this.log('debug', `Reassembling chunked blob: ${sha} (${chunkCount} chunks)`);
             // Fetch all chunks in order
@@ -655,7 +652,8 @@ export class SqliteObjectStore {
                 const chunkKey = getChunkKey(sha, i);
                 const chunkResult = this.storage.sql.exec('SELECT data FROM objects WHERE sha = ?', chunkKey);
                 const chunkRows = typedQuery(chunkResult, validateRow(['data']));
-                if (chunkRows.length === 0) {
+                const chunkRow = chunkRows[0];
+                if (chunkRows.length === 0 || !chunkRow) {
                     this.log('error', `Missing chunk ${i} for chunked blob: ${sha}`);
                     if (this.options.enableMetrics) {
                         this._reads++;
@@ -663,7 +661,7 @@ export class SqliteObjectStore {
                     }
                     return null;
                 }
-                chunks.push(new Uint8Array(chunkRows[0].data));
+                chunks.push(new Uint8Array(chunkRow.data));
             }
             // Reassemble chunks using shared utility
             const data = reassembleChunks(chunks, indexEntry.size);
@@ -695,6 +693,9 @@ export class SqliteObjectStore {
             return null;
         }
         const row = rows[0];
+        if (!row) {
+            return null;
+        }
         const obj = {
             sha: row.sha,
             type: row.type,
@@ -751,19 +752,21 @@ export class SqliteObjectStore {
             return true;
         }
         // Check object_index to see if this is a chunked blob
-        const indexResult = this.storage.sql.exec('SELECT chunked, chunk_count FROM object_index WHERE sha = ?', sha);
-        const indexRows = typedQuery(indexResult, validateRow(['chunked', 'chunk_count']));
+        const indexResult = this.storage.sql.exec('SELECT type, chunked, chunk_count FROM object_index WHERE sha = ?', sha);
+        const indexRows = typedQuery(indexResult, validateRow(['type', 'chunked', 'chunk_count']));
         // Check if object exists (either in index or directly in objects table)
         const exists = await this.hasObject(sha);
         if (!exists) {
             return false;
         }
         this.log('debug', `Deleting object: ${sha}`);
-        // Log to WAL
-        await this.logToWAL('DELETE', sha, 'blob', new Uint8Array(0));
+        // Log to WAL with actual object type
+        const indexRow = indexRows[0];
+        const objectType = (indexRow ? indexRow.type : 'blob');
+        await this.logToWAL('DELETE', sha, objectType, new Uint8Array(0));
         // If this is a chunked blob, delete all chunks using shared chunk-utils
-        if (indexRows.length > 0 && indexRows[0].chunked === 1) {
-            const chunkCount = indexRows[0].chunk_count;
+        if (indexRow && indexRow.chunked === 1) {
+            const chunkCount = indexRow.chunk_count;
             this.log('debug', `Deleting ${chunkCount} chunks for chunked blob: ${sha}`);
             for (let i = 0; i < chunkCount; i++) {
                 const chunkKey = getChunkKey(sha, i);
@@ -856,6 +859,9 @@ export class SqliteObjectStore {
             return false;
         }
         const obj = rows[0];
+        if (!obj) {
+            return false;
+        }
         const computedSha = await hashObject(obj.type, new Uint8Array(obj.data));
         return computedSha === sha;
     }
@@ -925,8 +931,9 @@ export class SqliteObjectStore {
             return [];
         }
         // For single objects, delegate to putObject
-        if (objects.length === 1) {
-            const sha = await this.putObject(objects[0].type, objects[0].data);
+        const firstObj = objects[0];
+        if (objects.length === 1 && firstObj) {
+            const sha = await this.putObject(firstObj.type, firstObj.data);
             return [sha];
         }
         const startTime = this.options.enableMetrics ? Date.now() : 0;
@@ -1071,7 +1078,9 @@ export class SqliteObjectStore {
             for (let i = 0; i < uncachedIndices.length; i++) {
                 const originalIndex = uncachedIndices[i];
                 const sha = uncachedShas[i];
-                results[originalIndex] = rowMap.get(sha) ?? null;
+                if (originalIndex !== undefined && sha !== undefined) {
+                    results[originalIndex] = rowMap.get(sha) ?? null;
+                }
             }
         }
         // Update metrics
@@ -1178,7 +1187,7 @@ export class SqliteObjectStore {
         let messageStartIndex = 0;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            if (line === '') {
+            if (line === undefined || line === '') {
                 messageStartIndex = i + 1;
                 break;
             }
@@ -1243,7 +1252,7 @@ export class SqliteObjectStore {
         let messageStartIndex = 0;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            if (line === '') {
+            if (line === undefined || line === '') {
                 messageStartIndex = i + 1;
                 break;
             }
@@ -1281,7 +1290,7 @@ export class SqliteObjectStore {
             object,
             objectType,
             name,
-            tagger,
+            ...(tagger !== undefined ? { tagger } : {}),
             message
         };
     }
@@ -1490,11 +1499,12 @@ export class SqliteObjectStore {
      * ```
      */
     async truncateWAL() {
-        const result = this.storage.sql.exec('DELETE FROM wal WHERE flushed = 1');
+        this.storage.sql.exec('DELETE FROM wal WHERE flushed = 1');
         // Get the number of rows affected - SQLite returns this via changes
         const changesResult = this.storage.sql.exec('SELECT changes() as count');
         const rows = typedQuery(changesResult, validateRow(['count']));
-        const deletedCount = rows.length > 0 ? rows[0].count : 0;
+        const firstRow = rows[0];
+        const deletedCount = rows.length > 0 && firstRow ? firstRow.count : 0;
         this.log('info', `WAL truncation: deleted ${deletedCount} flushed entries`);
         return deletedCount;
     }
@@ -1519,11 +1529,18 @@ function parseAuthorLine(line) {
     if (!match) {
         throw new Error(`Invalid author line: ${line}`);
     }
+    const name = match[1];
+    const email = match[2];
+    const timestampStr = match[3];
+    const timezone = match[4];
+    if (!name || !email || !timestampStr || !timezone) {
+        throw new Error(`Invalid author line: ${line}`);
+    }
     return {
-        name: match[1],
-        email: match[2],
-        timestamp: parseInt(match[3], 10),
-        timezone: match[4]
+        name,
+        email,
+        timestamp: parseInt(timestampStr, 10),
+        timezone
     };
 }
 /**

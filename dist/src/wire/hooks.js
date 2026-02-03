@@ -9,6 +9,7 @@
  *
  * @module wire/hooks
  */
+const encoder = new TextEncoder();
 // ============================================================================
 // Hook Registry
 // ============================================================================
@@ -138,13 +139,16 @@ export class HookExecutor {
                 return hook.handler(commands, env);
             }
             else {
-                return this.executeWebhook(hook, {
+                const payload = {
                     hook: 'pre-receive',
                     timestamp: new Date().toISOString(),
-                    repository: opts.repoId,
                     commands,
                     env,
-                }, opts);
+                };
+                if (opts.repoId !== undefined) {
+                    payload.repository = opts.repoId;
+                }
+                return this.executeWebhook(hook, payload, opts);
             }
         }, opts);
     }
@@ -204,11 +208,14 @@ export class HookExecutor {
             }
             // Stop on first hook failure
             if (!hookOutcome.success) {
-                return {
+                const result = {
                     refName: command.refName,
                     success: false,
-                    error: hookOutcome.errorMessage,
                 };
+                if (hookOutcome.errorMessage !== undefined) {
+                    result.error = hookOutcome.errorMessage;
+                }
+                return result;
             }
         }
         // All hooks passed
@@ -234,11 +241,14 @@ export class HookExecutor {
             const result = await this.invokeUpdateHook(hook, command, env, options);
             const output = this.createHookOutput(hook.id, result.success, result.message, startTime);
             if (!result.success) {
-                return {
+                const failResult = {
                     success: false,
-                    errorMessage: result.message,
                     output,
                 };
+                if (result.message !== undefined) {
+                    failResult.errorMessage = result.message;
+                }
+                return failResult;
             }
             return { success: true, output };
         }
@@ -271,7 +281,6 @@ export class HookExecutor {
         const payload = {
             hook: 'update',
             timestamp: new Date().toISOString(),
-            repository: options.repoId,
             ref: {
                 name: command.refName,
                 oldSha: command.oldSha,
@@ -279,6 +288,9 @@ export class HookExecutor {
             },
             env,
         };
+        if (options.repoId !== undefined) {
+            payload.repository = options.repoId;
+        }
         return this.executeWebhook(hook, payload, options);
     }
     /**
@@ -294,14 +306,17 @@ export class HookExecutor {
                 return hook.handler(successfulCommands, results, env);
             }
             else {
-                return this.executeWebhook(hook, {
+                const payload = {
                     hook: 'post-receive',
                     timestamp: new Date().toISOString(),
-                    repository: opts.repoId,
                     commands: successfulCommands,
                     results,
                     env,
-                }, opts);
+                };
+                if (opts.repoId !== undefined) {
+                    payload.repository = opts.repoId;
+                }
+                return this.executeWebhook(hook, payload, opts);
             }
         }, { ...opts, mode: 'async' }); // Post-receive is typically async
         return {
@@ -323,12 +338,15 @@ export class HookExecutor {
                 return hook.handler(successfulRefs);
             }
             else {
-                return this.executeWebhook(hook, {
+                const payload = {
                     hook: 'post-update',
                     timestamp: new Date().toISOString(),
-                    repository: opts.repoId,
                     commands: successfulRefs.map((name) => ({ refName: name })),
-                }, opts);
+                };
+                if (opts.repoId !== undefined) {
+                    payload.repository = opts.repoId;
+                }
+                return this.executeWebhook(hook, payload, opts);
             }
         }, { ...opts, mode: 'async' });
     }
@@ -345,14 +363,17 @@ export class HookExecutor {
      * @returns A fully populated HookOutput object
      */
     createHookOutput(hookId, success, message, startTime) {
-        return {
+        const output = {
             hookId,
             success,
-            message,
             duration: Date.now() - startTime,
             startedAt: new Date(startTime),
             completedAt: new Date(),
         };
+        if (message !== undefined) {
+            output.message = message;
+        }
+        return output;
     }
     /**
      * Executes a single hook and returns its output.
@@ -450,12 +471,15 @@ export class HookExecutor {
         const failedMessages = outputs
             .filter((o) => !o.success && o.message)
             .map((o) => o.message);
-        return {
+        const result = {
             success: allSuccess,
             outputs,
-            message: failedMessages.length > 0 ? failedMessages.join('; ') : undefined,
             totalDuration: Date.now() - totalStart,
         };
+        if (failedMessages.length > 0) {
+            result.message = failedMessages.join('; ');
+        }
+        return result;
     }
     /**
      * Execute a webhook with optional retry logic.
@@ -601,7 +625,6 @@ export class HookExecutor {
      * @returns Hexadecimal signature string
      */
     async signPayload(payload, secret) {
-        const encoder = new TextEncoder();
         const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
         const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
         const bytes = new Uint8Array(signature);

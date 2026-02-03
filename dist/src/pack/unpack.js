@@ -29,10 +29,22 @@ import pako from 'pako';
 import { sha1 } from '../utils/sha1';
 import { PackObjectType, parsePackHeader, decodeTypeAndSize, } from './format';
 import { applyDelta } from './delta';
+/**
+ * Default limits for unpacking operations to prevent DoS attacks.
+ */
+export const UNPACK_LIMITS = {
+    /** Default maximum number of objects in a single packfile */
+    MAX_OBJECT_COUNT: 100_000,
+    /** Default maximum total uncompressed size (1GB) */
+    MAX_TOTAL_SIZE: 1024 * 1024 * 1024,
+    /** Default maximum size of a single object (100MB) */
+    MAX_SINGLE_OBJECT_SIZE: 100 * 1024 * 1024,
+};
 // ============================================================================
 // Constants
 // ============================================================================
 /** Maximum delta chain depth to prevent stack overflow */
+const encoder = new TextEncoder();
 const DEFAULT_MAX_DELTA_DEPTH = 50;
 // ============================================================================
 // Main Unpacking Functions
@@ -43,13 +55,21 @@ const DEFAULT_MAX_DELTA_DEPTH = 50;
  * @description Parses the binary packfile format and extracts all objects,
  * resolving delta chains to produce the original object content.
  *
+ * Security: This function enforces configurable limits to prevent DoS attacks:
+ * - maxObjectCount: Maximum number of objects (default: 100,000)
+ * - maxTotalSize: Maximum total uncompressed size (default: 1GB)
+ * - maxSingleObjectSize: Maximum size of a single object (default: 100MB)
+ *
  * @param packData - Complete packfile data including checksum
- * @param options - Unpacking options
+ * @param options - Unpacking options including security limits
  * @returns Unpacking result with all objects
- * @throws {Error} If packfile is invalid or corrupted
+ * @throws {Error} If packfile is invalid, corrupted, or exceeds limits
  *
  * @example
- * const result = await unpackPackfile(packData);
+ * const result = await unpackPackfile(packData, {
+ *   maxObjectCount: 50000,  // Custom limit
+ *   maxTotalSize: 500 * 1024 * 1024,  // 500MB
+ * });
  * for (const obj of result.objects) {
  *   console.log(`${obj.sha}: ${obj.type} (${obj.data.length} bytes)`);
  * }
@@ -57,12 +77,20 @@ const DEFAULT_MAX_DELTA_DEPTH = 50;
 export async function unpackPackfile(packData, options = {}) {
     const verifyChecksum = options.verifyChecksum ?? true;
     const maxDeltaDepth = options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH;
+    // Apply configurable limits with defaults
+    const maxObjectCount = options.maxObjectCount ?? UNPACK_LIMITS.MAX_OBJECT_COUNT;
+    const maxTotalSize = options.maxTotalSize ?? UNPACK_LIMITS.MAX_TOTAL_SIZE;
+    const maxSingleObjectSize = options.maxSingleObjectSize ?? UNPACK_LIMITS.MAX_SINGLE_OBJECT_SIZE;
     // Verify minimum size (12 header + 20 checksum)
     if (packData.length < 32) {
         throw new Error('Packfile too short: minimum 32 bytes required');
     }
     // Parse and validate header
     const header = parsePackHeader(packData);
+    // SECURITY: Check object count limit before processing
+    if (header.objectCount > maxObjectCount) {
+        throw new Error(`Pack exceeds maximum object count: ${header.objectCount} > ${maxObjectCount}`);
+    }
     // Verify checksum if requested
     let checksumValid = true;
     if (verifyChecksum) {
@@ -89,8 +117,19 @@ export async function unpackPackfile(packData, options = {}) {
     }
     // Resolve all objects (including delta chains)
     const objects = [];
+    // SECURITY: Track running totals for size limits
+    let totalUncompressedSize = 0;
     for (const entry of entries) {
         const resolved = await resolveObject(entry, offsetMap, options.resolveExternalBase, maxDeltaDepth, 0);
+        // SECURITY: Check single object size limit
+        if (resolved.data.length > maxSingleObjectSize) {
+            throw new Error(`Object ${resolved.sha} exceeds maximum size: ${resolved.data.length} > ${maxSingleObjectSize}`);
+        }
+        // SECURITY: Track and check total size limit
+        totalUncompressedSize += resolved.data.length;
+        if (totalUncompressedSize > maxTotalSize) {
+            throw new Error(`Pack exceeds maximum total size: ${totalUncompressedSize} > ${maxTotalSize}`);
+        }
         objects.push({
             sha: resolved.sha,
             type: resolved.type,
@@ -111,30 +150,52 @@ export async function unpackPackfile(packData, options = {}) {
  * @description Memory-efficient alternative to unpackPackfile for large packs.
  * Objects are yielded as they are parsed and resolved.
  *
+ * Security: This function enforces the same configurable limits as unpackPackfile
+ * to prevent DoS attacks during streaming unpacking.
+ *
  * @param packData - Complete packfile data
- * @param options - Unpacking options
+ * @param options - Unpacking options including security limits
  * @yields Unpacked objects
  *
  * @example
- * for await (const obj of iteratePackfile(packData)) {
+ * for await (const obj of iteratePackfile(packData, { maxObjectCount: 50000 })) {
  *   await store.putObject(obj.type, obj.data);
  * }
  */
 export async function* iteratePackfile(packData, options = {}) {
     const maxDeltaDepth = options.maxDeltaDepth ?? DEFAULT_MAX_DELTA_DEPTH;
+    // Apply configurable limits with defaults
+    const maxObjectCount = options.maxObjectCount ?? UNPACK_LIMITS.MAX_OBJECT_COUNT;
+    const maxTotalSize = options.maxTotalSize ?? UNPACK_LIMITS.MAX_TOTAL_SIZE;
+    const maxSingleObjectSize = options.maxSingleObjectSize ?? UNPACK_LIMITS.MAX_SINGLE_OBJECT_SIZE;
     if (packData.length < 32) {
         throw new Error('Packfile too short');
     }
     const header = parsePackHeader(packData);
+    // SECURITY: Check object count limit before processing
+    if (header.objectCount > maxObjectCount) {
+        throw new Error(`Pack exceeds maximum object count: ${header.objectCount} > ${maxObjectCount}`);
+    }
     const entries = parsePackObjects(packData, header.objectCount);
     // Build offset map for delta resolution
     const offsetMap = new Map();
     for (const entry of entries) {
         offsetMap.set(entry.offset, entry);
     }
+    // SECURITY: Track running totals for size limits
+    let totalUncompressedSize = 0;
     try {
         for (const entry of entries) {
             const resolved = await resolveObject(entry, offsetMap, options.resolveExternalBase, maxDeltaDepth, 0);
+            // SECURITY: Check single object size limit
+            if (resolved.data.length > maxSingleObjectSize) {
+                throw new Error(`Object ${resolved.sha} exceeds maximum size: ${resolved.data.length} > ${maxSingleObjectSize}`);
+            }
+            // SECURITY: Track and check total size limit
+            totalUncompressedSize += resolved.data.length;
+            if (totalUncompressedSize > maxTotalSize) {
+                throw new Error(`Pack exceeds maximum total size: ${totalUncompressedSize} > ${maxTotalSize}`);
+            }
             yield {
                 sha: resolved.sha,
                 type: resolved.type,
@@ -427,7 +488,7 @@ function packTypeToObjectType(type) {
  */
 function computeObjectSha(type, data) {
     const header = `${type} ${data.length}\0`;
-    const headerBytes = new TextEncoder().encode(header);
+    const headerBytes = encoder.encode(header);
     const combined = new Uint8Array(headerBytes.length + data.length);
     combined.set(headerBytes, 0);
     combined.set(data, headerBytes.length);

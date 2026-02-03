@@ -186,18 +186,29 @@ export function decodePktLine(input) {
 }
 /**
  * Decode a stream of pkt-lines.
+ *
+ * Note: This function stops parsing when it encounters invalid pkt-line data
+ * (such as raw binary data after a flush packet). The remaining unparsed data
+ * is returned in the `remaining` field.
  */
 export function decodePktLineStream(input) {
     const str = typeof input === 'string' ? input : decoder.decode(input);
     const packets = [];
     let offset = 0;
     while (offset < str.length) {
-        const result = decodePktLine(str.slice(offset));
-        if (result.type === 'incomplete') {
+        try {
+            const result = decodePktLine(str.slice(offset));
+            if (result.type === 'incomplete') {
+                break;
+            }
+            packets.push(result);
+            offset += result.bytesConsumed;
+        }
+        catch {
+            // Stop parsing on any error (e.g., invalid hex in length prefix)
+            // This handles cases like raw pack data appearing after pkt-line stream
             break;
         }
-        packets.push(result);
-        offset += result.bytesConsumed;
     }
     return {
         packets,

@@ -91,7 +91,7 @@ export {
   type MemoryAuthProviderConfig,
 } from './auth-middleware'
 
-// Production Hardening
+// Production Hardening - types aliased to avoid conflicts with middleware module
 export {
   // Negotiation limits and context
   getDefaultLimits,
@@ -128,10 +128,10 @@ export {
   // Types
   type NegotiationLimits,
   type NegotiationContext,
-  type ValidationResult,
+  type ValidationResult as WireValidationResult,
   type RateLimiterConfig,
   type RateLimitRequest,
-  type RateLimitResult,
+  type RateLimitResult as WireRateLimitResult,
   type RateLimiter,
   type RateLimiterHook,
 } from './hardening'
@@ -172,26 +172,26 @@ export {
   type StreamingPackReaderOptions,
 } from './streaming'
 
-// Send-pack Protocol (Push Client)
+// Send-pack Protocol (Push Client) - aliased to avoid conflicts with ops/branch
 export {
   push,
   pushBranch,
-  deleteBranch,
+  deleteBranch as deleteRemoteBranch,
   discoverReceivePackRefs,
   parseReceivePackCapabilities,
   ZERO_SHA as SEND_PACK_ZERO_SHA,
   type PushAuth,
-  type RefUpdate,
+  type RefUpdate as WireRefUpdate,
   type RefUpdateResult as SendPackRefUpdateResult,
   type ReceivePackCapabilities as SendPackCapabilities,
   type RemoteRefAdvertisement,
-  type PushOptions,
-  type PushResult,
+  type PushOptions as WirePushOptions,
+  type PushResult as WirePushResult,
   type DiscoverOptions as SendPackDiscoverOptions,
 } from './send-pack'
 
-// Receive-pack Protocol Limits (DoS Protection)
+// Receive-pack Protocol Limits (DoS Protection) - aliased to avoid conflicts with pack/barrel
 export {
-  UNPACK_LIMITS,
+  UNPACK_LIMITS as WIRE_UNPACK_LIMITS,
   type UnpackOptions as ReceivePackUnpackOptions,
 } from './receive-pack'

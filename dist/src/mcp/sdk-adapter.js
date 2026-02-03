@@ -211,18 +211,25 @@ export class MCPSDKAdapter {
         if (config?.name !== undefined && config.name === '') {
             throw new Error('Configuration error: name is required and cannot be empty');
         }
-        this.config = {
+        const baseConfig = {
             name: config?.name || 'gitx.do',
             version: config?.version || '0.0.1',
             vendor: config?.vendor || 'gitx.do',
             transports: config?.transports || ['stdio'],
             protocolVersion: config?.protocolVersion || '2024-11-05',
             capabilities: config?.capabilities || {},
-            logger: config?.logger,
             mode: config?.mode || 'development',
-            pingInterval: config?.pingInterval,
-            pingTimeout: config?.pingTimeout,
         };
+        if (config?.logger !== undefined) {
+            baseConfig.logger = config.logger;
+        }
+        if (config?.pingInterval !== undefined) {
+            baseConfig.pingInterval = config.pingInterval;
+        }
+        if (config?.pingTimeout !== undefined) {
+            baseConfig.pingTimeout = config.pingTimeout;
+        }
+        this.config = baseConfig;
     }
     /**
      * Get the adapter configuration.
@@ -608,7 +615,17 @@ export class MCPSDKAdapter {
                         name: tool.name,
                         description: tool.description,
                         inputSchema: tool.inputSchema,
-                        handler: async (params) => tool.handler(params),
+                        handler: async (params) => {
+                            const result = await tool.handler(params);
+                            // Adapt ToolResponse to MCPToolResult by narrowing content type
+                            return {
+                                ...result,
+                                content: result.content.map(c => ({
+                                    ...c,
+                                    type: c.type
+                                }))
+                            };
+                        },
                     });
                 }
             }
@@ -620,7 +637,16 @@ export class MCPSDKAdapter {
                     name: tool.name,
                     description: tool.description,
                     inputSchema: tool.inputSchema,
-                    handler: async (params) => tool.handler(params),
+                    handler: async (params) => {
+                        const result = await tool.handler(params);
+                        return {
+                            ...result,
+                            content: result.content.map(c => ({
+                                ...c,
+                                type: c.type
+                            }))
+                        };
+                    },
                 });
             }
         }

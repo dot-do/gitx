@@ -100,13 +100,13 @@ export interface Branch {
     /** True if this is a remote tracking branch (refs/remotes/) */
     isRemote: boolean;
     /** Upstream tracking information (if configured) */
-    tracking?: BranchTrackingInfo;
+    tracking?: BranchTrackingInfo | undefined;
     /** Subject line of the last commit (optional, for display) */
-    lastCommitMessage?: string;
+    lastCommitMessage?: string | undefined;
     /** Author name of the last commit (optional, for display) */
-    lastCommitAuthor?: string;
+    lastCommitAuthor?: string | undefined;
     /** Date of the last commit (optional, for sorting/display) */
-    lastCommitDate?: Date;
+    lastCommitDate?: Date | undefined;
 }
 /**
  * Options for creating a new branch.
@@ -281,7 +281,7 @@ export declare class BranchManager {
     /** Storage for tracking information (simulated config) */
     private trackingInfo;
     /** Optional callback to check if commits exist */
-    private commitExists?;
+    private commitExists;
     /**
      * Create a new BranchManager.
      *

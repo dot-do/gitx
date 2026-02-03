@@ -384,16 +384,21 @@ export async function getTag(store, name) {
     if (obj.type === 'tag') {
         // Annotated tag
         const parsed = parseTagObject(obj.data);
-        return {
+        const result = {
             name,
             target: parsed.object,
             isAnnotated: true,
             sha,
             objectType: parsed.objectType,
-            tagger: parsed.tagger,
             message: parsed.message,
-            signature: parsed.signature
         };
+        if (parsed.tagger !== undefined) {
+            result.tagger = parsed.tagger;
+        }
+        if (parsed.signature !== undefined) {
+            result.signature = parsed.signature;
+        }
+        return result;
     }
     else {
         // Lightweight tag
@@ -441,13 +446,20 @@ export async function verifyTag(store, name, options = {}) {
             ? encoder.encode(contentStr.slice(0, sigStart))
             : content;
         const result = await verifier(dataToVerify, tag.signature);
-        return {
+        const verifyResult = {
             valid: result.valid,
             signed: true,
-            keyId: result.keyId,
-            signer: result.signer,
-            error: result.error
         };
+        if (result.keyId !== undefined) {
+            verifyResult.keyId = result.keyId;
+        }
+        if (result.signer !== undefined) {
+            verifyResult.signer = result.signer;
+        }
+        if (result.error !== undefined) {
+            verifyResult.error = result.error;
+        }
+        return verifyResult;
     }
     catch (error) {
         return {
@@ -470,7 +482,7 @@ export function parseTagObject(data) {
     let messageStartIndex = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line === '') {
+        if (line === undefined || line === '') {
             messageStartIndex = i + 1;
             break;
         }
@@ -485,7 +497,7 @@ export function parseTagObject(data) {
         }
         else if (line.startsWith('tagger ')) {
             const match = line.match(/^tagger (.+) <(.+)> (\d+) ([+-]\d{4})$/);
-            if (match) {
+            if (match && match[1] && match[2] && match[3] && match[4]) {
                 tagger = {
                     name: match[1],
                     email: match[2],
@@ -510,14 +522,19 @@ export function parseTagObject(data) {
     else {
         message = messageContent;
     }
-    return {
+    const result = {
         object,
         objectType,
         tag,
-        tagger,
         message,
-        signature
     };
+    if (tagger !== undefined) {
+        result.tagger = tagger;
+    }
+    if (signature !== undefined) {
+        result.signature = signature;
+    }
+    return result;
 }
 /**
  * Format a tag message with cleanup options

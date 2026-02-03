@@ -46,6 +46,8 @@ import * as pako from 'pako';
 import { sha1 } from '../utils/sha1';
 import { MAX_PKT_LINE_DATA } from './pkt-line';
 import { PackObjectType, encodeTypeAndSize } from '../pack/format';
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 // ============================================================================
 // Constants
 // ============================================================================
@@ -170,7 +172,6 @@ export function createR2ReadStream(r2Object) {
  */
 export function createSideBandTransform(channel = StreamChannel.PACK_DATA, options = {}) {
     const maxPayload = options.maxPayloadSize ?? MAX_SIDEBAND_PAYLOAD;
-    const encoder = new TextEncoder();
     return new TransformStream({
         transform(chunk, controller) {
             let offset = 0;
@@ -211,7 +212,6 @@ export function createSideBandTransform(channel = StreamChannel.PACK_DATA, optio
  * ```
  */
 export function createSideBandExtractTransform(options = {}) {
-    const decoder = new TextDecoder();
     let buffer = new Uint8Array(0);
     return new TransformStream({
         transform(chunk, controller) {
@@ -273,7 +273,6 @@ export function createSideBandExtractTransform(options = {}) {
  * ```
  */
 export function createPktLineTransform() {
-    const encoder = new TextEncoder();
     return new TransformStream({
         transform(chunk, controller) {
             let offset = 0;
@@ -350,7 +349,6 @@ export class StreamingPackWriter {
      */
     writeHeader() {
         const header = new Uint8Array(12);
-        const encoder = new TextEncoder();
         // PACK signature
         header.set(encoder.encode('PACK'), 0);
         // Version 2 (big-endian)
@@ -422,7 +420,7 @@ export class StreamingPackWriter {
      * @param size - Total size in bytes
      * @param dataStream - ReadableStream of object data
      */
-    async writeStreamingObject(sha, type, size, dataStream) {
+    async writeStreamingObject(_sha, type, size, dataStream) {
         if (this.finalized) {
             throw new Error('Pack writer has been finalized');
         }
@@ -593,7 +591,6 @@ export function createStreamingPackReader(options = {}) {
             bytesProcessed += chunk.length;
             // Parse header if not done
             if (!headerParsed && buffer.length >= 12) {
-                const decoder = new TextDecoder();
                 const signature = decoder.decode(buffer.subarray(0, 4));
                 if (signature !== 'PACK') {
                     throw new Error('Invalid packfile signature');
@@ -718,14 +715,19 @@ function tryParseObject(buffer, objectIndex) {
                 const decompressed = pako.inflate(compressed);
                 if (decompressed.length === size) {
                     const typeStr = packTypeToString(type);
-                    return {
+                    const result = {
                         type: typeStr,
                         data: decompressed,
                         consumed: offset + tryLen,
                         offset: startOffset,
-                        baseOffset,
-                        baseSha,
                     };
+                    if (baseOffset !== undefined) {
+                        result.baseOffset = baseOffset;
+                    }
+                    if (baseSha !== undefined) {
+                        result.baseSha = baseSha;
+                    }
+                    return result;
                 }
             }
             catch {
@@ -763,7 +765,7 @@ function isObjectType(type) {
  */
 function computeObjectSha(type, data) {
     const header = `${type} ${data.length}\0`;
-    const headerBytes = new TextEncoder().encode(header);
+    const headerBytes = encoder.encode(header);
     const combined = new Uint8Array(headerBytes.length + data.length);
     combined.set(headerBytes, 0);
     combined.set(data, headerBytes.length);

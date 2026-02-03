@@ -14,7 +14,7 @@
  * import {
  *   AccessControl,
  *   InMemoryPermissionStorage,
- *   AuthContext,
+ *   AccessAuthContext,
  *   Permission,
  *   hasPermission,
  *   checkAccess,
@@ -33,7 +33,7 @@
  * })
  *
  * // Check permission
- * const auth: AuthContext = { authenticated: true, userId: 'user-123' }
+ * const auth: AccessAuthContext = { authenticated: true, userId: 'user-123' }
  * const result = await accessControl.checkOperation(auth, 'org/repo', 'push')
  * if (result.allowed) {
  *   // Proceed with operation
@@ -44,6 +44,6 @@ export type { Permission, NoPermission, PermissionLevel, RepositoryOperation, Us
 export { hasPermission, getRequiredPermission, checkAccess, comparePermissions, getHighestPermission, isPermissionExpired, isReadOperation, isWriteOperation, isAdminOperation, isValidPermission, isValidPermissionLevel, isValidOperation, isValidVisibility, getAllowedOperations, getPermissionDescription, } from './permissions';
 export type { SqlStorageInterface, PermissionStorage } from './storage';
 export { SqlPermissionStorage, InMemoryPermissionStorage } from './storage';
-export type { AuthContext, PermissionContext, OperationContext, AccessControlOptions, RequestHandler, PermissionMiddleware, } from './middleware';
+export type { AuthContext as AccessAuthContext, PermissionContext, OperationContext, AccessControlOptions, RequestHandler, PermissionMiddleware, } from './middleware';
 export { AccessControl, createPermissionMiddleware, unauthorizedResponse, forbiddenResponse, accessDeniedResponse, } from './middleware';
 //# sourceMappingURL=index.d.ts.map

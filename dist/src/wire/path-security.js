@@ -29,15 +29,14 @@
  * }
  * ```
  */
+import { WireError } from '../errors';
 /**
  * Error thrown when a path security violation is detected.
  */
-export class PathSecurityError extends Error {
-    code;
+export class PathSecurityError extends WireError {
     constructor(message, code = 'PATH_SECURITY_VIOLATION') {
-        super(message);
+        super(message, code);
         this.name = 'PathSecurityError';
-        this.code = code;
     }
 }
 /**
@@ -186,7 +185,7 @@ export function validateRefPath(refPath) {
     // Check for dangerous characters
     const dangerCheck = containsDangerousCharacters(trimmed);
     if (dangerCheck.dangerous) {
-        return { valid: false, error: dangerCheck.reason, code: 'DANGEROUS_CHARS' };
+        return { valid: false, error: dangerCheck.reason ?? 'dangerous characters detected', code: 'DANGEROUS_CHARS' };
     }
     // Check for path traversal
     if (containsPathTraversal(trimmed)) {
@@ -244,7 +243,7 @@ export function validateRepositoryId(repoId) {
     // Check for dangerous characters
     const dangerCheck = containsDangerousCharacters(trimmed);
     if (dangerCheck.dangerous) {
-        return { valid: false, error: dangerCheck.reason, code: 'DANGEROUS_CHARS' };
+        return { valid: false, error: dangerCheck.reason ?? 'dangerous characters detected', code: 'DANGEROUS_CHARS' };
     }
     // Check for path traversal
     if (containsPathTraversal(trimmed)) {

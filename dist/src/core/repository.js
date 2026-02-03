@@ -31,6 +31,7 @@
  * ```
  */
 import { GitCommit, parseTreeEntries } from '../../core/objects';
+const decoder = new TextDecoder();
 // ============================================================================
 // GitBackendRepository Implementation
 // ============================================================================
@@ -102,7 +103,7 @@ export class GitBackendRepository {
         if (!obj || obj.type !== 'commit')
             return null;
         try {
-            const content = new TextDecoder().decode(obj.data);
+            const content = decoder.decode(obj.data);
             const gitCommit = GitCommit.fromContent(content);
             return {
                 type: 'commit',

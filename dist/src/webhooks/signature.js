@@ -11,6 +11,7 @@
 // ============================================================================
 const ALGORITHM = 'SHA-256';
 const SIGNATURE_PREFIX = 'sha256=';
+const encoder = new TextEncoder();
 // ============================================================================
 // Signature Verification
 // ============================================================================
@@ -58,7 +59,6 @@ export async function verifyGitHubSignature(payload, signature, secret) {
     }
     try {
         // Import the secret as a CryptoKey
-        const encoder = new TextEncoder();
         const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: ALGORITHM }, false, ['sign']);
         // Sign the payload
         const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
@@ -148,7 +148,6 @@ export function timingSafeEqual(a, b) {
  * @returns Promise resolving to the signature header value
  */
 export async function createGitHubSignature(payload, secret) {
-    const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: ALGORITHM }, false, ['sign']);
     const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
     return SIGNATURE_PREFIX + bufferToHex(signatureBuffer);

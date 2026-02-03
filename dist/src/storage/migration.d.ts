@@ -263,6 +263,9 @@ export declare const DEFAULT_LOOSE_PREFIX = "objects/";
 /** Default bundle prefix */
 export declare const DEFAULT_BUNDLE_PREFIX = "bundles/";
 /**
+ * Build R2 key for a loose object from SHA.
+ */
+/**
  * Migrator for converting loose R2 objects to bundle format.
  *
  * @description

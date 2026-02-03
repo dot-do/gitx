@@ -22,7 +22,7 @@ export { fetchTool, fetchToolDefinition, createFetchHandler } from './fetch'
 export { executeDo, doToolDefinition, createDoHandler, createGitScope } from './do'
 export type { SearchInput, SearchResult, SearchOptions, GitObjectType } from './search'
 export type { FetchInput, FetchResult, FetchOptions, ResourceType } from './fetch'
-export type { DoToolInput, DoToolOutput, GitBinding, GitScope } from './do'
+export type { DoToolInput, DoToolOutput, GitBinding as DoGitBinding, GitScope } from './do'
 
 // Re-export shared types from @dotdo/mcp for consumers
 export type { BaseTool, BaseToolHandler, ToolResponse, DoScope, DoPermissions }

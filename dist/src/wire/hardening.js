@@ -40,6 +40,8 @@ import { WireError } from '../errors';
 // ============================================================================
 // Constants
 // ============================================================================
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 /** SHA-1 hex pattern for validation */
 const SHA1_REGEX = /^[0-9a-f]{40}$/i;
 /** SHA-256 hex pattern for validation */
@@ -349,7 +351,11 @@ export function validateSha(sha) {
  */
 export function validateShas(shas) {
     for (let i = 0; i < shas.length; i++) {
-        const result = validateSha(shas[i]);
+        const sha = shas[i];
+        if (!sha) {
+            return { valid: false, error: 'Empty SHA at index ' + i, code: 'EMPTY_SHA', invalidIndex: i };
+        }
+        const result = validateSha(sha);
         if (!result.valid) {
             return { ...result, invalidIndex: i };
         }
@@ -424,10 +430,11 @@ export function validateCapabilities(capabilities, options) {
         };
     }
     // In non-strict mode, just report unknown capabilities
-    return {
-        valid: true,
-        unknownCapabilities: unknown.length > 0 ? unknown : undefined,
-    };
+    const result = { valid: true };
+    if (unknown.length > 0) {
+        result.unknownCapabilities = unknown;
+    }
+    return result;
 }
 // ============================================================================
 // Ref Name Validation
@@ -468,7 +475,6 @@ export function validatePacket(packet) {
         };
     }
     // Decode length prefix
-    const decoder = new TextDecoder();
     const hexLength = decoder.decode(packet.slice(0, 4));
     // Check for special packets
     if (hexLength === '0000' || hexLength === '0001' || hexLength === '0002') {
@@ -550,9 +556,12 @@ function parseWantPart(part) {
     const rest = trimmed.slice(5).trim();
     const parts = rest.split(/\s+/);
     const sha = parts[0];
+    if (!sha) {
+        return { valid: false, error: 'Want line must contain SHA', code: 'MISSING_SHA' };
+    }
     const shaResult = validateSha(sha);
     if (!shaResult.valid) {
-        return { valid: false, error: shaResult.error, code: shaResult.code };
+        return { valid: false, error: shaResult.error ?? 'Invalid SHA', code: shaResult.code ?? 'INVALID_SHA' };
     }
     return { valid: true, sha: sha.toLowerCase() };
 }
@@ -569,7 +578,7 @@ function parseWantPartWithCaps(part) {
     const sha = parts[0];
     const shaResult = validateSha(sha);
     if (!shaResult.valid) {
-        return { valid: false, error: shaResult.error, code: shaResult.code };
+        return { valid: false, error: shaResult.error ?? 'Invalid SHA', code: shaResult.code ?? 'INVALID_SHA' };
     }
     // Everything after SHA is capabilities
     const capabilities = parts.slice(1);
@@ -613,7 +622,7 @@ export function safeParseHaveLine(line) {
  * )
  * ```
  */
-export function withTimeout(promise, timeoutMs, errorMessage) {
+export function withTimeout(promise, timeoutMs, _errorMessage) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
             reject(new NegotiationTimeoutError(timeoutMs, timeoutMs));
@@ -697,12 +706,15 @@ export function createInMemoryRateLimiter(config) {
             }
             const remaining = Math.max(0, config.maxRequests - window.count);
             const allowed = window.count < config.maxRequests;
-            return {
+            const result = {
                 allowed,
                 remaining,
                 resetAt: window.resetAt,
-                retryAfter: allowed ? undefined : Math.ceil((window.resetAt - now) / 1000),
             };
+            if (!allowed) {
+                result.retryAfter = Math.ceil((window.resetAt - now) / 1000);
+            }
+            return result;
         },
         async record(request) {
             const key = config.keyExtractor(request);
@@ -785,7 +797,6 @@ export function withErrorRecovery(handler, onError) {
  * @returns Error response bytes
  */
 export function createErrorResponse(error, useSideBand = false) {
-    const encoder = new TextEncoder();
     let message = 'ERR ';
     if (error instanceof NegotiationLimitError) {
         message += `Limit exceeded: ${error.message}`;

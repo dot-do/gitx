@@ -31,7 +31,7 @@ export function formatTimestamp(timestamp, timezone) {
  */
 export function parseTimestamp(timestampStr) {
     const match = timestampStr.match(/^(\d+) ([+-]\d{4})$/);
-    if (!match) {
+    if (!match || !match[1] || !match[2]) {
         throw new Error(`Invalid timestamp format: ${timestampStr}`);
     }
     return {
@@ -129,11 +129,12 @@ export function formatCommitMessage(message, options = {}) {
             }
             const wrappedRest = [];
             for (let i = 0; i < rest.length; i++) {
-                if (i >= bodyStartIndex && rest[i] !== '') {
-                    wrappedRest.push(wrapText(rest[i], wrapColumn));
+                const restLine = rest[i] ?? '';
+                if (i >= bodyStartIndex && restLine !== '') {
+                    wrappedRest.push(wrapText(restLine, wrapColumn));
                 }
                 else {
-                    wrappedRest.push(rest[i]);
+                    wrappedRest.push(restLine);
                 }
             }
             result = [subject, ...wrappedRest].join('\n');
@@ -214,7 +215,7 @@ function extractTreeFromCommitData(data) {
     const decoder = new TextDecoder();
     const content = decoder.decode(data);
     const match = content.match(/tree ([0-9a-f]{40})/);
-    return match ? match[1] : null;
+    return match?.[1] ?? null;
 }
 /**
  * Checks if a commit would be empty (same tree as parent).
@@ -347,8 +348,9 @@ export function buildCommitObject(options) {
 export async function createCommit(store, options) {
     validateCommitOptions(options);
     const parents = options.parents ?? [];
-    if (options.allowEmpty === false && parents.length > 0) {
-        const isEmpty = await isEmptyCommit(store, options.tree, parents[0]);
+    const firstParent = parents[0];
+    if (options.allowEmpty === false && firstParent !== undefined) {
+        const isEmpty = await isEmptyCommit(store, options.tree, firstParent);
         if (isEmpty) {
             throw new Error('Nothing to commit (empty commit not allowed)');
         }
@@ -365,14 +367,17 @@ export async function createCommit(store, options) {
         const signature = await options.signing.signer(commitData);
         commit = addSignatureToCommit(commit, signature);
         const signedCommit = commit;
-        commit.data = serializeCommitContent({
+        const commitContent = {
             tree: commit.tree,
             parents: commit.parents,
             author: commit.author,
             committer: commit.committer,
-            message: commit.message,
-            gpgsig: signedCommit.gpgsig
-        });
+            message: commit.message
+        };
+        if (signedCommit.gpgsig) {
+            commitContent.gpgsig = signedCommit.gpgsig;
+        }
+        commit.data = serializeCommitContent(commitContent);
     }
     const sha = await store.storeObject('commit', commit.data);
     return {
@@ -410,7 +415,7 @@ function parseStoredCommit(data) {
     let messageStartIndex = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line === '') {
+        if (line === undefined || line === '') {
             messageStartIndex = i + 1;
             break;
         }
@@ -422,7 +427,7 @@ function parseStoredCommit(data) {
         }
         else if (line.startsWith('author ')) {
             const match = line.match(/^author (.+) <(.+)> (\d+) ([+-]\d{4})$/);
-            if (match) {
+            if (match && match[1] && match[2] && match[3] && match[4]) {
                 author = {
                     name: match[1],
                     email: match[2],
@@ -433,7 +438,7 @@ function parseStoredCommit(data) {
         }
         else if (line.startsWith('committer ')) {
             const match = line.match(/^committer (.+) <(.+)> (\d+) ([+-]\d{4})$/);
-            if (match) {
+            if (match && match[1] && match[2] && match[3] && match[4]) {
                 committer = {
                     name: match[1],
                     email: match[2],
@@ -488,9 +493,11 @@ export async function amendCommit(store, commitSha, options) {
         parents: original.parents,
         author: newAuthor,
         committer: newCommitter,
-        signing: options.signing,
         allowEmpty: true
     };
+    if (options.signing) {
+        newCommitOptions.signing = options.signing;
+    }
     return createCommit(store, newCommitOptions);
 }
 //# sourceMappingURL=commit.js.map

@@ -761,7 +761,7 @@ export async function topologicalSort(provider, commits) {
  * @param useAuthorDate - If true, use author date; otherwise use committer date
  * @returns Sorted array of commit SHAs (newest first)
  */
-export async function sortByDate(provider, commits, useAuthorDate) {
+export async function sortByDate(provider, commits, _useAuthorDate) {
     const commitData = [];
     for (const sha of commits) {
         const commit = await provider.getCommit(sha);

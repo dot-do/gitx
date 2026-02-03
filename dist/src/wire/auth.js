@@ -46,6 +46,7 @@
  * const result = await middleware(request, context)
  * ```
  */
+const encoder = new TextEncoder();
 // ============================================================================
 // Constants
 // ============================================================================
@@ -254,7 +255,7 @@ export function createUnauthorizedResponse(realm = DEFAULT_REALM, message = 'Aut
             'Content-Type': 'text/plain',
             'WWW-Authenticate': wwwAuthenticate,
         },
-        body: new TextEncoder().encode(message),
+        body: encoder.encode(message),
     };
 }
 /**

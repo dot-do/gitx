@@ -220,7 +220,7 @@ async function fetchPackfile(url, refs, capabilities) {
             'Content-Type': CONTENT_TYPE_UPLOAD_PACK_REQUEST,
             'User-Agent': 'gitx/1.0',
         },
-        body,
+        body: body,
     });
     if (!response.ok) {
         throw new Error(`Failed to fetch packfile: ${response.status} ${response.statusText}`);
@@ -401,12 +401,15 @@ async function unpackAndStore(packfile, storage) {
         }
         else if (extracted.type === PackObjectType.OBJ_REF_DELTA) {
             // Ref delta - needs base object by SHA
-            pendingDeltas.push({
+            const delta = {
                 type: 'ref_delta',
-                baseSha: extracted.baseSha,
                 deltaData: extracted.data,
                 offset: objectOffset,
-            });
+            };
+            if (extracted.baseSha !== undefined) {
+                delta.baseSha = extracted.baseSha;
+            }
+            pendingDeltas.push(delta);
         }
         else {
             // Base object - store immediately
@@ -423,6 +426,8 @@ async function unpackAndStore(packfile, storage) {
         lastResolvedCount = resolvedCount;
         for (let i = pendingDeltas.length - 1; i >= 0; i--) {
             const delta = pendingDeltas[i];
+            if (!delta)
+                continue;
             let baseObj;
             if (delta.type === 'ofs_delta' && delta.baseOffset !== undefined) {
                 baseObj = objectsByOffset.get(delta.baseOffset);
@@ -480,14 +485,19 @@ function extractObject(packfile, offset) {
     }
     // Decompress zlib data
     const { data, bytesConsumed } = inflateData(packfile, offset, size);
-    return {
+    const result = {
         type,
         data,
         offset,
         nextOffset: offset + bytesConsumed,
-        baseOffset,
-        baseSha,
     };
+    if (baseOffset !== undefined) {
+        result.baseOffset = baseOffset;
+    }
+    if (baseSha !== undefined) {
+        result.baseSha = baseSha;
+    }
+    return result;
 }
 /**
  * Read the offset delta base offset value.
@@ -503,10 +513,18 @@ function extractObject(packfile, offset) {
  * @returns Decoded offset value and bytes consumed
  */
 function readOfsOffset(data, offset) {
-    let value = data[offset] & 0x7f;
+    const firstByte = data[offset];
+    if (firstByte === undefined) {
+        throw new Error('Unexpected end of data reading offset delta');
+    }
+    let value = firstByte & 0x7f;
     let bytesConsumed = 1;
-    while (data[offset + bytesConsumed - 1] & 0x80) {
-        value = ((value + 1) << 7) | (data[offset + bytesConsumed] & 0x7f);
+    while ((data[offset + bytesConsumed - 1] ?? 0) & 0x80) {
+        const nextByte = data[offset + bytesConsumed];
+        if (nextByte === undefined) {
+            throw new Error('Unexpected end of data reading offset delta');
+        }
+        value = ((value + 1) << 7) | (nextByte & 0x7f);
         bytesConsumed++;
     }
     return { value, bytesConsumed };

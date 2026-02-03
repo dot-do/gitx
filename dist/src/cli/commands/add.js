@@ -30,6 +30,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import pako from 'pako';
 import { hashObjectStreamingHex } from '../../utils/sha1';
+const encoder = new TextEncoder();
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -231,7 +232,7 @@ async function storeBlob(gitDir, sha, content) {
     }
     // Create blob content with header
     const header = `blob ${content.length}\0`;
-    const headerBytes = new TextEncoder().encode(header);
+    const headerBytes = encoder.encode(header);
     const combined = new Uint8Array(headerBytes.length + content.length);
     combined.set(headerBytes, 0);
     combined.set(content, headerBytes.length);
@@ -348,7 +349,7 @@ Options:
     if (!gitDir) {
         throw new Error('fatal: not a git repository (or any of the parent directories): .git');
     }
-    const verbose = options['verbose'] || options['v'];
+    const verbose = !!(options['verbose'] || options['v']);
     // For add command, -n/--dry-run means dry-run
     // The CLI parser may consume the next argument as a value, so handle that case
     let dryRun = false;
@@ -372,7 +373,7 @@ Options:
             dryRun = true;
         }
     }
-    const force = options['force'] || options['f'];
+    const force = !!(options['force'] || options['f']);
     // Handle -N/--intent-to-add (may have consumed file.txt as its value)
     let intentToAdd = false;
     let intentArg = null;
@@ -397,10 +398,10 @@ Options:
     if (intentArg) {
         args = [intentArg, ...args];
     }
-    const update = options['update'] || options['u'];
-    const all = options['all'] || options['A'];
-    const refresh = options['refresh'];
-    const patch = options['patch'] || options['p'];
+    const update = !!(options['update'] || options['u']);
+    const all = !!(options['all'] || options['A']);
+    const refresh = !!options['refresh'];
+    const patch = !!(options['patch'] || options['p']);
     // Handle --refresh flag
     if (refresh) {
         // Just refresh index stat info - no-op for mock implementation
@@ -930,10 +931,10 @@ export function matchGlobPattern(filePath, pattern) {
         // Split pattern by **/ to handle each segment
         const parts = normalizedPattern.split('**/');
         if (parts.length === 2) {
-            const prefix = parts[0];
-            const suffix = parts[1];
+            const prefix = parts[0] ?? '';
+            const suffix = parts[1] ?? '';
             // Build regex for the suffix part
-            let suffixRegex = suffix
+            const suffixRegex = suffix
                 .replace(/[.+^${}()|[\]\\]/g, '\\$&')
                 .replace(/\*\*/g, '<<<DOUBLESTAR>>>')
                 .replace(/\*/g, '[^/]*')

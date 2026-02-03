@@ -205,19 +205,24 @@ export class ObjectIndex {
     async lookupLocation(sha) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE sha = ?', sha);
         const rows = result.toArray();
-        if (rows.length === 0) {
+        const row = rows[0];
+        if (rows.length === 0 || !row) {
             return null;
         }
-        const row = rows[0];
-        return {
+        const location = {
             sha: row.sha,
             tier: row.tier,
             packId: row.pack_id,
             offset: row.offset,
             size: row.size,
-            type: row.type,
-            updatedAt: row.updated_at,
         };
+        if (row.type !== undefined) {
+            location.type = row.type;
+        }
+        if (row.updated_at !== undefined) {
+            location.updatedAt = row.updated_at;
+        }
+        return location;
     }
     /**
      * Performs batch lookup of multiple objects.
@@ -256,15 +261,20 @@ export class ObjectIndex {
         const rawRows = result.toArray();
         const found = new Map();
         for (const row of rawRows) {
-            found.set(row.sha, {
+            const location = {
                 sha: row.sha,
                 tier: row.tier,
                 packId: row.pack_id,
                 offset: row.offset,
                 size: row.size,
-                type: row.type,
-                updatedAt: row.updated_at,
-            });
+            };
+            if (row.type !== undefined) {
+                location.type = row.type;
+            }
+            if (row.updated_at !== undefined) {
+                location.updatedAt = row.updated_at;
+            }
+            found.set(row.sha, location);
         }
         const missing = shas.filter(sha => !found.has(sha));
         return { found, missing };
@@ -394,7 +404,8 @@ export class ObjectIndex {
     async deleteLocation(sha) {
         const result = this._storage.sql.exec('DELETE FROM object_index WHERE sha = ?', sha);
         const rows = result.toArray();
-        return rows.length > 0 && rows[0].changes > 0;
+        const firstRow = rows[0];
+        return rows.length > 0 && firstRow !== undefined && firstRow.changes > 0;
     }
     /**
      * Gets all objects in a specific tier.
@@ -421,15 +432,22 @@ export class ObjectIndex {
     async getObjectsByTier(tier) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE tier = ?', tier);
         const rawRows = result.toArray();
-        return rawRows.map(row => ({
-            sha: row.sha,
-            tier: row.tier,
-            packId: row.pack_id,
-            offset: row.offset,
-            size: row.size,
-            type: row.type,
-            updatedAt: row.updated_at,
-        }));
+        return rawRows.map(row => {
+            const location = {
+                sha: row.sha,
+                tier: row.tier,
+                packId: row.pack_id,
+                offset: row.offset,
+                size: row.size,
+            };
+            if (row.type !== undefined) {
+                location.type = row.type;
+            }
+            if (row.updated_at !== undefined) {
+                location.updatedAt = row.updated_at;
+            }
+            return location;
+        });
     }
     /**
      * Gets all objects in a specific pack.
@@ -456,15 +474,22 @@ export class ObjectIndex {
     async getObjectsByPack(packId) {
         const result = this._storage.sql.exec('SELECT sha, tier, pack_id, offset, size, type, updated_at FROM object_index WHERE pack_id = ?', packId);
         const rawRows = result.toArray();
-        const locations = rawRows.map(row => ({
-            sha: row.sha,
-            tier: row.tier,
-            packId: row.pack_id,
-            offset: row.offset,
-            size: row.size,
-            type: row.type,
-            updatedAt: row.updated_at,
-        }));
+        const locations = rawRows.map(row => {
+            const location = {
+                sha: row.sha,
+                tier: row.tier,
+                packId: row.pack_id,
+                offset: row.offset,
+                size: row.size,
+            };
+            if (row.type !== undefined) {
+                location.type = row.type;
+            }
+            if (row.updated_at !== undefined) {
+                location.updatedAt = row.updated_at;
+            }
+            return location;
+        });
         // Sort by offset to ensure consistent ordering
         return locations.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
     }

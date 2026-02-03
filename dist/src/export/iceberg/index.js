@@ -3,9 +3,13 @@
  *
  * Exports Iceberg table management utilities for GitX analytics.
  *
+ * NOTE: Types are aliased to avoid conflicts with src/iceberg/index.ts
+ *
  * @module export/iceberg
  */
-export { R2DataCatalog, CatalogError, InvalidRefNameError, validateRefName } from './catalog';
+// R2 Data Catalog
+export { R2DataCatalog, CatalogError, InvalidRefNameError, validateRefName, validateRefName as validateIcebergRefName, } from './catalog';
 export { IcebergTableManager, createDataFile, } from './table';
-export { createManifestBuilder, createSnapshot, serializeManifest, serializeManifestList, generateManifestName, generateManifestListName, } from './manifest';
+// Manifest utilities - aliased to avoid conflicts with src/iceberg/index.ts
+export { createManifestBuilder, createSnapshot, createSnapshot as createExportSnapshot, serializeManifest, serializeManifest as serializeExportManifest, serializeManifestList, serializeManifestList as serializeExportManifestList, generateManifestName, generateManifestListName, } from './manifest';
 //# sourceMappingURL=index.js.map

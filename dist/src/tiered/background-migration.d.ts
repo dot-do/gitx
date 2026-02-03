@@ -201,7 +201,7 @@ export interface MigrationSchedulerState {
     /** Whether migration is currently paused due to errors */
     paused: boolean;
     /** Pause reason if paused */
-    pauseReason?: string;
+    pauseReason?: string | undefined;
 }
 /** Default configuration values */
 export declare const DEFAULT_MIGRATION_CONFIG: BackgroundMigrationConfig;
@@ -327,7 +327,7 @@ export declare class TierMigrationScheduler {
         fromTier: string;
         toTier: string;
         success: boolean;
-        error?: string;
+        error?: string | undefined;
         size: number;
         createdAt: number;
     }>>;

@@ -6,7 +6,14 @@
  *
  * @module mcp/tools/do
  */
-import type { DoScope, DoPermissions, ToolResponse, SandboxEnv } from '@dotdo/mcp';
+import type { DoScope, DoPermissions, ToolResponse } from '@dotdo/mcp';
+/**
+ * Sandbox environment type for Cloudflare Workers.
+ * This type is used when evaluating code in a sandboxed environment.
+ */
+type SandboxEnv = {
+    LOADER?: unknown;
+};
 import { ObjectStoreProxy } from '../sandbox/object-store-proxy';
 /**
  * Options for git.status()
@@ -274,7 +281,7 @@ export declare function executeDo(input: DoToolInput, objectStore: ObjectStorePr
  * @param env - Optional worker environment with LOADER binding (from cloudflare:workers)
  * @returns Handler function for the do tool
  */
-export declare function createDoHandler(scope: GitScope, env?: SandboxEnv): (input: DoToolInput) => Promise<ToolResponse>;
+export declare function createDoHandler(scope: GitScope, _env?: SandboxEnv): (input: DoToolInput) => Promise<ToolResponse>;
 /**
  * Do tool definition
  */

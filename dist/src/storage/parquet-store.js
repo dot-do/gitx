@@ -22,8 +22,8 @@
  * @module storage/parquet-store
  */
 import { parquetWriteBuffer } from 'hyparquet-writer';
-import { parquetReadObjects } from 'hyparquet';
-import { isValidSha } from '../types/objects';
+import { parquetReadObjects, parquetQuery } from 'hyparquet';
+import { isValidSha, isValidObjectType } from '../types/objects';
 import { encodeObjectBatch, detectStorageMode, buildR2Key, } from './variant-codec';
 import { GIT_OBJECTS_SCHEMA } from './parquet-schemas';
 import { BloomCache } from './bloom-cache';
@@ -43,15 +43,13 @@ const COMPACTION_JOURNAL_TABLE = 'compaction_journal';
 // ============================================================================
 // Type Guards
 // ============================================================================
-function isValidObjectType(t) {
-    return t === 'blob' || t === 'tree' || t === 'commit' || t === 'tag';
-}
 function isValidStorageMode(s) {
     return s === 'inline' || s === 'r2' || s === 'lfs';
 }
 // ============================================================================
 // Constants
 // ============================================================================
+const encoder = new TextEncoder();
 /** Default maximum objects to buffer before flushing to Parquet */
 const DEFAULT_FLUSH_THRESHOLD = 1000;
 /** Default maximum buffer size in bytes before flushing */
@@ -85,7 +83,6 @@ export class ParquetStore {
     codec;
     objectFileKeys = [];
     tombstones = new Set();
-    initialized = false;
     initPromise;
     onFlush;
     _compactionNeeded = false;
@@ -168,7 +165,7 @@ export class ParquetStore {
         await this.recoverCompaction();
         // Recover any un-flushed WAL entries into the buffer
         await this.recoverWAL();
-        this.initialized = true;
+        // initialization complete
     }
     /**
      * Recover from interrupted compaction by checking the journal.
@@ -260,8 +257,10 @@ export class ParquetStore {
                 sha: row.sha,
                 type: row.type,
                 data,
-                path: row.path ?? undefined,
             };
+            if (row.path != null) {
+                buffObj.path = row.path;
+            }
             this.buffer.push(buffObj);
             this.bufferIndex.set(row.sha, buffObj);
             this.bufferBytes += data.length;
@@ -305,7 +304,10 @@ export class ParquetStore {
                 this.walEntryIds.push(walIdRows[0].id);
             }
             // Buffer the object for Parquet write
-            const buffObj2 = { sha, type, data, path };
+            const buffObj2 = { sha, type, data };
+            if (path !== undefined) {
+                buffObj2.path = path;
+            }
             this.buffer.push(buffObj2);
             this.bufferIndex.set(sha, buffObj2);
             this.bufferBytes += data.length;
@@ -399,7 +401,7 @@ export class ParquetStore {
             if (check === 'definite')
                 return true;
             // Check buffer
-            if (this.buffer.some(o => o.sha === sha))
+            if (this.bufferIndex.has(sha))
                 return true;
             // Bloom filter says absent - optionally verify with R2 to catch false negatives
             if (check === 'absent') {
@@ -428,7 +430,7 @@ export class ParquetStore {
         if (this.tombstones.has(sha))
             return null;
         // Check in-memory buffer FIRST
-        const buffered = this.buffer.find(o => o.sha === sha);
+        const buffered = this.bufferIndex.get(sha);
         if (buffered) {
             return { type: buffered.type, content: buffered.data };
         }
@@ -459,7 +461,7 @@ export class ParquetStore {
      */
     async checkR2ExistsInternal(sha) {
         // Check in-memory buffer first
-        const buffered = this.buffer.find(o => o.sha === sha);
+        const buffered = this.bufferIndex.get(sha);
         if (buffered) {
             return { type: buffered.type, content: buffered.data };
         }
@@ -479,8 +481,13 @@ export class ParquetStore {
         // Parquet files are append-only. Mark SHA as tombstoned.
         // Tombstoned SHAs are excluded during compaction.
         this.tombstones.add(sha);
-        // Remove from buffer if present
-        this.buffer = this.buffer.filter(o => o.sha !== sha);
+        // Remove from buffer if present - O(1) Map check + update
+        const buffered = this.bufferIndex.get(sha);
+        if (buffered) {
+            this.bufferIndex.delete(sha);
+            this.bufferBytes -= buffered.data.length;
+            this.buffer = this.buffer.filter(o => o.sha !== sha);
+        }
         // Also remove from WAL to prevent recovery of deleted objects
         this.sql.sql.exec(`DELETE FROM ${WRITE_BUFFER_WAL_TABLE} WHERE sha = ?`, sha);
     }
@@ -519,6 +526,7 @@ export class ParquetStore {
                 const batch = encodeObjectBatch(objects, { r2Prefix: `${this.prefix}/raw` });
                 const buffer = parquetWriteBuffer({
                     codec: this.codec,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     schema: GIT_OBJECTS_SCHEMA,
                     columnData: [
                         { name: 'sha', data: batch.shas },
@@ -538,7 +546,7 @@ export class ParquetStore {
                 // Generate a deterministic key from the sorted SHAs so re-flushing the
                 // same buffer produces the same R2 key (idempotent).
                 const sortedShas = objects.map(o => o.sha).sort();
-                const shaDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sortedShas.join('')));
+                const shaDigest = await crypto.subtle.digest('SHA-256', encoder.encode(sortedShas.join('')));
                 const fileId = Array.from(new Uint8Array(shaDigest.slice(0, 16)))
                     .map(b => b.toString(16).padStart(2, '0'))
                     .join('');
@@ -652,7 +660,7 @@ export class ParquetStore {
                             const data = rawData instanceof Uint8Array
                                 ? rawData
                                 : typeof rawData === 'string'
-                                    ? new TextEncoder().encode(rawData)
+                                    ? encoder.encode(rawData)
                                     : new Uint8Array(rawData);
                             allObjects.push({ sha, type, data });
                         }
@@ -690,6 +698,7 @@ export class ParquetStore {
             const batch = encodeObjectBatch(allObjects, { r2Prefix: `${this.prefix}/raw` });
             const buffer = parquetWriteBuffer({
                 codec: this.codec,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 schema: GIT_OBJECTS_SCHEMA,
                 columnData: [
                     { name: 'sha', data: batch.shas },
@@ -717,6 +726,7 @@ export class ParquetStore {
             // Update state
             this.objectFileKeys = [newKey];
             this.buffer = [];
+            this.bufferIndex.clear();
             this.bufferBytes = 0;
             this.tombstones.clear();
             // Persist bloom filter
@@ -752,21 +762,44 @@ export class ParquetStore {
                 return arrayBuffer.slice(start, end);
             },
         };
-        // Read all rows from Parquet file and filter by SHA
-        // parquetReadObjects is simpler and more reliable than parquetQuery across environments
-        let allRows;
+        // Use parquetQuery with SHA filter for predicate pushdown
+        // This uses row group statistics to skip groups that can't contain the SHA
+        // and stops early once a matching row is found (limit: 1)
+        let matchingRows;
         try {
-            allRows = await parquetReadObjects({
+            matchingRows = await parquetQuery({
                 file,
                 columns: ['sha', 'type', 'storage', 'raw_data'],
-                rowFormat: 'object',
+                filter: { sha }, // Predicate pushdown: uses min/max statistics
+                limit: 1, // Early termination: stop after finding the object
             });
+            // If parquetQuery returns 0 results but we expected to find something,
+            // fall back to manual filtering for compatibility with edge cases
+            if (matchingRows.length === 0) {
+                const allRows = await parquetReadObjects({
+                    file,
+                    columns: ['sha', 'type', 'storage', 'raw_data'],
+                    rowFormat: 'object',
+                });
+                matchingRows = allRows.filter(r => r['sha'] === sha).slice(0, 1);
+            }
         }
-        catch (_err) {
-            // If parquetRead fails, fall back to raw R2 lookup
-            allRows = [];
+        catch {
+            // If parquetQuery fails, fall back to parquetReadObjects with manual filter
+            try {
+                const allRows = await parquetReadObjects({
+                    file,
+                    columns: ['sha', 'type', 'storage', 'raw_data'],
+                    rowFormat: 'object',
+                });
+                matchingRows = allRows.filter(r => r['sha'] === sha).slice(0, 1);
+            }
+            catch {
+                // If both fail, return null
+                return null;
+            }
         }
-        const row = allRows.find(r => r['sha'] === sha);
+        const row = matchingRows[0];
         if (!row)
             return null;
         const rawType = row['type'];
@@ -781,7 +814,7 @@ export class ParquetStore {
             const content = rawData instanceof Uint8Array
                 ? rawData
                 : typeof rawData === 'string'
-                    ? new TextEncoder().encode(rawData)
+                    ? encoder.encode(rawData)
                     : new Uint8Array(rawData);
             return { type, content };
         }

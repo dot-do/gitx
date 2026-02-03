@@ -271,8 +271,9 @@ export function validateCommit(commit) {
         return { isValid: false, error: `Invalid tree SHA: ${commit.tree}` };
     }
     for (let i = 0; i < commit.parents.length; i++) {
-        if (!isValidSha(commit.parents[i])) {
-            return { isValid: false, error: `Invalid parent SHA at index ${i}: ${commit.parents[i]}` };
+        const parent = commit.parents[i];
+        if (parent === undefined || !isValidSha(parent)) {
+            return { isValid: false, error: `Invalid parent SHA at index ${i}: ${parent}` };
         }
     }
     const authorResult = validateAuthor(commit.author);
@@ -819,7 +820,7 @@ export function parseCommit(data) {
     let messageStartIndex = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line === '') {
+        if (line === undefined || line === '') {
             // Empty line separates headers from message
             messageStartIndex = i + 1;
             break;
@@ -891,7 +892,7 @@ export function parseTag(data) {
     let messageStartIndex = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line === '') {
+        if (line === undefined || line === '') {
             // Empty line separates headers from message
             messageStartIndex = i + 1;
             break;
@@ -913,14 +914,17 @@ export function parseTag(data) {
         }
     }
     const message = lines.slice(messageStartIndex).join('\n');
-    return {
+    const result = {
         type: 'tag',
         data: data.slice(nullIndex + 1),
         object,
         objectType,
         name,
-        tagger: tagger ?? undefined,
         message
     };
+    if (tagger !== null) {
+        result.tagger = tagger;
+    }
+    return result;
 }
 //# sourceMappingURL=objects.js.map

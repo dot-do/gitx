@@ -337,7 +337,7 @@ export declare function topologicalSort(provider: CommitProvider, commits: strin
  * @param useAuthorDate - If true, use author date; otherwise use committer date
  * @returns Sorted array of commit SHAs (newest first)
  */
-export declare function sortByDate(provider: CommitProvider, commits: string[], useAuthorDate?: boolean): Promise<string[]>;
+export declare function sortByDate(provider: CommitProvider, commits: string[], _useAuthorDate?: boolean): Promise<string[]>;
 /**
  * Get all commits between two commits (exclusive of start, inclusive of end)
  *

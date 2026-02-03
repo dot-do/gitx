@@ -198,6 +198,10 @@ export declare function encodePktLine(data: Uint8Array): Uint8Array;
 export declare function decodePktLine(input: string | Uint8Array): DecodedPktLine;
 /**
  * Decode a stream of pkt-lines.
+ *
+ * Note: This function stops parsing when it encounters invalid pkt-line data
+ * (such as raw binary data after a flush packet). The remaining unparsed data
+ * is returned in the `remaining` field.
  */
 export declare function decodePktLineStream(input: string | Uint8Array): DecodedPktLineStream;
 /**

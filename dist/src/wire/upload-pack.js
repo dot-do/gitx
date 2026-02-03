@@ -293,7 +293,11 @@ export function parseWantLine(line) {
     }
     const rest = trimmed.slice(5); // Remove "want "
     const parts = rest.split(/\s+/);
-    const sha = parts[0].toLowerCase();
+    const firstPart = parts[0];
+    if (!firstPart) {
+        throw new Error(`Invalid want line: missing SHA in ${line}`);
+    }
+    const sha = firstPart.toLowerCase();
     if (!isValidSha1(sha)) {
         throw new Error(`Invalid SHA in want line: ${sha}`);
     }
@@ -594,7 +598,7 @@ export async function processHaves(session, haves, store, done) {
 function extractTreeFromCommit(commitData) {
     const commitStr = decoder.decode(commitData);
     const match = commitStr.match(/^tree ([0-9a-f]{40})/m);
-    return match ? match[1] : null;
+    return match && match[1] ? match[1] : null;
 }
 /**
  * Extract parent commit SHAs from a commit object.
@@ -610,7 +614,10 @@ function extractParentsFromCommit(commitData) {
     const regex = /^parent ([0-9a-f]{40})/gm;
     let match;
     while ((match = regex.exec(commitStr)) !== null) {
-        parents.push(match[1]);
+        const parentSha = match[1];
+        if (parentSha) {
+            parents.push(parentSha);
+        }
     }
     return parents;
 }
@@ -625,7 +632,7 @@ function extractParentsFromCommit(commitData) {
 function extractObjectFromTag(tagData) {
     const tagStr = decoder.decode(tagData);
     const match = tagStr.match(/^object ([0-9a-f]{40})/m);
-    return match ? match[1] : null;
+    return match && match[1] ? match[1] : null;
 }
 /**
  * Extract the committer timestamp from a commit object.
@@ -639,7 +646,7 @@ function extractCommitterTimestamp(commitData) {
     const commitStr = decoder.decode(commitData);
     // Format: committer Name <email> timestamp timezone
     const match = commitStr.match(/^committer [^<]*<[^>]*> (\d+)/m);
-    return match ? parseInt(match[1], 10) : null;
+    return match && match[1] ? parseInt(match[1], 10) : null;
 }
 // ============================================================================
 // Object Calculation
@@ -674,7 +681,7 @@ export async function calculateMissingObjects(store, wants, haves, shallowCommit
     const shallowSet = new Set((shallowCommits || []).map(s => s.toLowerCase()));
     const visited = new Set();
     // Walk from each want to find all reachable objects
-    async function walkObject(sha, isFromShallowCommit = false) {
+    async function walkObject(sha, _isFromShallowCommit = false) {
         const lowerSha = sha.toLowerCase();
         if (visited.has(lowerSha) || havesSet.has(lowerSha)) {
             return;
@@ -768,7 +775,7 @@ export async function processShallow(session, shallowLines, depth, deepenSince, 
     // Parse existing shallow lines from client
     for (const line of shallowLines) {
         const match = line.match(/^shallow ([0-9a-f]{40})$/i);
-        if (match) {
+        if (match && match[1]) {
             result.shallowCommits.push(match[1].toLowerCase());
         }
     }
@@ -863,9 +870,15 @@ export async function processShallow(session, shallowLines, depth, deepenSince, 
     }
     // Update session
     session.shallowCommits = result.shallowCommits;
-    session.depth = depth;
-    session.deepenSince = deepenSince;
-    session.deepenNot = deepenNot;
+    if (depth !== undefined) {
+        session.depth = depth;
+    }
+    if (deepenSince !== undefined) {
+        session.deepenSince = deepenSince;
+    }
+    if (deepenNot !== undefined) {
+        session.deepenNot = deepenNot;
+    }
     return result;
 }
 /**
@@ -1196,12 +1209,14 @@ export async function handleFetch(session, request, store) {
     }
     // Generate packfile if ready
     if (negotiation.ready || done) {
-        const packResult = await generatePackfile(store, session.wants, session.commonAncestors, {
-            onProgress: sideBand ? undefined : undefined,
-            thinPack: session.capabilities.thinPack,
+        const packfileOptions = {
             clientHasObjects: session.commonAncestors,
             shallowCommits: session.shallowCommits
-        });
+        };
+        if (session.capabilities.thinPack !== undefined) {
+            packfileOptions.thinPack = session.capabilities.thinPack;
+        }
+        const packResult = await generatePackfile(store, session.wants, session.commonAncestors, packfileOptions);
         // Add packfile data
         if (sideBand) {
             // Wrap in side-band format

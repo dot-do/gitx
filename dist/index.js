@@ -51,5 +51,5 @@ TierMigrator, AccessTracker, MigrationError, MigrationRollback, ConcurrentAccess
 // === UI ===
 App, Site, DEFAULT_LIMITS, MemoryRateLimitStore, DORateLimitStore, RateLimitDO, createRateLimitMiddleware, createDefaultRateLimiter, createStrictRateLimiter, createPermissiveRateLimiter, defaultKeyExtractor, createUserAwareKeyExtractor, defaultEndpointClassifier, 
 // === Errors ===
-GitXError, WireError, IcebergError, RefError, ObjectError, RPCError, isGitXError, isStorageError, isWireError, isIcebergError, isRefError, isObjectError, isRPCError, isMigrationError, hasErrorCode, } from './src/index.js';
+GitXError, StorageError, WireError, IcebergError, RefError, ObjectError, RPCError, isGitXError, isStorageError, isWireError, isIcebergError, isRefError, isObjectError, isRPCError, isMigrationError, hasErrorCode, } from './src/index.js';
 //# sourceMappingURL=index.js.map

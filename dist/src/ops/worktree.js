@@ -214,9 +214,11 @@ export async function addWorktree(refStore, options) {
         headRef,
         headSha: resolvedSha,
         locked: lock,
-        lockReason: lock ? lockReason : undefined,
         prunable: false,
     };
+    if (lock && lockReason !== undefined) {
+        entry.lockReason = lockReason;
+    }
     store.set(normalizedPath, entry);
     return {
         path: normalizedPath,
@@ -275,15 +277,18 @@ export async function listWorktrees(refStore, options = {}) {
         if (!includePrunable && entry.prunable) {
             continue;
         }
-        result.push({
+        const info = {
             path: entry.path,
             sha: entry.headSha,
             branch: entry.headRef ? normalizeBranchName(entry.headRef) : null,
             isMain: false,
             locked: entry.locked,
-            lockReason: entry.lockReason,
             prunable: entry.prunable,
-        });
+        };
+        if (entry.lockReason !== undefined) {
+            info.lockReason = entry.lockReason;
+        }
+        result.push(info);
     }
     return result;
 }
@@ -370,7 +375,9 @@ export async function lockWorktree(refStore, options) {
         throw new Error(`Worktree '${normalizedPath}' is already locked`);
     }
     entry.locked = true;
-    entry.lockReason = reason;
+    if (reason !== undefined) {
+        entry.lockReason = reason;
+    }
 }
 /**
  * Unlocks a worktree.
@@ -397,7 +404,7 @@ export async function unlockWorktree(refStore, path) {
         throw new Error(`Worktree '${normalizedPath}' is not locked`);
     }
     entry.locked = false;
-    entry.lockReason = undefined;
+    delete entry.lockReason;
 }
 /**
  * Moves a worktree to a new path.

@@ -39,7 +39,9 @@ export class RPCError extends Error {
         super(message);
         this.name = 'RPCError';
         this.code = code;
-        this.data = data;
+        if (data !== undefined) {
+            this.data = data;
+        }
     }
 }
 // ============================================================================
@@ -48,7 +50,7 @@ export class RPCError extends Error {
 /**
  * Create a DO client with magic proxy
  */
-export function DO(url, options) {
+export function DO(_url, _options) {
     // This is a placeholder - actual implementation in rpc.ts
     // Returns an object-type proxy that acts as both object and callable
     return createMagicProxyObject([]);
@@ -70,7 +72,7 @@ export const $ = {};
  * Create RPC handler from a DO instance
  * @template TInstance - The type of the DO instance
  */
-export function createRPCHandler(instance, state, options) {
+export function createRPCHandler(_instance, _state, _options) {
     // Placeholder - actual implementation in rpc.ts
     return {
         fetch: async () => new Response('OK'),
@@ -79,7 +81,7 @@ export function createRPCHandler(instance, state, options) {
 /**
  * RPC decorator for methods (placeholder)
  */
-export function rpc(target, propertyKey, descriptor) {
+export function rpc(_target, _propertyKey, descriptor) {
     return descriptor;
 }
 /**

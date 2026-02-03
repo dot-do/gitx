@@ -50,14 +50,6 @@ import type { CASBackend } from '../storage/backend';
 export type { CASBackend } from '../storage/backend';
 import type { BasicObjectStore } from '../types/storage';
 /**
- * Chunk size for blob storage (2MB).
- * DO SQLite charges per row read/write, not per-byte.
- * By chunking large blobs into 2MB segments, we optimize storage costs.
- * Objects >= BLOB_CHUNK_SIZE will be chunked.
- * @deprecated Use CHUNK_SIZE from chunk-utils.ts instead
- */
-export declare const BLOB_CHUNK_SIZE: number;
-/**
  * Stored object record as persisted in SQLite.
  *
  * @description
@@ -257,7 +249,7 @@ export declare class SqliteObjectStore implements BasicObjectStore {
     private cache;
     private hashCache;
     private options;
-    private logger?;
+    private logger;
     private backend;
     private _reads;
     private _writes;

@@ -101,27 +101,27 @@ export interface Tag {
      * For annotated tags: the commit/object the tag points to.
      * Undefined for lightweight tags.
      */
-    targetSha?: string;
+    targetSha?: string | undefined;
     /**
      * For annotated tags: the type of object being tagged.
      * Usually 'commit', but could be 'blob', 'tree', or even 'tag'.
      */
-    targetType?: ObjectType;
+    targetType?: ObjectType | undefined;
     /**
      * For annotated tags: the tagger information.
      * Contains name, email, timestamp, and timezone.
      */
-    tagger?: Author;
+    tagger?: Author | undefined;
     /**
      * For annotated tags: the tag message.
      * Can be multi-line with a subject and body.
      */
-    message?: string;
+    message?: string | undefined;
     /**
      * For signed annotated tags: the GPG signature.
      * ASCII-armored GPG signature block.
      */
-    signature?: string;
+    signature?: string | undefined;
 }
 /**
  * Options for creating a tag.
@@ -380,7 +380,7 @@ export interface GPGSigner {
 export declare class TagManager {
     private refStorage;
     private objectStorage;
-    private gpgSigner?;
+    private gpgSigner;
     private pendingCreations;
     /**
      * Create a new TagManager.

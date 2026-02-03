@@ -482,12 +482,17 @@ export class GitRPCService {
             return;
         }
         const update = {
-            ...progress,
             timestamp: Date.now(),
-            percentage: progress.total && progress.total > 0
-                ? Math.round((progress.current / progress.total) * 100)
-                : undefined,
+            message: progress.message,
+            current: progress.current,
+            phase: progress.phase,
         };
+        if (progress.total !== undefined) {
+            update.total = progress.total;
+            if (progress.total > 0) {
+                update.percentage = Math.round((progress.current / progress.total) * 100);
+            }
+        }
         operation.progress = update;
         operation.progressHistory = operation.progressHistory ?? [];
         operation.progressHistory.push(update);

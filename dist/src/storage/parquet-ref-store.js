@@ -32,7 +32,8 @@ export class ParquetRefStore {
         this.r2 = options.r2;
         this.sql = options.sql;
         this.prefix = options.prefix;
-        this.onRefUpdate = options.onRefUpdate;
+        if (options.onRefUpdate)
+            this.onRefUpdate = options.onRefUpdate;
     }
     /**
      * Ensure the refs table exists.

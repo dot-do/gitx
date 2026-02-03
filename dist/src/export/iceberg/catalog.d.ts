@@ -153,7 +153,6 @@ export declare class R2DataCatalog {
     dropTable(namespace: string, table: string, purge?: boolean): Promise<void>;
     private catalogPath;
     private r2Path;
-    private getMetadataVersion;
     private validateRequirement;
     /**
      * Validates a TableUpdate object has the required structure for its action type.

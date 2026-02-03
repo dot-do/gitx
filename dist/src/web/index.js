@@ -101,19 +101,6 @@ function fileIcon(mode) {
         return '&#128230;';
     return '&#128196;';
 }
-function langFromFilename(name) {
-    const ext = name.split('.').pop()?.toLowerCase() ?? '';
-    const map = {
-        ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-        py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java',
-        c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-        md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
-        toml: 'toml', html: 'html', css: 'css', scss: 'scss',
-        sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql',
-        xml: 'xml', svg: 'xml', wasm: 'wasm',
-    };
-    return map[ext] ?? '';
-}
 function isBinaryContent(data) {
     const checkLen = Math.min(data.length, 8192);
     for (let i = 0; i < checkLen; i++) {
@@ -126,15 +113,14 @@ function isBinaryContent(data) {
 // Route Handlers
 // ============================================================================
 async function getRefSha(instance, ref) {
-    const store = instance.getObjectStore();
-    const schema = instance.getSchemaManager();
     // Try reading from refs table via SQL
     try {
         const storage = instance.getStorage();
         const result = storage.sql.exec('SELECT sha FROM refs WHERE name = ?', ref);
         const rows = result.toArray();
-        if (rows.length > 0)
-            return rows[0].sha;
+        const firstRow = rows[0];
+        if (rows.length > 0 && firstRow)
+            return firstRow.sha;
     }
     catch {
         // table may not exist
@@ -264,7 +250,7 @@ export function setupWebRoutes(router, instance) {
         const commits = await walkCommitLog(instance, headSha, 50);
         body += `<table><thead><tr><th>Message</th><th>Author</th><th>SHA</th><th>Date</th></tr></thead><tbody>`;
         for (const { sha, commit } of commits) {
-            const firstLine = commit.message.split('\n')[0];
+            const firstLine = commit.message.split('\n')[0] ?? '';
             body += `<tr>
         <td class="commit-msg"><a href="/web/commit/${sha}">${escapeHtml(firstLine)}</a></td>
         <td>${escapeHtml(commit.author.name)}</td>
@@ -285,7 +271,7 @@ export function setupWebRoutes(router, instance) {
         }
         const breadcrumbs = `<a href="/web">repo</a> <span>/</span> commit <span>/</span> ${sha.slice(0, 7)}`;
         let body = `<div style="margin-bottom:16px">
-      <div class="commit-msg" style="font-size:18px;margin-bottom:8px">${escapeHtml(commit.message.split('\n')[0])}</div>
+      <div class="commit-msg" style="font-size:18px;margin-bottom:8px">${escapeHtml(commit.message.split('\n')[0] ?? '')}</div>
       <div class="commit-meta">
         <strong>${escapeHtml(commit.author.name)}</strong> &lt;${escapeHtml(commit.author.email)}&gt;
         committed ${timeAgo(commit.author.timestamp)}
@@ -301,7 +287,7 @@ export function setupWebRoutes(router, instance) {
             body += `<div class="code-block" style="padding:12px;margin-bottom:16px;white-space:pre-wrap">${escapeHtml(commit.message)}</div>`;
         }
         // Show diff if parent exists
-        if (commit.parents.length > 0) {
+        if (commit.parents.length > 0 && commit.parents[0]) {
             const parentCommit = await store.getCommitObject(commit.parents[0]);
             if (parentCommit) {
                 const diff = await computeTreeDiff(instance, parentCommit.tree, commit.tree, '');
@@ -333,11 +319,11 @@ export function setupWebRoutes(router, instance) {
         if (!commit) {
             return c.html(layout('Not Found', `<div class="empty">Commit not found.</div>`), 404);
         }
-        return renderTreePage(c, instance, commit.tree, ref, []);
+        return renderTreePage(c, instance, commit.tree, ref ?? '', []);
     });
     // Tree viewer by branch + path
     router.get('/web/tree/:ref/*', async (c) => {
-        const ref = c.req.param('ref');
+        const ref = c.req.param('ref') ?? '';
         const pathStr = c.req.path.replace(`/web/tree/${encodeURIComponent(ref)}/`, '');
         const pathParts = decodeURIComponent(pathStr).split('/').filter(Boolean);
         const headSha = await getRefSha(instance, `refs/heads/${ref}`) ?? await getRefSha(instance, `refs/tags/${ref}`);
@@ -362,7 +348,7 @@ export function setupWebRoutes(router, instance) {
     });
     // Raw tree by SHA
     router.get('/web/tree-sha/:sha', async (c) => {
-        const sha = c.req.param('sha');
+        const sha = c.req.param('sha') ?? '';
         return renderTreePage(c, instance, sha, sha.slice(0, 7), []);
     });
     // Raw blob by SHA
@@ -391,8 +377,9 @@ async function renderTreePage(c, instance, treeSha, ref, pathParts, preloadedTre
     let breadcrumbs = `<a href="/web">repo</a> <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}">${escapeHtml(ref)}</a>`;
     let currentPath = '';
     for (let i = 0; i < pathParts.length; i++) {
-        currentPath += (currentPath ? '/' : '') + pathParts[i];
-        breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(pathParts[i])}</a>`;
+        const part = pathParts[i] ?? '';
+        currentPath += (currentPath ? '/' : '') + part;
+        breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(part)}</a>`;
     }
     // Sort entries: directories first, then files
     const sorted = [...tree.entries].sort((a, b) => {
@@ -437,12 +424,13 @@ async function renderFilePage(c, instance, entry, ref, pathParts) {
     let breadcrumbs = `<a href="/web">repo</a> <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}">${escapeHtml(ref)}</a>`;
     let currentPath = '';
     for (let i = 0; i < pathParts.length; i++) {
-        currentPath += (currentPath ? '/' : '') + pathParts[i];
+        const part = pathParts[i] ?? '';
+        currentPath += (currentPath ? '/' : '') + part;
         if (i === pathParts.length - 1) {
-            breadcrumbs += ` <span>/</span> ${escapeHtml(pathParts[i])}`;
+            breadcrumbs += ` <span>/</span> ${escapeHtml(part)}`;
         }
         else {
-            breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(pathParts[i])}</a>`;
+            breadcrumbs += ` <span>/</span> <a href="/web/tree/${encodeURIComponent(ref)}/${encodeURIComponent(currentPath)}">${escapeHtml(part)}</a>`;
         }
     }
     if (!blob) {
@@ -454,7 +442,7 @@ async function renderFilePage(c, instance, entry, ref, pathParts) {
     body += renderBlobContent(blob.data, filename);
     return c.html(layout(filename, body, breadcrumbs));
 }
-function renderBlobContent(data, filename) {
+function renderBlobContent(data, _filename) {
     if (isBinaryContent(data)) {
         return `<div class="empty">Binary file (${data.length} bytes)</div>`;
     }
@@ -466,7 +454,7 @@ function renderBlobContent(data, filename) {
     }
     let body = `<div class="code-block"><table>`;
     for (let i = 0; i < lines.length; i++) {
-        body += `<tr><td class="line-num">${i + 1}</td><td>${escapeHtml(lines[i])}</td></tr>`;
+        body += `<tr><td class="line-num">${i + 1}</td><td>${escapeHtml(lines[i] ?? '')}</td></tr>`;
     }
     body += `</table></div>`;
     return body;
@@ -516,7 +504,7 @@ async function computeTreeDiff(instance, oldTreeSha, newTreeSha, prefix) {
         if (!newEntries.has(name)) {
             const path = prefix ? `${prefix}/${name}` : name;
             if (oldEntry.mode === '040000') {
-                const sub = await computeTreeDiff(instance, oldEntry.sha, null, path);
+                await computeTreeDiff(instance, oldEntry.sha, null, path);
                 // Mark all old subtree entries as deleted
                 const oldSubTree = await store.getTreeObject(oldEntry.sha);
                 if (oldSubTree) {

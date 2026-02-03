@@ -342,7 +342,10 @@ export class TieredStorage {
         const rows = this.sql.exec('SELECT type, data FROM git_objects_hot WHERE sha = ?', sha).toArray();
         if (rows.length === 0)
             return;
-        const { type, data } = rows[0];
+        const row = rows[0];
+        if (!row)
+            return;
+        const { type, data } = row;
         // Store in warm tier
         await this.storeInWarmTier(sha, type, data);
         // Remove from hot tier
@@ -481,9 +484,12 @@ export class TieredStorage {
         const rows = this.sql.exec('SELECT type, data FROM git_objects_hot WHERE sha = ?', sha).toArray();
         if (rows.length === 0)
             return null;
+        const row = rows[0];
+        if (!row)
+            return null;
         return {
-            type: rows[0].type,
-            data: rows[0].data
+            type: row.type,
+            data: row.data
         };
     }
     /**
@@ -495,7 +501,7 @@ export class TieredStorage {
         if (!obj)
             return null;
         const data = new Uint8Array(await obj.arrayBuffer());
-        const type = (obj.customMetadata?.type ?? 'blob');
+        const type = (obj.customMetadata?.['type'] ?? 'blob');
         return { type, data };
     }
     /**
@@ -547,7 +553,9 @@ export class TieredStorage {
         if (rows.length === 0)
             return null;
         const row = rows[0];
-        return {
+        if (!row)
+            return null;
+        const meta = {
             sha: row.sha,
             type: row.type,
             size: row.size,
@@ -555,9 +563,12 @@ export class TieredStorage {
             accessCount: row.access_count,
             lastAccessed: row.last_accessed,
             createdAt: row.created_at,
-            packId: row.pack_id ?? undefined,
-            packOffset: row.pack_offset ?? undefined
         };
+        if (row.pack_id !== null)
+            meta.packId = row.pack_id;
+        if (row.pack_offset !== null)
+            meta.packOffset = row.pack_offset;
+        return meta;
     }
     /**
      * Record an access to an object.
@@ -656,6 +667,8 @@ export class TieredStorage {
             return null;
         // Read type and size from first byte
         const firstByte = packData[offset];
+        if (firstByte === undefined)
+            return null;
         const typeNum = (firstByte >> 4) & 0x07;
         const typeMap = {
             1: 'commit',

@@ -56,6 +56,8 @@ export function buildTreeHierarchy(entries) {
         let current = root;
         for (let i = 0; i < parts.length; i++) {
             const part = parts[i];
+            if (part === undefined)
+                continue;
             const isLast = i === parts.length - 1;
             const currentPath = parts.slice(0, i + 1).join('/');
             if (!current.children.has(part)) {
@@ -63,17 +65,24 @@ export function buildTreeHierarchy(entries) {
                     name: part,
                     path: currentPath,
                     isDirectory: !isLast,
-                    children: new Map(),
-                    entry: isLast ? entry : undefined
+                    children: new Map()
                 };
+                if (isLast) {
+                    node.entry = entry;
+                }
                 current.children.set(part, node);
             }
             else if (isLast) {
                 const existing = current.children.get(part);
-                existing.entry = entry;
-                existing.isDirectory = false;
+                if (existing) {
+                    existing.entry = entry;
+                    existing.isDirectory = false;
+                }
             }
-            current = current.children.get(part);
+            const nextNode = current.children.get(part);
+            if (nextNode) {
+                current = nextNode;
+            }
         }
     }
     return root;
@@ -202,14 +211,17 @@ export async function buildTreeFromIndex(store, entries) {
         for (const [name, sub] of Object.entries(br.subtrees)) {
             subtreesConverted[name] = convertToResult(sub);
         }
-        return {
+        const result = {
             sha: br.sha,
             entries: br.entries,
             treeCount,
             uniqueTreeCount,
-            deduplicatedCount: treeCount - uniqueTreeCount,
-            subtrees: Object.keys(subtreesConverted).length > 0 ? subtreesConverted : undefined
+            deduplicatedCount: treeCount - uniqueTreeCount
         };
+        if (Object.keys(subtreesConverted).length > 0) {
+            result.subtrees = subtreesConverted;
+        }
+        return result;
     }
     return convertToResult(result);
 }

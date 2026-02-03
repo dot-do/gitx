@@ -23,6 +23,7 @@ const LFS_POINTER_PREFIX = 'version https://git-lfs.github.com/spec/v1';
 // ============================================================================
 // Encoding
 // ============================================================================
+const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 /**
  * Detect storage mode for a git object.
@@ -54,12 +55,14 @@ export function parseLfsPointer(data) {
     }
     const oidMatch = text.match(/oid sha256:([0-9a-f]{64})/);
     const sizeMatch = text.match(/size (\d+)/);
-    if (!oidMatch || !sizeMatch) {
+    const oid = oidMatch?.[1];
+    const sizeStr = sizeMatch?.[1];
+    if (!oid || !sizeStr) {
         return null;
     }
     return {
-        oid: oidMatch[1],
-        size: parseInt(sizeMatch[1], 10),
+        oid,
+        size: parseInt(sizeStr, 10),
     };
 }
 /**
@@ -128,7 +131,7 @@ export function extractCommitFields(data) {
     let messageStart = -1;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line === '') {
+        if (line === undefined || line === '') {
             messageStart = i + 1;
             break;
         }
@@ -142,9 +145,11 @@ export function extractCommitFields(data) {
         }
         else if (line.startsWith('author ')) {
             const match = line.match(/^author (.+) <.+> (\d+) [+-]\d{4}$/);
-            if (match) {
-                fields.author_name = match[1];
-                fields.author_date = parseInt(match[2], 10) * 1000; // to millis
+            const authorName = match?.[1];
+            const authorDateStr = match?.[2];
+            if (authorName && authorDateStr) {
+                fields.author_name = authorName;
+                fields.author_date = parseInt(authorDateStr, 10) * 1000; // to millis
             }
         }
     }
@@ -163,7 +168,10 @@ export function extractCommitFields(data) {
 function readUnsigned(buf, pos, byteWidth) {
     let value = 0;
     for (let i = 0; i < byteWidth; i++) {
-        value |= buf[pos + i] << (i * 8);
+        const byte = buf[pos + i];
+        if (byte !== undefined) {
+            value |= byte << (i * 8);
+        }
     }
     return value >>> 0; // unsigned
 }
@@ -174,6 +182,8 @@ function decodeMetadata(metadata) {
     if (metadata.length < 2)
         return [];
     const header = metadata[0];
+    if (header === undefined)
+        return [];
     // header: version (4 bits), sorted (1 bit), offset_size_minus_one (2 bits)
     const offsetSize = ((header >> 6) & 0x03) + 1;
     const dictSize = readUnsigned(metadata, 1, offsetSize);
@@ -195,6 +205,9 @@ function decodeMetadata(metadata) {
  */
 function decodeValue(value, pos, dictionary) {
     const header = value[pos];
+    if (header === undefined) {
+        throw new Error(`Invalid VARIANT: no header byte at position ${pos}`);
+    }
     const basicType = header & 0x03;
     switch (basicType) {
         case 0: {
@@ -259,6 +272,9 @@ function decodePrimitive(buf, pos, typeId) {
  */
 function decodeObject(buf, pos, dictionary) {
     const header = buf[pos];
+    if (header === undefined) {
+        throw new Error(`Invalid VARIANT object: no header byte at position ${pos}`);
+    }
     const offsetSize = ((header >> 2) & 0x03) + 1;
     const idSize = ((header >> 4) & 0x03) + 1;
     const isLarge = (header & 0x40) !== 0;
@@ -270,7 +286,8 @@ function decodeObject(buf, pos, dictionary) {
         cursor += 4;
     }
     else {
-        numElements = buf[cursor];
+        const elem = buf[cursor];
+        numElements = elem ?? 0;
         cursor += 1;
     }
     // Read field IDs
@@ -289,11 +306,16 @@ function decodeObject(buf, pos, dictionary) {
     const valuesStart = cursor;
     const result = {};
     for (let i = 0; i < numElements; i++) {
-        const key = dictionary[fieldIds[i]] ?? String(fieldIds[i]);
-        const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary);
+        const fieldId = fieldIds[i];
+        const offset = offsets[i];
+        if (fieldId === undefined || offset === undefined)
+            continue;
+        const key = dictionary[fieldId] ?? String(fieldId);
+        const decoded = decodeValue(buf, valuesStart + offset, dictionary);
         result[key] = decoded.result;
     }
-    const totalBytes = cursor - pos + offsets[numElements];
+    const lastOffset = offsets[numElements] ?? 0;
+    const totalBytes = cursor - pos + lastOffset;
     return { result, bytesRead: totalBytes };
 }
 /**
@@ -301,6 +323,9 @@ function decodeObject(buf, pos, dictionary) {
  */
 function decodeArray(buf, pos, dictionary) {
     const header = buf[pos];
+    if (header === undefined) {
+        throw new Error(`Invalid VARIANT array: no header byte at position ${pos}`);
+    }
     const offsetSize = ((header >> 2) & 0x03) + 1;
     const isLarge = (header & 0x10) !== 0;
     let cursor = pos + 1;
@@ -311,7 +336,8 @@ function decodeArray(buf, pos, dictionary) {
         cursor += 4;
     }
     else {
-        numElements = buf[cursor];
+        const elem = buf[cursor];
+        numElements = elem ?? 0;
         cursor += 1;
     }
     // Read offsets
@@ -324,10 +350,14 @@ function decodeArray(buf, pos, dictionary) {
     const valuesStart = cursor;
     const result = [];
     for (let i = 0; i < numElements; i++) {
-        const decoded = decodeValue(buf, valuesStart + offsets[i], dictionary);
+        const offset = offsets[i];
+        if (offset === undefined)
+            continue;
+        const decoded = decodeValue(buf, valuesStart + offset, dictionary);
         result.push(decoded.result);
     }
-    const totalBytes = cursor - pos + offsets[numElements];
+    const lastOffset = offsets[numElements] ?? 0;
+    const totalBytes = cursor - pos + lastOffset;
     return { result, bytesRead: totalBytes };
 }
 /**
@@ -369,18 +399,17 @@ export function decodeGitObject(sha, type, size, path, storage, variantMetadata,
                 }
             }
             // Fallback: if it was somehow stored differently
-            const encoder = new TextEncoder();
             return { sha, type, size, path, storage, content: encoder.encode(String(decoded)) };
         }
         case 'r2': {
             // R2: VARIANT contains { r2_key, size }
             const obj = decoded;
-            return { sha, type, size, path, storage, content: String(obj.r2_key) };
+            return { sha, type, size, path, storage, content: String(obj['r2_key']) };
         }
         case 'lfs': {
             // LFS: VARIANT contains { r2_key, oid, size, pointer }
             const obj = decoded;
-            return { sha, type, size, path, storage, content: String(obj.r2_key) };
+            return { sha, type, size, path, storage, content: String(obj['r2_key']) };
         }
     }
 }
@@ -398,10 +427,12 @@ export function encodeObjectBatch(objects, options) {
     const variantData = [];
     const commitFields = [];
     for (const obj of objects) {
-        const encoded = encodeGitObject(obj.sha, obj.type, obj.data, {
-            path: obj.path,
-            r2Prefix: options?.r2Prefix,
-        });
+        const encodeOptions = {};
+        if (obj.path !== undefined)
+            encodeOptions.path = obj.path;
+        if (options?.r2Prefix !== undefined)
+            encodeOptions.r2Prefix = options.r2Prefix;
+        const encoded = encodeGitObject(obj.sha, obj.type, obj.data, encodeOptions);
         shas.push(encoded.sha);
         types.push(encoded.type);
         sizes.push(BigInt(encoded.size));

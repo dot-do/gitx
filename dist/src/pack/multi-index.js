@@ -51,6 +51,8 @@
  * ```
  */
 import { parsePackIndex } from './index';
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 /**
  * Multi-Index Manager for pack file scalability.
  *
@@ -74,7 +76,6 @@ export class MultiIndexManager {
     _config;
     _shards;
     _registry;
-    _shardCacheExpiry;
     /**
      * Creates a new MultiIndexManager.
      *
@@ -88,7 +89,6 @@ export class MultiIndexManager {
             shardCacheTTL: config?.shardCacheTTL ?? 300000
         };
         this._shards = new Map();
-        this._shardCacheExpiry = new Map();
         this._registry = {
             packs: new Map(),
             totalObjects: 0,
@@ -142,7 +142,8 @@ export class MultiIndexManager {
     _getShardId(sha) {
         const shardCount = this._config.shardCount;
         if (shardCount === 16) {
-            return sha[0].toLowerCase();
+            const firstChar = sha[0];
+            return firstChar ? firstChar.toLowerCase() : '0';
         }
         else if (shardCount === 256) {
             return sha.slice(0, 2).toLowerCase();
@@ -225,23 +226,36 @@ export class MultiIndexManager {
         const result = [];
         let i = 0, j = 0;
         while (i < a.length && j < sortedB.length) {
-            const cmp = a[i].objectId.localeCompare(sortedB[j].objectId);
+            const entryA = a[i];
+            const entryB = sortedB[j];
+            if (!entryA || !entryB)
+                break;
+            const cmp = entryA.objectId.localeCompare(entryB.objectId);
             if (cmp < 0) {
-                result.push(a[i++]);
+                result.push(entryA);
+                i++;
             }
             else if (cmp > 0) {
-                result.push(sortedB[j++]);
+                result.push(entryB);
+                j++;
             }
             else {
                 // Duplicate - keep the newer one (from b)
-                result.push(sortedB[j++]);
+                result.push(entryB);
+                j++;
                 i++;
             }
         }
-        while (i < a.length)
-            result.push(a[i++]);
-        while (j < sortedB.length)
-            result.push(sortedB[j++]);
+        while (i < a.length) {
+            const entry = a[i++];
+            if (entry)
+                result.push(entry);
+        }
+        while (j < sortedB.length) {
+            const entry = sortedB[j++];
+            if (entry)
+                result.push(entry);
+        }
         return result;
     }
     /**
@@ -254,6 +268,8 @@ export class MultiIndexManager {
         for (let i = 0; i < 256; i++) {
             while (entryIdx < shard.entries.length) {
                 const entry = shard.entries[entryIdx];
+                if (!entry)
+                    break;
                 // Get second byte value (first byte determined by shard)
                 const secondByte = parseInt(entry.objectId.slice(2, 4), 16);
                 if (secondByte <= i) {
@@ -329,8 +345,8 @@ export class MultiIndexManager {
         let end = shard.entries.length;
         if (this._config.useFanoutTables && shard.fanout.length === 256) {
             const secondByte = parseInt(normalizedSha.slice(2, 4), 16);
-            end = shard.fanout[secondByte];
-            start = secondByte === 0 ? 0 : shard.fanout[secondByte - 1];
+            end = shard.fanout[secondByte] ?? shard.entries.length;
+            start = secondByte === 0 ? 0 : (shard.fanout[secondByte - 1] ?? 0);
         }
         // Binary search within range
         let left = start;
@@ -338,13 +354,18 @@ export class MultiIndexManager {
         while (left <= right) {
             const mid = Math.floor((left + right) / 2);
             const entry = shard.entries[mid];
+            if (!entry)
+                break;
             const cmp = normalizedSha.localeCompare(entry.objectId);
             if (cmp === 0) {
-                return {
+                const result = {
                     packId: entry.packId,
-                    offset: entry.offset,
-                    crc32: entry.crc32
+                    offset: entry.offset
                 };
+                if (entry.crc32 !== undefined) {
+                    result.crc32 = entry.crc32;
+                }
+                return result;
             }
             else if (cmp < 0) {
                 right = mid - 1;
@@ -501,7 +522,6 @@ export class MultiIndexManager {
      * @returns Serialized index data
      */
     serialize() {
-        const encoder = new TextEncoder();
         // Calculate total size
         const headerSize = 16; // signature + version + packCount + entryCount
         const packIdsData = Array.from(this._registry.packs.keys())
@@ -537,7 +557,7 @@ export class MultiIndexManager {
             offset += 4;
             data.set(packIdData, offset);
             offset += packIdData.length;
-            const packId = new TextDecoder().decode(packIdData);
+            const packId = decoder.decode(packIdData);
             packIdToIndex.set(packId, packIndex++);
         }
         // Collect all entries and sort
@@ -577,7 +597,6 @@ export class MultiIndexManager {
     static deserialize(data, config) {
         const manager = new MultiIndexManager(config);
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const decoder = new TextDecoder();
         let offset = 0;
         // Verify signature
         if (data[0] !== 0x4d || data[1] !== 0x49 || data[2] !== 0x44 || data[3] !== 0x58) {

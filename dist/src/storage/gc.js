@@ -32,6 +32,7 @@
 // Constants
 // ============================================================================
 /** Default grace period: 2 weeks in milliseconds */
+const decoder = new TextDecoder();
 const DEFAULT_GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000;
 // ============================================================================
 // Garbage Collector Class
@@ -266,7 +267,7 @@ export class GarbageCollector {
      * @param visited - Set of already-visited SHAs
      */
     async walkCommit(_sha, content, reachable, visited) {
-        const text = new TextDecoder().decode(content);
+        const text = decoder.decode(content);
         const lines = text.split('\n');
         for (const line of lines) {
             if (line.startsWith('tree ')) {
@@ -334,7 +335,7 @@ export class GarbageCollector {
      * @param visited - Set of already-visited SHAs
      */
     async walkTag(_sha, content, reachable, visited) {
-        const text = new TextDecoder().decode(content);
+        const text = decoder.decode(content);
         const lines = text.split('\n');
         for (const line of lines) {
             if (line.startsWith('object ')) {

@@ -401,9 +401,8 @@ export class GitRepoDO extends DO {
      */
     getObjectStore() {
         if (!this._cachedObjectStore) {
-            this._cachedObjectStore = new SqliteObjectStore(this.state.storage, {
-                backend: this._parquetStore,
-            });
+            const options = this._parquetStore ? { backend: this._parquetStore } : {};
+            this._cachedObjectStore = new SqliteObjectStore(this.state.storage, options);
             this._logger.debug('ObjectStore created and cached');
         }
         return this._cachedObjectStore;
@@ -415,7 +414,7 @@ export class GitRepoDO extends DO {
      */
     getRepositoryProvider() {
         if (!this._cachedRepositoryProvider) {
-            this._cachedRepositoryProvider = new DORepositoryProvider(this.state.storage);
+            this._cachedRepositoryProvider = new DORepositoryProvider(this.state.storage, this._parquetStore);
             this._logger.debug('DORepositoryProvider created and cached');
         }
         return this._cachedRepositoryProvider;
@@ -460,7 +459,7 @@ export class GitRepoDO extends DO {
      * @throws {GitRepoDOError} If namespace URL is invalid
      */
     async initialize(options) {
-        this._logger.debug('Initializing GitRepoDO', { ns: options.ns, parent: options.parent });
+        this._logger.debug('Initializing GitRepoDO', { ns: options.ns, parent: options.parent ?? null });
         // Validate namespace URL
         let url;
         try {
@@ -506,7 +505,7 @@ export class GitRepoDO extends DO {
      * @throws {GitRepoDOError} If DO not initialized or target URL is invalid
      */
     async fork(options) {
-        this._logger.debug('Forking GitRepoDO', { to: options.to, branch: options.branch });
+        this._logger.debug('Forking GitRepoDO', { to: options.to, branch: options.branch ?? null });
         if (!this._initialized || !this._ns) {
             this._logger.error('Cannot fork: DO not initialized');
             throw new GitRepoDOError('Cannot fork: DO not initialized', GitRepoDOErrorCode.NOT_INITIALIZED, { ns: this._ns });
@@ -520,10 +519,10 @@ export class GitRepoDO extends DO {
             throw new GitRepoDOError(`Invalid fork target URL: ${options.to}`, GitRepoDOErrorCode.INVALID_NAMESPACE, { to: options.to });
         }
         // Create a new DO ID for the fork
-        const doId = this.env.DO?.newUniqueId() ?? { id: crypto.randomUUID() };
-        const doIdStr = typeof doId === 'object' && 'id' in doId ? String(doId.id) : String(doId);
+        const doId = this.env.DO?.newUniqueId();
+        const doIdStr = doId ? String(doId) : crypto.randomUUID();
         // If we have the DO binding, create the forked instance
-        if (this.env.DO) {
+        if (this.env.DO && doId) {
             try {
                 const forkedDO = this.env.DO.get(doId);
                 await forkedDO.fetch(new Request('https://internal/fork', {
@@ -536,8 +535,8 @@ export class GitRepoDO extends DO {
                 }));
             }
             catch (error) {
-                this._logger.error('Fork operation failed', { error, to: options.to });
-                throw new GitRepoDOError(`Fork failed: ${error instanceof Error ? error.message : 'Unknown error'}`, GitRepoDOErrorCode.FORK_FAILED, { to: options.to, error });
+                this._logger.error('Fork operation failed', { error: error instanceof Error ? error.message : String(error), to: options.to });
+                throw new GitRepoDOError(`Fork failed: ${error instanceof Error ? error.message : 'Unknown error'}`, GitRepoDOErrorCode.FORK_FAILED, { to: options.to, error: error instanceof Error ? error.message : String(error) });
             }
         }
         this._logger.info('GitRepoDO forked successfully', { from: this._ns, to: options.to, doId: doIdStr });
@@ -675,7 +674,8 @@ export class GitRepoDO extends DO {
     _getCompactionAttemptCount() {
         const result = this.state.storage.sql.exec(`SELECT attempt_count FROM ${COMPACTION_RETRIES_TABLE} WHERE id = 1`);
         const rows = result.toArray();
-        return rows.length > 0 ? rows[0].attempt_count : 0;
+        const row = rows[0];
+        return row ? row.attempt_count : 0;
     }
     /**
      * Record a compaction failure, incrementing the attempt counter.
@@ -787,7 +787,10 @@ export class GitRepoDO extends DO {
             // Quick attempt (blocking, non-durable)
             async try(action, data) {
                 // Execute action directly
-                return { action, data, success: true };
+                const result = { action, success: true };
+                if (data !== undefined)
+                    result.data = data;
+                return result;
             },
             // Durable execution with retries
             async do(action, data) {
@@ -795,7 +798,9 @@ export class GitRepoDO extends DO {
                 const actionId = `action:${Date.now()}`;
                 await self.state.storage.put(actionId, { action, data, status: 'pending' });
                 // Execute and update status
-                const result = { action, data, success: true };
+                const result = { action, success: true };
+                if (data !== undefined)
+                    result.data = data;
                 await self.state.storage.put(actionId, { action, data, status: 'completed', result });
                 return result;
             },
@@ -936,8 +941,8 @@ export function isGitRepoDO(value) {
     }
     // Check for GitRepoDO-specific properties and methods
     const candidate = value;
-    return (candidate.$type === 'GitRepoDO' &&
-        typeof candidate.hasCapability === 'function' &&
+    return (candidate['$type'] === 'GitRepoDO' &&
+        typeof candidate['hasCapability'] === 'function' &&
         candidate.hasCapability('git'));
 }
 //# sourceMappingURL=git-repo-do.js.map

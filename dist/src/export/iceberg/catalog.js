@@ -362,7 +362,8 @@ export class R2DataCatalog {
      */
     extractVersionFromPath(metadataPath) {
         const match = metadataPath.match(/\/v(\d+)\.metadata\.json$/);
-        return match ? parseInt(match[1], 10) : 1;
+        const versionStr = match?.[1];
+        return versionStr !== undefined ? parseInt(versionStr, 10) : 1;
     }
     /**
      * Checks if an error is a precondition failed error (412).
@@ -425,10 +426,6 @@ export class R2DataCatalog {
     }
     r2Path(location) {
         return r2PathWithPrefix(location, this.prefix || undefined);
-    }
-    getMetadataVersion(metadata) {
-        // Extract version from snapshot log or default to 1
-        return (metadata.metadata_log?.length ?? 0) + 1;
     }
     validateRequirement(metadata, req) {
         switch (req.type) {

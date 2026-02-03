@@ -46,19 +46,19 @@ export {
   type RepositorySource,
 } from './schemas'
 
-// Iceberg integration
+// Iceberg integration - using aliased names from ./iceberg
 export {
   R2DataCatalog,
   CatalogError,
   IcebergTableManager,
   createDataFile,
   createManifestBuilder,
-  createSnapshot,
+  createExportSnapshot as createSnapshot,
   type R2CatalogConfig,
   type TableManagerConfig,
-  type CreateTableOptions,
+  type ExportCreateTableOptions as CreateTableOptions,
   type AppendFilesOptions,
-  type TableMetadata,
-  type IcebergSnapshot,
-  type DataFile,
+  type ExportTableMetadata as TableMetadata,
+  type ExportIcebergSnapshot as IcebergSnapshot,
+  type ExportDataFile as DataFile,
 } from './iceberg'

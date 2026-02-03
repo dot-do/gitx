@@ -36,6 +36,7 @@ import { parseCapabilities } from '../wire/smart-http';
 import { PackObjectType, parsePackHeader, decodeTypeAndSize, packObjectTypeToString } from '../pack/format';
 import { applyDelta } from '../pack/delta';
 import * as pako from 'pako';
+const decoder = new TextDecoder();
 // ============================================================================
 // URL Parsing
 // ============================================================================
@@ -77,14 +78,16 @@ export function parseCloneUrl(url) {
             throw new Error(`Invalid SSH URL format: ${url}`);
         }
         const [, username, host, path] = match;
-        return {
+        const result = {
             protocol: 'ssh',
             host: host,
             port: null,
             path: path.startsWith('/') ? path : '/' + path,
-            username,
             baseUrl: `ssh://${username}@${host}/${path}`
         };
+        if (username !== undefined)
+            result.username = username;
+        return result;
     }
     // Handle standard URL format
     let parsedUrl;
@@ -105,17 +108,19 @@ export function parseCloneUrl(url) {
     }
     // Build base URL without credentials
     const port = parsedUrl.port ? parseInt(parsedUrl.port) : null;
-    const portStr = port ? `:${port}` : '';
     const baseUrl = `${protocol}://${parsedUrl.host}${path}`;
-    return {
+    const result = {
         protocol: protocol === 'http' ? 'https' : protocol,
         host: parsedUrl.hostname,
         port,
         path,
-        username: parsedUrl.username || undefined,
-        password: parsedUrl.password || undefined,
         baseUrl
     };
+    if (parsedUrl.username)
+        result.username = parsedUrl.username;
+    if (parsedUrl.password)
+        result.password = parsedUrl.password;
+    return result;
 }
 /**
  * Build the info/refs URL for ref discovery.
@@ -219,10 +224,8 @@ function parseRefAdvertisement(body) {
     const symrefs = new Map();
     let head;
     let isFirstRef = true;
-    let passedServiceAnnouncement = false;
     for (const packet of packets) {
         if (packet.type === 'flush') {
-            passedServiceAnnouncement = true;
             continue;
         }
         if (!packet.data)
@@ -280,7 +283,10 @@ function parseRefAdvertisement(body) {
         }
         refs.push({ sha, name });
     }
-    return { refs, capabilities, head, symrefs };
+    const result = { refs, capabilities, symrefs };
+    if (head !== undefined)
+        result.head = head;
+    return result;
 }
 /**
  * Parse symref capabilities from capability string.
@@ -435,7 +441,6 @@ function buildUploadPackRequest(wants, options) {
  * @internal
  */
 export function extractPackData(response) {
-    const decoder = new TextDecoder();
     let offset = 0;
     // Skip NAK/ACK lines and find the start of pack data
     while (offset < response.length) {
@@ -497,7 +502,6 @@ export function extractPackData(response) {
  * @internal
  */
 function demultiplexSideBand(response, startOffset) {
-    const decoder = new TextDecoder();
     const packParts = [];
     let offset = startOffset;
     while (offset < response.length) {
@@ -635,54 +639,103 @@ export async function unpackObjects(backend, packData, onProgress) {
             onProgress(`Unpacked ${i + 1}/${header.objectCount} objects...`);
         }
     }
-    // Second pass: resolve deltas
-    // Keep resolving until no more progress is made
-    let resolved = 0;
-    let lastResolved = -1;
-    while (resolved > lastResolved) {
-        lastResolved = resolved;
-        for (let i = pendingDeltas.length - 1; i >= 0; i--) {
-            const delta = pendingDeltas[i];
-            let baseObj;
-            if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
-                baseObj = objectsByOffset.get(delta.baseOffset);
+    // Second pass: resolve deltas using queue-based algorithm (O(n) instead of O(n^2))
+    // Build dependency graph: track which deltas are waiting for which bases
+    const waitingOnOffset = new Map(); // baseOffset -> deltas waiting
+    const waitingOnSha = new Map(); // baseSha -> deltas waiting
+    const readyQueue = [];
+    // Categorize pending deltas: ready to resolve vs waiting for base
+    for (const delta of pendingDeltas) {
+        if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
+            if (objectsByOffset.has(delta.baseOffset)) {
+                readyQueue.push(delta);
             }
-            else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
-                baseObj = objectsBySha.get(delta.baseSha);
-                // Try to get from backend if not in our parsed objects
-                if (!baseObj) {
-                    const backendObj = await backend.readObject(delta.baseSha);
-                    if (backendObj) {
-                        baseObj = {
-                            type: backendObj.type,
-                            data: backendObj.data,
-                            offset: -1,
-                            sha: delta.baseSha
-                        };
-                    }
+            else {
+                const waiting = waitingOnOffset.get(delta.baseOffset) || [];
+                waiting.push(delta);
+                waitingOnOffset.set(delta.baseOffset, waiting);
+            }
+        }
+        else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
+            // Check if base is already available
+            let baseAvailable = objectsBySha.has(delta.baseSha);
+            // Also check backend for ref_delta bases (thin packs)
+            if (!baseAvailable) {
+                const backendObj = await backend.readObject(delta.baseSha);
+                if (backendObj) {
+                    // Cache it for delta resolution
+                    const obj = {
+                        type: backendObj.type,
+                        data: backendObj.data,
+                        offset: -1,
+                        sha: delta.baseSha
+                    };
+                    objectsBySha.set(delta.baseSha, obj);
+                    baseAvailable = true;
                 }
             }
-            if (!baseObj)
-                continue;
-            // Apply delta
-            const targetData = applyDelta(baseObj.data, delta.deltaData);
-            const targetObj = {
-                type: baseObj.type,
-                data: targetData,
-                offset: delta.offset
-            };
-            objectsByOffset.set(delta.offset, targetObj);
-            // Store in backend
-            const sha = await backend.writeObject({ type: baseObj.type, data: targetData });
-            targetObj.sha = sha;
-            objectsBySha.set(sha, targetObj);
-            // Remove from pending
-            pendingDeltas.splice(i, 1);
-            resolved++;
+            if (baseAvailable) {
+                readyQueue.push(delta);
+            }
+            else {
+                const waiting = waitingOnSha.get(delta.baseSha) || [];
+                waiting.push(delta);
+                waitingOnSha.set(delta.baseSha, waiting);
+            }
         }
     }
-    if (pendingDeltas.length > 0) {
-        throw new Error(`Failed to resolve ${pendingDeltas.length} delta objects`);
+    // Process queue - each delta is processed exactly once
+    let resolved = 0;
+    while (readyQueue.length > 0) {
+        const delta = readyQueue.shift();
+        let baseObj;
+        if (delta.deltaType === 'ofs' && delta.baseOffset !== undefined) {
+            baseObj = objectsByOffset.get(delta.baseOffset);
+        }
+        else if (delta.deltaType === 'ref' && delta.baseSha !== undefined) {
+            baseObj = objectsBySha.get(delta.baseSha);
+        }
+        if (!baseObj) {
+            // This shouldn't happen if categorization was correct, but handle gracefully
+            continue;
+        }
+        // Apply delta
+        const targetData = applyDelta(baseObj.data, delta.deltaData);
+        const targetObj = {
+            type: baseObj.type,
+            data: targetData,
+            offset: delta.offset
+        };
+        objectsByOffset.set(delta.offset, targetObj);
+        // Store in backend
+        const sha = await backend.writeObject({ type: baseObj.type, data: targetData });
+        targetObj.sha = sha;
+        objectsBySha.set(sha, targetObj);
+        resolved++;
+        // Check if this newly resolved object unblocks any waiting deltas
+        // Check by offset (for ofs_delta chains)
+        const nowReadyByOffset = waitingOnOffset.get(delta.offset);
+        if (nowReadyByOffset) {
+            readyQueue.push(...nowReadyByOffset);
+            waitingOnOffset.delete(delta.offset);
+        }
+        // Check by SHA (for ref_delta chains)
+        const nowReadyBySha = waitingOnSha.get(sha);
+        if (nowReadyBySha) {
+            readyQueue.push(...nowReadyBySha);
+            waitingOnSha.delete(sha);
+        }
+    }
+    // Check for unresolved deltas (missing bases)
+    let totalUnresolved = 0;
+    for (const deltas of waitingOnOffset.values()) {
+        totalUnresolved += deltas.length;
+    }
+    for (const deltas of waitingOnSha.values()) {
+        totalUnresolved += deltas.length;
+    }
+    if (totalUnresolved > 0) {
+        throw new Error(`Failed to resolve ${totalUnresolved} delta objects`);
     }
     if (onProgress) {
         onProgress(`Unpacked ${header.objectCount} objects.`);
@@ -870,9 +923,7 @@ export async function clone(url, backend, options) {
             return {
                 success: true,
                 refs: [],
-                objectCount: 0,
-                head: undefined,
-                defaultBranch: undefined
+                objectCount: 0
             };
         }
         // Determine what to fetch
@@ -905,9 +956,7 @@ export async function clone(url, backend, options) {
             return {
                 success: true,
                 refs: [],
-                objectCount: 0,
-                head: undefined,
-                defaultBranch: undefined
+                objectCount: 0
             };
         }
         // Fetch pack
@@ -937,13 +986,16 @@ export async function clone(url, backend, options) {
         if (onProgress) {
             onProgress('Clone complete.');
         }
-        return {
+        const result = {
             success: true,
             refs: wantRefs.filter(r => r.name !== 'HEAD'),
-            head: refAdvert.head,
-            defaultBranch,
             objectCount
         };
+        if (refAdvert.head !== undefined)
+            result.head = refAdvert.head;
+        if (defaultBranch !== undefined)
+            result.defaultBranch = defaultBranch;
+        return result;
     }
     catch (error) {
         return {

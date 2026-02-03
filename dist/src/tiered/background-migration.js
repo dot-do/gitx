@@ -364,15 +364,28 @@ export class TierMigrationScheduler {
             };
         }
         const row = rows[0];
-        return {
+        if (!row) {
+            return {
+                consecutiveFailures: 0,
+                lastMigrationAt: null,
+                nextMigrationAt: null,
+                totalMigrated: 0,
+                totalBytesMigrated: 0,
+                paused: false,
+            };
+        }
+        const result = {
             consecutiveFailures: row.consecutive_failures,
             lastMigrationAt: row.last_migration_at,
             nextMigrationAt: row.next_migration_at,
             totalMigrated: row.total_migrated,
             totalBytesMigrated: row.total_bytes_migrated,
             paused: row.paused === 1,
-            pauseReason: row.pause_reason ?? undefined,
         };
+        if (row.pause_reason != null) {
+            result.pauseReason = row.pause_reason;
+        }
+        return result;
     }
     /**
      * Resume migration after it was paused due to errors.
@@ -447,7 +460,6 @@ export class TierMigrationScheduler {
      * Update state after a successful migration cycle.
      */
     async updateStateAfterCycle(result) {
-        const state = await this.getState();
         this.storage.sql.exec(`UPDATE ${MIGRATION_STATE_TABLE}
        SET consecutive_failures = 0,
            last_migration_at = ?,

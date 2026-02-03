@@ -299,7 +299,7 @@ export declare class StreamingPackWriter {
      * @param size - Total size in bytes
      * @param dataStream - ReadableStream of object data
      */
-    writeStreamingObject(sha: string, type: ObjectType, size: number, dataStream: ReadableStream<Uint8Array>): Promise<void>;
+    writeStreamingObject(_sha: string, type: ObjectType, size: number, dataStream: ReadableStream<Uint8Array>): Promise<void>;
     /**
      * Collects a ReadableStream into a Uint8Array.
      */

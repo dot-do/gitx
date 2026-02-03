@@ -19,6 +19,7 @@
 import { CHUNK_SIZE, CHUNKED_BLOB_PREFIX, calculateChunkCount, shouldChunk, getChunkRange, getMetadataKey } from './chunk-utils';
 // Re-export constants and types for backward compatibility
 export { CHUNK_SIZE, CHUNKED_BLOB_PREFIX };
+const encoder = new TextEncoder();
 // ============================================================================
 // Implementation
 // ============================================================================
@@ -27,7 +28,7 @@ export { CHUNK_SIZE, CHUNKED_BLOB_PREFIX };
  * Git format: "blob {size}\0{content}"
  */
 async function computeBlobSha(content) {
-    const header = new TextEncoder().encode(`blob ${content.length}\0`);
+    const header = encoder.encode(`blob ${content.length}\0`);
     const data = new Uint8Array(header.length + content.length);
     data.set(header);
     data.set(content, header.length);

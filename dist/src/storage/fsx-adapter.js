@@ -43,7 +43,7 @@ import * as pako from 'pako';
  */
 function createGitObject(type, content) {
     const header = `${type} ${content.length}\0`;
-    const headerBytes = new TextEncoder().encode(header);
+    const headerBytes = encoder.encode(header);
     const result = new Uint8Array(headerBytes.length + content.length);
     result.set(headerBytes, 0);
     result.set(content, headerBytes.length);
@@ -64,8 +64,11 @@ function parseGitObject(data) {
     if (nullIndex === -1) {
         throw new Error('Invalid git object: no null byte found');
     }
-    const headerStr = new TextDecoder().decode(data.subarray(0, nullIndex));
+    const headerStr = decoder.decode(data.subarray(0, nullIndex));
     const [type] = headerStr.split(' ');
+    if (type === undefined) {
+        throw new Error('Invalid git object: no type found');
+    }
     const content = data.subarray(nullIndex + 1);
     return { type, content };
 }

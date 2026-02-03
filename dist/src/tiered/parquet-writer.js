@@ -723,14 +723,17 @@ export class ParquetWriter {
             const values = internal.rows.map(row => row[field.name]);
             const stats = this.options.enableStatistics ? this._computeStatistics(values, field.type) : undefined;
             const compression = this.options.columnCompression?.[field.name] ?? this.options.compression;
-            return {
+            const chunk = {
                 column: field.name,
                 type: field.type,
                 compression,
                 encodedSize: this._estimateEncodedSize(values, field.type, compression),
-                uncompressedSize: this._estimateUncompressedSize(values, field.type),
-                statistics: stats
+                uncompressedSize: this._estimateUncompressedSize(values, field.type)
             };
+            if (stats !== undefined) {
+                chunk.statistics = stats;
+            }
+            return chunk;
         });
         return {
             numRows: internal.rows.length,
@@ -865,12 +868,18 @@ export class ParquetWriter {
             numRows: this._rowCount,
             rowGroups: this._rowGroups,
             compression: this.options.compression,
-            columnCompression: this.options.columnCompression,
             keyValueMetadata: this._keyValueMetadata,
-            createdAt: this._createdAt,
-            sortedBy: this.options.sortBy,
-            partitionColumns: this.options.partitionColumns
+            createdAt: this._createdAt
         };
+        if (this.options.columnCompression !== undefined) {
+            metadata.columnCompression = this.options.columnCompression;
+        }
+        if (this.options.sortBy !== undefined) {
+            metadata.sortedBy = this.options.sortBy;
+        }
+        if (this.options.partitionColumns !== undefined) {
+            metadata.partitionColumns = this.options.partitionColumns;
+        }
         // Encode metadata to JSON and then to bytes
         const metadataJson = JSON.stringify(metadata);
         const metadataBytes = encoder.encode(metadataJson);
@@ -996,15 +1005,23 @@ export function defineSchema(fields, metadata) {
         }
         names.add(field.name);
     }
-    return {
-        fields: fields.map(f => ({
-            name: f.name,
-            type: f.type,
-            required: f.required,
-            metadata: f.metadata
-        })),
-        metadata
+    const schema = {
+        fields: fields.map(f => {
+            const field = {
+                name: f.name,
+                type: f.type,
+                required: f.required
+            };
+            if (f.metadata !== undefined) {
+                field.metadata = f.metadata;
+            }
+            return field;
+        })
     };
+    if (metadata !== undefined) {
+        schema.metadata = metadata;
+    }
+    return schema;
 }
 /**
  * Creates a Parquet writer.
@@ -1129,8 +1146,8 @@ export async function addRowGroup(writer, rows) {
  */
 export function getMetadata(bytes) {
     // Verify magic bytes
-    const startMagic = new TextDecoder().decode(bytes.slice(0, 4));
-    const endMagic = new TextDecoder().decode(bytes.slice(-4));
+    const startMagic = decoder.decode(bytes.slice(0, 4));
+    const endMagic = decoder.decode(bytes.slice(-4));
     if (startMagic !== 'PAR1' || endMagic !== 'PAR1') {
         throw new ParquetError('Invalid Parquet file: missing magic bytes', 'INVALID_MAGIC');
     }
@@ -1158,7 +1175,7 @@ export function getMetadata(bytes) {
         }
     }
     // Parse metadata JSON
-    const metadataJson = new TextDecoder().decode(metadataBytes);
+    const metadataJson = decoder.decode(metadataBytes);
     const internal = JSON.parse(metadataJson);
     // Build column metadata map
     const columnMetadata = {};
@@ -1167,18 +1184,27 @@ export function getMetadata(bytes) {
             columnMetadata[col] = { compression: comp };
         }
     }
-    return {
+    const result = {
         schema: internal.schema,
         numRows: internal.numRows,
         rowGroups: internal.rowGroups,
         compression: internal.compression,
-        columnMetadata: Object.keys(columnMetadata).length > 0 ? columnMetadata : undefined,
-        keyValueMetadata: Object.keys(internal.keyValueMetadata).length > 0 ? internal.keyValueMetadata : undefined,
         createdAt: internal.createdAt,
-        fileSize: bytes.length,
-        sortedBy: internal.sortedBy,
-        partitionColumns: internal.partitionColumns
+        fileSize: bytes.length
     };
+    if (Object.keys(columnMetadata).length > 0) {
+        result.columnMetadata = columnMetadata;
+    }
+    if (Object.keys(internal.keyValueMetadata).length > 0) {
+        result.keyValueMetadata = internal.keyValueMetadata;
+    }
+    if (internal.sortedBy !== undefined) {
+        result.sortedBy = internal.sortedBy;
+    }
+    if (internal.partitionColumns !== undefined) {
+        result.partitionColumns = internal.partitionColumns;
+    }
+    return result;
 }
 /**
  * Sets the compression type for a writer.

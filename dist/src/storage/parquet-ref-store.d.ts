@@ -21,7 +21,7 @@ export interface ParquetRefStoreOptions {
     /** Optional callback invoked on ref changes (set or delete) */
     onRefUpdate?: RefUpdateCallback;
 }
-export interface RefRow {
+export interface RefRow extends Record<string, unknown> {
     name: string;
     target: string;
     type: string;

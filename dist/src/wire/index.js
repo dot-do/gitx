@@ -19,7 +19,7 @@ export { encodePktLine, decodePktLine, encodeFlushPkt, encodeDelimPkt, pktLineSt
 export { parseAuthorizationHeader, encodeBasicAuth, encodeBearerAuth, createUnauthorizedResponse, isAnonymous, isBasicAuth, isBearerAuth, constantTimeCompare, DEFAULT_REALM, } from './auth';
 // Authentication Middleware
 export { createAuthMiddleware, MemoryAuthProvider, CallbackAuthProvider, createAuthenticatedRepositoryProvider, } from './auth-middleware';
-// Production Hardening
+// Production Hardening - types aliased to avoid conflicts with middleware module
 export { 
 // Negotiation limits and context
 getDefaultLimits, createNegotiationContext, validateNegotiationRound, recordWants, recordHaves, isTimedOut, getRemainingTime, completeNegotiation, abortNegotiation, 
@@ -49,4 +49,8 @@ createPktLineTransform,
 createStreamingPackWriter, createStreamingPackReader, StreamingPackWriter, 
 // Utilities
 isLargeBlob, createProgressTransform, concatStreams, teeStream, } from './streaming';
+// Send-pack Protocol (Push Client) - aliased to avoid conflicts with ops/branch
+export { push, pushBranch, deleteBranch as deleteRemoteBranch, discoverReceivePackRefs, parseReceivePackCapabilities, ZERO_SHA as SEND_PACK_ZERO_SHA, } from './send-pack';
+// Receive-pack Protocol Limits (DoS Protection) - aliased to avoid conflicts with pack/barrel
+export { UNPACK_LIMITS as WIRE_UNPACK_LIMITS, } from './receive-pack';
 //# sourceMappingURL=index.js.map

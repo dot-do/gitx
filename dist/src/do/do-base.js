@@ -166,8 +166,8 @@ export function isDO(value) {
         return false;
     }
     const candidate = value;
-    return (typeof candidate.$type === 'string' &&
-        typeof candidate.hasCapability === 'function' &&
-        typeof candidate.getTypeHierarchy === 'function');
+    return (typeof candidate['$type'] === 'string' &&
+        typeof candidate['hasCapability'] === 'function' &&
+        typeof candidate['getTypeHierarchy'] === 'function');
 }
 //# sourceMappingURL=do-base.js.map

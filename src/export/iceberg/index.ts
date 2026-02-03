@@ -3,54 +3,69 @@
  *
  * Exports Iceberg table management utilities for GitX analytics.
  *
+ * NOTE: Types are aliased to avoid conflicts with src/iceberg/index.ts
+ *
  * @module export/iceberg
  */
 
-export { R2DataCatalog, CatalogError, InvalidRefNameError, validateRefName, type R2CatalogConfig } from './catalog'
+// R2 Data Catalog
+export {
+  R2DataCatalog,
+  CatalogError,
+  InvalidRefNameError,
+  validateRefName,
+  validateRefName as validateIcebergRefName,
+  type R2CatalogConfig,
+} from './catalog'
 
 export {
   IcebergTableManager,
   createDataFile,
   type TableManagerConfig,
-  type CreateTableOptions,
+  type CreateTableOptions as ExportCreateTableOptions,
   type AppendFilesOptions,
 } from './table'
 
+// Manifest utilities - aliased to avoid conflicts with src/iceberg/index.ts
 export {
   createManifestBuilder,
   createSnapshot,
+  createSnapshot as createExportSnapshot,
   serializeManifest,
+  serializeManifest as serializeExportManifest,
   serializeManifestList,
+  serializeManifestList as serializeExportManifestList,
   generateManifestName,
   generateManifestListName,
-  type CreateManifestOptions,
+  type CreateManifestOptions as ExportCreateManifestOptions,
   type CreateSnapshotOptions,
   type ManifestBuilder,
 } from './manifest'
 
+// Types - aliased to avoid conflicts with src/iceberg/index.ts
 export type {
   // Schema types
-  IcebergSchema,
-  IcebergField,
+  IcebergSchema as ExportIcebergSchema,
+  IcebergField as ExportIcebergField,
   IcebergPrimitiveType,
   IcebergStructType,
   IcebergListType,
   IcebergMapType,
   // Partition types
-  PartitionSpec,
+  PartitionSpec as ExportPartitionSpec,
   PartitionField,
   PartitionTransform,
   // Snapshot types
-  IcebergSnapshot,
+  IcebergSnapshot as ExportIcebergSnapshot,
   SnapshotSummary,
   // Manifest types
-  DataFile,
-  ManifestEntry,
-  ManifestFile,
+  DataFile as ExportDataFile,
+  ManifestEntry as ExportManifestEntry,
+  ManifestFile as ExportManifestFile,
   // Table metadata
-  TableMetadata,
+  TableMetadata as ExportTableMetadata,
   TableMetadataV2,
-  SortOrder,
+  SortOrder as ExportSortOrder,
   SortField,
   // Catalog types
   TableIdentifier,

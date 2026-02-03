@@ -68,11 +68,13 @@ export function selectDiffViewMode(terminalWidth) {
 // ============================================================================
 export function LoadingSpinner(props) {
     // Returns a representation of the loading spinner component
-    return {
+    const result = {
         type: 'LoadingSpinner',
-        props,
-        message: props.message
+        props
     };
+    if (props.message !== undefined)
+        result.message = props.message;
+    return result;
 }
 // ============================================================================
 // Error Display

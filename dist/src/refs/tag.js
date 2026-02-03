@@ -32,6 +32,7 @@
  * const versions = await listTags(manager, { pattern: 'v*' })
  * ```
  */
+const encoder = new TextEncoder();
 // Re-export RefStorage for backward compatibility
 export { RefStorage } from './storage';
 /**
@@ -211,7 +212,6 @@ export class TagManager {
                         throw new TagError('GPG signer not available', 'GPG_ERROR', name);
                     }
                     // Sign the tag content
-                    const encoder = new TextEncoder();
                     signature = await this.gpgSigner.sign(encoder.encode(formattedMessage), options?.keyId);
                     // Append signature to message (Git stores signature in the tag object)
                     finalMessage = formattedMessage + '\n' + signature;
@@ -223,23 +223,30 @@ export class TagManager {
                     object: target,
                     objectType: targetType || 'commit',
                     name,
-                    tagger,
                     message: finalMessage
                 };
+                if (tagger !== undefined) {
+                    tagObj.tagger = tagger;
+                }
                 // Write tag object and get its SHA
                 const tagObjSha = await this.objectStorage.writeTagObject(tagObj);
                 // Write ref pointing to tag object
                 await this.refStorage.setRef(refName, tagObjSha);
-                return {
+                const annotatedResult = {
                     name,
                     type: 'annotated',
                     sha: tagObjSha,
                     targetSha: target,
                     targetType: targetType || 'commit',
-                    tagger,
                     message: formattedMessage,
-                    signature
                 };
+                if (tagger !== undefined) {
+                    annotatedResult.tagger = tagger;
+                }
+                if (signature !== undefined) {
+                    annotatedResult.signature = signature;
+                }
+                return annotatedResult;
             }
             else {
                 // Lightweight tag - just write ref pointing to target
@@ -343,8 +350,12 @@ export class TagManager {
                 if (needMetadata) {
                     tag.targetSha = tagObj.object;
                     tag.targetType = tagObj.objectType;
-                    tag.tagger = tagObj.tagger;
-                    tag.message = tagObj.message;
+                    if (tagObj.tagger !== undefined) {
+                        tag.tagger = tagObj.tagger;
+                    }
+                    if (tagObj.message !== undefined) {
+                        tag.message = tagObj.message;
+                    }
                 }
                 tags.push(tag);
             }
@@ -437,13 +448,17 @@ export class TagManager {
             if (options?.resolve) {
                 tag.targetSha = tagObj.object;
                 tag.targetType = tagObj.objectType;
-                tag.tagger = tagObj.tagger;
-                tag.message = tagObj.message;
-                // Check for signature in message
-                const parsed = parseTagMessage(tagObj.message);
-                if (parsed.signature) {
-                    tag.signature = parsed.signature;
-                    tag.message = parsed.message;
+                if (tagObj.tagger !== undefined) {
+                    tag.tagger = tagObj.tagger;
+                }
+                if (tagObj.message !== undefined) {
+                    tag.message = tagObj.message;
+                    // Check for signature in message
+                    const parsed = parseTagMessage(tagObj.message);
+                    if (parsed.signature) {
+                        tag.signature = parsed.signature;
+                        tag.message = parsed.message;
+                    }
                 }
             }
             return tag;
@@ -560,7 +575,6 @@ export class TagManager {
         if (!this.gpgSigner) {
             return { valid: false, error: 'GPG signer not available' };
         }
-        const encoder = new TextEncoder();
         return this.gpgSigner.verify(encoder.encode(parsed.message), parsed.signature);
     }
     /**
@@ -943,7 +957,9 @@ export function sortTagsByVersion(tags, direction = 'asc') {
         // Remove 'v' prefix if present
         const normalized = name.startsWith('v') ? name.slice(1) : name;
         // Extract numeric version parts (split on non-digit, non-dot)
-        const parts = normalized.split(/[^0-9.]/)[0].split('.');
+        const splitResult = normalized.split(/[^0-9.]/);
+        const versionPart = splitResult[0] ?? '';
+        const parts = versionPart.split('.');
         return parts.map(p => parseInt(p, 10) || 0);
     };
     const compareVersions = (a, b) => {

@@ -34,6 +34,7 @@
  * ```
  */
 import { ReadWriteLock } from '../utils/async-mutex';
+const encoder = new TextEncoder();
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -258,7 +259,7 @@ export class WALManager {
         // Log transaction begin
         this.storage.sql.exec('INSERT INTO transactions (id, state) VALUES (?, ?)', txId, 'ACTIVE');
         // Append TX_BEGIN entry to WAL
-        await this.append('TX_BEGIN', new TextEncoder().encode(JSON.stringify({ txId })), txId);
+        await this.append('TX_BEGIN', encoder.encode(JSON.stringify({ txId })), txId);
         return txId;
     }
     /**
@@ -294,7 +295,7 @@ export class WALManager {
             throw new Error('Transaction not active');
         }
         // Append TX_COMMIT entry to WAL
-        await this.append('TX_COMMIT', new TextEncoder().encode(JSON.stringify({ txId: transactionId })), transactionId);
+        await this.append('TX_COMMIT', encoder.encode(JSON.stringify({ txId: transactionId })), transactionId);
         // Update transaction state
         tx.state = 'COMMITTED';
         this.storage.sql.exec('UPDATE transactions SET state = ? WHERE id = ?', 'COMMITTED', transactionId);
@@ -337,7 +338,7 @@ export class WALManager {
         // Delete transaction entries from WAL (except TX_BEGIN)
         this.storage.sql.exec('DELETE FROM wal WHERE transaction_id = ? AND operation NOT IN (?, ?)', transactionId, 'TX_BEGIN', 'TX_ROLLBACK');
         // Append TX_ROLLBACK entry to WAL
-        await this.append('TX_ROLLBACK', new TextEncoder().encode(JSON.stringify({ txId: transactionId })), transactionId);
+        await this.append('TX_ROLLBACK', encoder.encode(JSON.stringify({ txId: transactionId })), transactionId);
         // Update transaction state
         tx.state = 'ROLLED_BACK';
         this.storage.sql.exec('UPDATE transactions SET state = ? WHERE id = ?', 'ROLLED_BACK', transactionId);
@@ -367,7 +368,8 @@ export class WALManager {
         }
         const result = this.storage.sql.exec('SELECT state FROM transactions WHERE id = ?', transactionId);
         const rows = result.toArray();
-        return rows.length > 0 ? rows[0].state : null;
+        const firstRow = rows[0];
+        return rows.length > 0 && firstRow ? firstRow.state : null;
     }
     /**
      * Create a checkpoint at the current WAL position.
@@ -436,9 +438,9 @@ export class WALManager {
     async getLastCheckpoint() {
         const result = this.storage.sql.exec('SELECT id, wal_position, created_at, metadata FROM checkpoints ORDER BY id DESC LIMIT 1');
         const rawRows = result.toArray();
-        if (rawRows.length === 0)
-            return null;
         const row = rawRows[0];
+        if (rawRows.length === 0 || !row)
+            return null;
         return {
             id: row.id,
             walPosition: row.wal_position,

@@ -314,6 +314,39 @@ export class GitBackendAdapter {
     invalidateRefCache() {
         this.refCache = null;
     }
+    // ===========================================================================
+    // Pack Streaming Operations (stub implementations for interface compliance)
+    // ===========================================================================
+    /**
+     * Read a pack file by ID.
+     * @returns null - pack streaming not supported by DO adapter
+     */
+    async readPack(_id) {
+        // Pack streaming not supported - we store objects individually in SQLite
+        return null;
+    }
+    /**
+     * Write a pack file from a stream.
+     * @throws Error - pack streaming not supported by DO adapter
+     */
+    async writePack(_stream) {
+        throw new Error('Pack streaming not supported by GitBackendAdapter - use writePackfile instead');
+    }
+    /**
+     * List all pack file IDs.
+     * @returns Empty array - no pack files stored
+     */
+    async listPacks() {
+        // No pack files - we store objects individually
+        return [];
+    }
+    /**
+     * Delete a pack file.
+     * No-op since we don't store pack files.
+     */
+    async deletePack(_id) {
+        // No-op - we don't store pack files
+    }
 }
 /**
  * Advance past a zlib-compressed stream in a buffer.

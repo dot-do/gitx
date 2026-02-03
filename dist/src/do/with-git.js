@@ -124,7 +124,7 @@ export function withGit(Base, options) {
         /**
          * Static list of capabilities for introspection.
          */
-        static capabilities = [...(Base.capabilities || []), 'git'];
+        static capabilities = [...(Base['capabilities'] || []), 'git'];
         /**
          * Cached GitModule instance (lazy initialized).
          */
@@ -158,8 +158,8 @@ export function withGit(Base, options) {
                 return true;
             // Check if parent class has the hasCapability method
             const baseProto = Base.prototype;
-            if (baseProto && typeof baseProto.hasCapability === 'function') {
-                return baseProto.hasCapability.call(this, name);
+            if (baseProto && typeof baseProto['hasCapability'] === 'function') {
+                return baseProto['hasCapability'].call(this, name);
             }
             return false;
         }
@@ -167,23 +167,24 @@ export function withGit(Base, options) {
         constructor(...args) {
             super(...args);
             // Resolve R2 bucket from env if available
-            const env = this.env;
+            const env = this['env'];
             const r2BindingName = options.r2Binding ?? 'R2_BUCKET';
             const r2 = env?.[r2BindingName];
             // Get filesystem capability if available from $ context
-            const dollarContext = this.$;
-            const fs = dollarContext?.fs;
-            // Store resolved options
-            this[GIT_OPTIONS] = {
-                ...options,
-                r2,
-                fs,
-            };
+            const dollarContext = this['$'];
+            const fs = dollarContext?.['fs'];
+            // Store resolved options - only include defined values
+            const resolvedOpts = { ...options };
+            if (r2 !== undefined)
+                resolvedOpts.r2 = r2;
+            if (fs !== undefined)
+                resolvedOpts.fs = fs;
+            this[GIT_OPTIONS] = resolvedOpts;
             // Extend $ context if contextMode is enabled
             if (options.contextMode && dollarContext) {
                 const self = this;
                 const original$ = dollarContext;
-                this.$ = new Proxy(original$, {
+                this['$'] = new Proxy(original$, {
                     get(target, prop) {
                         if (prop === 'git') {
                             return self.git;
@@ -210,14 +211,19 @@ export function withGit(Base, options) {
          */
         createGitModule() {
             const opts = this[GIT_OPTIONS];
-            return new GitModule({
-                repo: opts.repo,
-                branch: opts.branch,
-                path: opts.path,
-                r2: opts.r2,
-                fs: opts.fs,
-                objectPrefix: opts.objectPrefix,
-            });
+            // Build options - only include defined values
+            const moduleOpts = { repo: opts.repo };
+            if (opts.branch !== undefined)
+                moduleOpts.branch = opts.branch;
+            if (opts.path !== undefined)
+                moduleOpts.path = opts.path;
+            if (opts.r2 !== undefined)
+                moduleOpts.r2 = opts.r2;
+            if (opts.fs !== undefined)
+                moduleOpts.fs = opts.fs;
+            if (opts.objectPrefix !== undefined)
+                moduleOpts.objectPrefix = opts.objectPrefix;
+            return new GitModule(moduleOpts);
         }
         /**
          * Initialize the git module explicitly.
@@ -236,7 +242,7 @@ export function withGit(Base, options) {
         async disposeGit() {
             if (this[GIT_MODULE_CACHE]) {
                 await this[GIT_MODULE_CACHE].dispose();
-                this[GIT_MODULE_CACHE] = undefined;
+                delete this[GIT_MODULE_CACHE];
                 this.gitInitialized = false;
             }
         }

@@ -56,6 +56,7 @@ import pako from 'pako';
 import { PackObjectType, encodeTypeAndSize } from './format';
 import { createDelta } from './delta';
 import { concatArrays, createPackHeader, computePackChecksum, encodeOffset, calculateSimilarity, TYPE_ORDER, DEPENDENCY_TYPE_ORDER, DEFAULT_WINDOW_SIZE, DEFAULT_MAX_DELTA_DEPTH, DEFAULT_COMPRESSION_LEVEL, DEFAULT_MIN_DELTA_SIZE } from './utils';
+const decoder = new TextDecoder();
 /**
  * Available pack ordering strategies.
  *
@@ -245,7 +246,6 @@ export function computeObjectDependencies(objects) {
         dependents.set(obj.sha, []);
     }
     // Parse commit and tree objects to find dependencies
-    const decoder = new TextDecoder();
     for (const obj of objects) {
         if (obj.type === PackObjectType.OBJ_COMMIT) {
             // Parse commit to find tree and parent references

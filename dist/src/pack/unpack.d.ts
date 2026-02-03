@@ -65,6 +65,17 @@ export type ExternalBaseResolver = (sha: string) => Promise<{
     data: Uint8Array;
 } | null>;
 /**
+ * Default limits for unpacking operations to prevent DoS attacks.
+ */
+export declare const UNPACK_LIMITS: {
+    /** Default maximum number of objects in a single packfile */
+    readonly MAX_OBJECT_COUNT: 100000;
+    /** Default maximum total uncompressed size (1GB) */
+    readonly MAX_TOTAL_SIZE: number;
+    /** Default maximum size of a single object (100MB) */
+    readonly MAX_SINGLE_OBJECT_SIZE: number;
+};
+/**
  * Options for unpacking a packfile.
  */
 export interface UnpackOptions {
@@ -78,6 +89,24 @@ export interface UnpackOptions {
     verifyChecksum?: boolean;
     /** Maximum delta chain depth to prevent stack overflow (default: 50) */
     maxDeltaDepth?: number;
+    /**
+     * Maximum number of objects allowed in a packfile.
+     * Prevents DoS attacks from packfiles with excessive object counts.
+     * @default 100000
+     */
+    maxObjectCount?: number;
+    /**
+     * Maximum total uncompressed size of all objects in bytes.
+     * Prevents DoS attacks from packfiles that decompress to huge sizes.
+     * @default 1073741824 (1GB)
+     */
+    maxTotalSize?: number;
+    /**
+     * Maximum size of a single object in bytes.
+     * Prevents DoS attacks from extremely large individual objects.
+     * @default 104857600 (100MB)
+     */
+    maxSingleObjectSize?: number;
 }
 /**
  * Unpacks a complete packfile into individual objects.
@@ -85,13 +114,21 @@ export interface UnpackOptions {
  * @description Parses the binary packfile format and extracts all objects,
  * resolving delta chains to produce the original object content.
  *
+ * Security: This function enforces configurable limits to prevent DoS attacks:
+ * - maxObjectCount: Maximum number of objects (default: 100,000)
+ * - maxTotalSize: Maximum total uncompressed size (default: 1GB)
+ * - maxSingleObjectSize: Maximum size of a single object (default: 100MB)
+ *
  * @param packData - Complete packfile data including checksum
- * @param options - Unpacking options
+ * @param options - Unpacking options including security limits
  * @returns Unpacking result with all objects
- * @throws {Error} If packfile is invalid or corrupted
+ * @throws {Error} If packfile is invalid, corrupted, or exceeds limits
  *
  * @example
- * const result = await unpackPackfile(packData);
+ * const result = await unpackPackfile(packData, {
+ *   maxObjectCount: 50000,  // Custom limit
+ *   maxTotalSize: 500 * 1024 * 1024,  // 500MB
+ * });
  * for (const obj of result.objects) {
  *   console.log(`${obj.sha}: ${obj.type} (${obj.data.length} bytes)`);
  * }
@@ -103,12 +140,15 @@ export declare function unpackPackfile(packData: Uint8Array, options?: UnpackOpt
  * @description Memory-efficient alternative to unpackPackfile for large packs.
  * Objects are yielded as they are parsed and resolved.
  *
+ * Security: This function enforces the same configurable limits as unpackPackfile
+ * to prevent DoS attacks during streaming unpacking.
+ *
  * @param packData - Complete packfile data
- * @param options - Unpacking options
+ * @param options - Unpacking options including security limits
  * @yields Unpacked objects
  *
  * @example
- * for await (const obj of iteratePackfile(packData)) {
+ * for await (const obj of iteratePackfile(packData, { maxObjectCount: 50000 })) {
  *   await store.putObject(obj.type, obj.data);
  * }
  */

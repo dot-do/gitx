@@ -291,8 +291,8 @@ export declare class RPCGitBackend extends SimpleEventEmitter {
         maxSize: number;
         delayMs: number;
     };
-    readonly serializer?: Serializer;
-    readonly onTokenRefresh?: () => Promise<string>;
+    readonly serializer?: Serializer | undefined;
+    readonly onTokenRefresh?: (() => Promise<string>) | undefined;
     readonly maxRefreshAttempts: number;
     constructor(options: DOClientOptions);
     get connectionState(): ConnectionState;
@@ -408,9 +408,9 @@ export declare function createRPCGitBackend(options: DOClientOptions | RPCGitCon
 /**
  * Create an RPC handler for a DO instance
  */
-export declare function createRPCHandler(instance: RPCGitDO, state: DurableObjectState | {
+export declare function createRPCHandler(instance: RPCGitDO, _state: DurableObjectState | {
     storage: unknown;
-}, options?: RPCHandlerOptions): RPCHandler;
+}, _options?: RPCHandlerOptions): RPCHandler;
 declare class DurableObjectState {
     id: {
         toString(): string;

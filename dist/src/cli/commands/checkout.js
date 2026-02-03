@@ -549,7 +549,12 @@ Options:
             stderr(`fatal: '${branchName}' is not a valid branch name`);
             throw new Error(`'${branchName}' is not a valid branch name`);
         }
-        const result = await createOrphanBranch(cwd, branchName, { force, quiet });
+        const orphanOpts = {};
+        if (typeof force === 'boolean')
+            orphanOpts.force = force;
+        if (typeof quiet === 'boolean')
+            orphanOpts.quiet = quiet;
+        const result = await createOrphanBranch(cwd, branchName, orphanOpts);
         if (!quiet && result.success) {
             stdout(`Switched to a new branch '${branchName}'`);
         }

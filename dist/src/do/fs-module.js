@@ -43,6 +43,8 @@ export const S_IFLNK = 0o120000; // Symbolic link
 /**
  * SQL schema for filesystem metadata.
  */
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,7 +97,9 @@ class FsError extends Error {
         super(message);
         this.name = 'FsError';
         this.code = code;
-        this.path = path;
+        if (path !== undefined) {
+            this.path = path;
+        }
     }
 }
 /**
@@ -189,8 +193,12 @@ export class FsModule {
      */
     constructor(options) {
         this.sql = options.sql;
-        this.r2 = options.r2;
-        this.archive = options.archive;
+        if (options.r2) {
+            this.r2 = options.r2;
+        }
+        if (options.archive) {
+            this.archive = options.archive;
+        }
         this.basePath = options.basePath ?? '/';
         this.hotMaxSize = options.hotMaxSize ?? 1024 * 1024; // 1MB
         this.defaultMode = options.defaultMode ?? 0o644;
@@ -287,7 +295,7 @@ export class FsModule {
     async storeBlob(id, data, tier) {
         const now = Date.now();
         if (tier === 'hot') {
-            this.sql.exec('INSERT OR REPLACE INTO blobs (id, data, size, tier, created_at) VALUES (?, ?, ?, ?, ?)', id, data.buffer, data.length, tier, now);
+            this.sql.exec('INSERT OR REPLACE INTO blobs (id, data, size, tier, created_at) VALUES (?, ?, ?, ?, ?)', id, new Uint8Array(data.buffer), data.length, tier, now);
         }
         else if ((tier === 'warm' || tier === 'cold') && this.bundleWriter) {
             // Use bundle storage for warm/cold tiers when available
@@ -392,7 +400,7 @@ export class FsModule {
         // Update atime
         this.sql.exec('UPDATE files SET atime = ? WHERE id = ?', Date.now(), file.id);
         if (options?.encoding) {
-            return new TextDecoder().decode(result);
+            return decoder.decode(result);
         }
         return result;
     }
@@ -427,7 +435,7 @@ export class FsModule {
             throw new ENOENT(undefined, parentPath);
         }
         // Convert data to bytes
-        const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+        const bytes = typeof data === 'string' ? encoder.encode(data) : data;
         // Determine tier
         const tier = options?.tier ?? this.selectTier(bytes.length);
         // Check if file exists
@@ -705,7 +713,11 @@ export class FsModule {
             throw new ENOENT(undefined, normalized);
         }
         if (file.type === 'directory') {
-            await this.rmdir(normalized, { recursive: options?.recursive });
+            const rmdirOpts = {};
+            if (options?.recursive !== undefined) {
+                rmdirOpts.recursive = options.recursive;
+            }
+            await this.rmdir(normalized, rmdirOpts);
         }
         else {
             await this.unlink(normalized);

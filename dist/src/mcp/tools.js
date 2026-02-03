@@ -436,6 +436,7 @@ function formatCommit(sha, commit, oneline) {
  * Internal registry for custom-registered tools.
  * @internal
  */
+const decoder = new TextDecoder();
 const toolRegistry = new Map();
 /**
  * Registry of available git tools.
@@ -780,7 +781,7 @@ export const gitTools = [
                 };
                 // Walk commits
                 const traversalOptions = {
-                    maxCount: maxCount,
+                    ...(maxCount !== undefined && { maxCount }),
                     sort: 'date'
                 };
                 const commits = [];
@@ -1960,7 +1961,7 @@ export const gitTools = [
                         if (commitSha && (targetRevision.includes('~') || targetRevision.includes('^'))) {
                             const commit = await ctx.objectStore.getCommit(commitSha);
                             if (commit && commit.parents.length > 0) {
-                                commitSha = commit.parents[0];
+                                commitSha = commit.parents[0] ?? null;
                             }
                             else {
                                 return {
@@ -2035,7 +2036,7 @@ export const gitTools = [
                                 isError: false,
                             };
                         }
-                        const content = new TextDecoder().decode(blob);
+                        const content = decoder.decode(blob);
                         return {
                             content: [{ type: 'text', text: format === 'raw' ? content : content }],
                             isError: false,
@@ -2090,7 +2091,7 @@ export const gitTools = [
                                     lines.push(`+++ b/${entry.name}`);
                                     const blob = await ctx.objectStore.getBlob(entry.sha);
                                     if (blob) {
-                                        const content = new TextDecoder().decode(blob);
+                                        const content = decoder.decode(blob);
                                         const contentLines = content.split('\n');
                                         lines.push(`@@ -0,0 +1,${contentLines.length} @@`);
                                         for (const contentLine of contentLines) {
@@ -2321,7 +2322,7 @@ export const gitTools = [
                             isError: true,
                         };
                     }
-                    const content = new TextDecoder().decode(blob);
+                    const content = decoder.decode(blob);
                     const lines = content.split('\n');
                     if (lines.length > 0 && lines[lines.length - 1] === '') {
                         lines.pop();
@@ -2534,7 +2535,7 @@ export const gitTools = [
                                         const blob = await ctx.objectStore.getBlob(entry.sha);
                                         size = blob?.length;
                                     }
-                                    entries.push({ mode: entry.mode, type: typeStr, sha: entry.sha, name: entry.name, path: fullPath, size });
+                                    entries.push({ mode: entry.mode, type: typeStr, sha: entry.sha, name: entry.name, path: fullPath, ...(size !== undefined && { size }) });
                                 }
                             }
                         }
@@ -2602,7 +2603,7 @@ export const gitTools = [
             required: ['object'],
         },
         handler: async (params) => {
-            const { object: objectRef, type: expectedType, pretty_print, show_size, show_type } = params;
+            const { object: objectRef, type: expectedType, pretty_print: _pretty_print, show_size, show_type } = params;
             const ctx = globalRepositoryContext;
             // Security validation
             if (/[;|&$`<>]/.test(objectRef)) {
@@ -2690,7 +2691,7 @@ export const gitTools = [
                     }
                     // Show content based on type
                     if (obj.type === 'blob') {
-                        const content = new TextDecoder().decode(obj.data);
+                        const content = decoder.decode(obj.data);
                         return {
                             content: [{ type: 'text', text: content }],
                             isError: false,
@@ -2741,7 +2742,7 @@ export const gitTools = [
                     }
                     // Default - show raw data
                     return {
-                        content: [{ type: 'text', text: new TextDecoder().decode(obj.data) }],
+                        content: [{ type: 'text', text: decoder.decode(obj.data) }],
                         isError: false,
                     };
                 }
@@ -3081,7 +3082,7 @@ export function createGitBindingFromContext(ctx) {
         return ctx.refStore.getHead();
     }
     return {
-        async status(options) {
+        async status(_options) {
             const currentBranch = await getCurrentBranch(ctx.refStore);
             const headSha = await resolveRef();
             const staged = [];
@@ -3134,7 +3135,7 @@ export function createGitBindingFromContext(ctx) {
                 getCommit: (sha) => ctx.objectStore.getCommit(sha),
             };
             const traversalOptions = {
-                maxCount: options?.maxCount,
+                ...(options?.maxCount !== undefined && { maxCount: options.maxCount }),
                 sort: 'date',
             };
             const commits = [];
@@ -3160,7 +3161,7 @@ export function createGitBindingFromContext(ctx) {
                 commit2: options?.commit2,
                 path: options?.path,
             });
-            return result.content[0].text;
+            return result.content[0]?.text ?? '';
         },
         async show(revision, options) {
             const result = await invokeTool('git_show', {
@@ -3169,7 +3170,7 @@ export function createGitBindingFromContext(ctx) {
                 format: options?.format,
                 context_lines: options?.contextLines,
             });
-            const text = result.content[0].text;
+            const text = result.content[0]?.text ?? '';
             // Try to return structured data
             try {
                 return JSON.parse(text);
@@ -3200,10 +3201,10 @@ export function createGitBindingFromContext(ctx) {
                 email: options.email,
                 amend: options.amend,
             });
-            const text = result.content[0].text;
+            const text = result.content[0]?.text ?? '';
             // Parse "[$branch $sha] $message" format
             const match = text.match(/\[.+\s+([a-f0-9]{7,})\]/);
-            return { sha: match ? match[1] : 'unknown' };
+            return { sha: match?.[1] ?? 'unknown' };
         },
         async add(files, options) {
             const fileList = Array.isArray(files) ? files : [files];
@@ -3232,11 +3233,11 @@ export function createGitBindingFromContext(ctx) {
             });
             const current = await getCurrentBranch(ctx.refStore);
             return {
-                current: current || undefined,
+                ...(current && { current }),
                 branches: branches.map(b => ({
                     name: b.name,
                     sha: b.sha,
-                    remote: b.remote,
+                    remote: b.ref.startsWith('refs/remotes/'),
                 })),
             };
         },
@@ -3245,15 +3246,15 @@ export function createGitBindingFromContext(ctx) {
             return { merged: !result.isError };
         },
         async push(options) {
-            const result = await invokeTool('git_push', options ?? {});
-            return { pushed: !result.isError, remote: options?.remote, branch: options?.branch };
+            const result = await invokeTool('git_push', (options ?? {}));
+            return { pushed: !result.isError, ...(options?.remote && { remote: options.remote }), ...(options?.branch && { branch: options.branch }) };
         },
         async pull(options) {
-            const result = await invokeTool('git_pull', options ?? {});
+            const result = await invokeTool('git_pull', (options ?? {}));
             return { pulled: !result.isError };
         },
         async fetch(options) {
-            const result = await invokeTool('git_fetch', options ?? {});
+            const result = await invokeTool('git_fetch', (options ?? {}));
             return { fetched: !result.isError };
         },
         async clone(url, options) {
@@ -3261,7 +3262,7 @@ export function createGitBindingFromContext(ctx) {
             return { cloned: !result.isError };
         },
         async init(options) {
-            const result = await invokeTool('git_init', options ?? {});
+            const result = await invokeTool('git_init', (options ?? {}));
             return { initialized: !result.isError };
         },
     };

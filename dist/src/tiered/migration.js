@@ -109,7 +109,9 @@ export class MigrationError extends Error {
         this.targetTier = targetTier;
         this.cause = cause;
         this.name = 'MigrationError';
-        this.rollbackReason = cause?.message;
+        if (cause?.message !== undefined) {
+            this.rollbackReason = cause.message;
+        }
     }
     /**
      * Returns this error as a MigrationError reference.
@@ -850,10 +852,13 @@ export class TierMigrator {
             // Delete from hot tier
             await this.storage.deleteFromHot(sha);
             this.recordHistory(sha, sourceTier, targetTier, 'completed');
-            return {
-                success: true,
-                checksumVerified: options?.verifyChecksum ? true : undefined
+            const result = {
+                success: true
             };
+            if (options?.verifyChecksum) {
+                result.checksumVerified = true;
+            }
+            return result;
         }
         catch (error) {
             this.recordHistory(sha, sourceTier, targetTier, 'failed');
@@ -953,11 +958,16 @@ export class TierMigrator {
     async completeMigrationJob(job) {
         const jobWithMeta = job;
         // Update location
-        await this.storage.updateLocation(job.sha, {
-            tier: job.targetTier,
-            packId: jobWithMeta.packId,
-            offset: jobWithMeta.offset
-        });
+        const locationUpdate = {
+            tier: job.targetTier
+        };
+        if (jobWithMeta.packId !== undefined) {
+            locationUpdate.packId = jobWithMeta.packId;
+        }
+        if (jobWithMeta.offset !== undefined) {
+            locationUpdate.offset = jobWithMeta.offset;
+        }
+        await this.storage.updateLocation(job.sha, locationUpdate);
         // Delete from hot tier
         await this.storage.deleteFromHot(job.sha);
         // Release lock

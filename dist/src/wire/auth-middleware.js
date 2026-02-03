@@ -60,17 +60,24 @@ import { parseAuthorizationHeader, createUnauthorizedResponse, isAnonymous, DEFA
 function createAuthContext(request) {
     // Determine service from path or query
     let service = 'git-upload-pack';
-    if (request.path.includes('git-receive-pack') || request.query.service === 'git-receive-pack') {
+    if (request.path.includes('git-receive-pack') || request.query['service'] === 'git-receive-pack') {
         service = 'git-receive-pack';
     }
-    return {
+    const userAgent = request.headers['user-agent'] || request.headers['User-Agent'];
+    const clientIp = request.headers['x-forwarded-for'] || request.headers['cf-connecting-ip'];
+    const context = {
         repository: request.repository,
         service,
         path: request.path,
         method: request.method,
-        userAgent: request.headers['user-agent'] || request.headers['User-Agent'],
-        clientIp: request.headers['x-forwarded-for'] || request.headers['cf-connecting-ip'],
     };
+    if (userAgent !== undefined) {
+        context.userAgent = userAgent;
+    }
+    if (clientIp !== undefined) {
+        context.clientIp = clientIp;
+    }
+    return context;
 }
 // ============================================================================
 // Middleware Factory
@@ -162,11 +169,16 @@ export function createAuthMiddleware(provider, defaultOptions) {
                     };
                 }
             }
-            return {
+            const result = {
                 authenticated: true,
-                user: authResult.user,
-                scopes: authResult.scopes,
             };
+            if (authResult.user !== undefined) {
+                result.user = authResult.user;
+            }
+            if (authResult.scopes !== undefined) {
+                result.scopes = authResult.scopes;
+            }
+            return result;
         },
         getProvider() {
             return provider;
@@ -217,13 +229,18 @@ export class MemoryAuthProvider {
         // Check if password is a token (token-as-password pattern)
         if (this.config.tokens && this.config.tokens[password]) {
             const tokenConfig = this.config.tokens[password];
+            const user = {
+                id: tokenConfig.userId || username || 'token-user',
+            };
+            if (username) {
+                user.name = username;
+            }
+            if (tokenConfig.metadata !== undefined) {
+                user.metadata = tokenConfig.metadata;
+            }
             return {
                 valid: true,
-                user: {
-                    id: tokenConfig.userId || username || 'token-user',
-                    name: username || undefined,
-                    metadata: tokenConfig.metadata,
-                },
+                user,
                 scopes: tokenConfig.scopes || [],
             };
         }
@@ -232,13 +249,16 @@ export class MemoryAuthProvider {
             const userConfig = this.config.users[username];
             // Use constant-time comparison for password
             if (constantTimeCompare(password, userConfig.password)) {
+                const user = {
+                    id: username,
+                    name: username,
+                };
+                if (userConfig.metadata !== undefined) {
+                    user.metadata = userConfig.metadata;
+                }
                 return {
                     valid: true,
-                    user: {
-                        id: username,
-                        name: username,
-                        metadata: userConfig.metadata,
-                    },
+                    user,
                     scopes: userConfig.scopes || [],
                 };
             }
@@ -248,13 +268,16 @@ export class MemoryAuthProvider {
     validateBearerToken(token) {
         if (this.config.tokens && this.config.tokens[token]) {
             const tokenConfig = this.config.tokens[token];
+            const user = {
+                id: tokenConfig.userId || 'token-user',
+                type: 'service',
+            };
+            if (tokenConfig.metadata !== undefined) {
+                user.metadata = tokenConfig.metadata;
+            }
             return {
                 valid: true,
-                user: {
-                    id: tokenConfig.userId || 'token-user',
-                    type: 'service',
-                    metadata: tokenConfig.metadata,
-                },
+                user,
                 scopes: tokenConfig.scopes || [],
             };
         }
@@ -274,7 +297,11 @@ export class MemoryAuthProvider {
         if (!this.config.users) {
             this.config.users = {};
         }
-        this.config.users[username] = { password, scopes };
+        const userEntry = { password };
+        if (scopes !== undefined) {
+            userEntry.scopes = scopes;
+        }
+        this.config.users[username] = userEntry;
     }
     /**
      * Add a token to the provider.
@@ -287,7 +314,11 @@ export class MemoryAuthProvider {
         if (!this.config.tokens) {
             this.config.tokens = {};
         }
-        this.config.tokens[token] = { userId, scopes };
+        const tokenEntry = { userId };
+        if (scopes !== undefined) {
+            tokenEntry.scopes = scopes;
+        }
+        this.config.tokens[token] = tokenEntry;
     }
     /**
      * Remove a user from the provider.

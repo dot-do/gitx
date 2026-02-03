@@ -226,7 +226,7 @@ export function parseBundleIndex(data, entryCount) {
         if (type < 1 || type > 4) {
             throw new BundleIndexError(`Invalid object type: ${type}`);
         }
-        entries.push({ oid, offset, size, type });
+        entries.push({ oid, offset, size, type: type });
     }
     // Sort entries by OID for binary search
     entries.sort((a, b) => a.oid.localeCompare(b.oid));
@@ -268,9 +268,10 @@ export function lookupEntryByOid(entries, oid) {
     let right = entries.length - 1;
     while (left <= right) {
         const mid = Math.floor((left + right) / 2);
-        const cmp = oid.localeCompare(entries[mid].oid);
+        const midEntry = entries[mid];
+        const cmp = oid.localeCompare(midEntry.oid);
         if (cmp === 0) {
-            return entries[mid];
+            return midEntry;
         }
         else if (cmp < 0) {
             right = mid - 1;

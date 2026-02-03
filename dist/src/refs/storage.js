@@ -382,7 +382,9 @@ export class RefStorage {
         // Type guard: RefStorageOptions has storageBackend, RefStorageBackend has readRef
         if ('storageBackend' in backendOrOptions && !('readRef' in backendOrOptions)) {
             // Options object with StorageBackend
-            this.storageBackend = backendOrOptions.storageBackend;
+            const backend = backendOrOptions.storageBackend;
+            if (backend)
+                this.storageBackend = backend;
         }
         else {
             // Direct RefStorageBackend
@@ -519,8 +521,11 @@ export class RefStorage {
             chain.push(ref);
             // If it's a direct ref, we're done
             if (ref.type === 'direct') {
+                const firstRef = chain[0];
+                if (!firstRef)
+                    throw new RefError('Empty chain in ref resolution', 'CIRCULAR_REF', name);
                 return {
-                    ref: chain[0],
+                    ref: firstRef,
                     sha: ref.target,
                     chain
                 };
@@ -1170,7 +1175,9 @@ export class RefStorage {
         finally {
             // Phase 4: Release all locks (in reverse order)
             for (let i = locks.length - 1; i >= 0; i--) {
-                await locks[i].release();
+                const lock = locks[i];
+                if (lock)
+                    await lock.release();
             }
         }
     }

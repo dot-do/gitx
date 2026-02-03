@@ -4,6 +4,8 @@
  * Targeted exports for the delta transaction log layer: ref-log, branching,
  * merging, and error types.
  *
+ * NOTE: Branch and merge types are aliased to avoid conflicts with src/ops/index.ts
+ *
  * @module delta
  *
  * @example
@@ -26,20 +28,20 @@ export {
   type RefLogBucket,
 } from './ref-log'
 
-// Branch
+// Branch - aliased to avoid conflicts with ops/branch
 export {
   DeltaBranch,
-  createBranch,
+  createBranch as createDeltaBranch,
   createBranchAtVersion,
-  type BranchInfo,
+  type BranchInfo as DeltaBranchInfo,
 } from './branch'
 
-// Merge
+// Merge - aliased to avoid conflicts with ops/merge
 export {
   threeWayMerge,
   computeChanges,
   findCommonAncestor,
   canFastForward,
-  type MergeConflict,
-  type MergeResult,
+  type MergeConflict as DeltaMergeConflict,
+  type MergeResult as DeltaMergeResult,
 } from './merge'

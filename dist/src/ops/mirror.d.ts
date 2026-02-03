@@ -204,11 +204,9 @@ export declare class MirrorSync {
      */
     private pullSync;
     /**
-     * Push local refs to downstream.
+     * Push local refs to downstream using git send-pack protocol.
      *
-     * Note: Full push mirroring requires git-receive-pack support on the remote.
-     * This implementation discovers the remote state and reports what would be pushed.
-     * Actual push requires send-pack protocol which is a separate concern.
+     * Uses the send-pack protocol to push objects and update refs on the remote.
      */
     private pushSync;
     /**

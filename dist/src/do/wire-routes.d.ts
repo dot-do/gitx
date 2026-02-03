@@ -10,6 +10,7 @@
 import type { Hono } from 'hono';
 import type { GitRepoDOInstance } from './routes';
 import type { RepositoryProvider, RefUpdateCommand as SmartHTTPRefUpdateCommand, ReceivePackResult as SmartHTTPReceivePackResult, GitRef } from '../wire/smart-http';
+import type { CASBackend } from '../storage/backend';
 import { type DurableObjectStorage } from './schema';
 /**
  * Adapts the DO's ObjectStore and SQLite storage to the RepositoryProvider
@@ -23,7 +24,7 @@ export declare class DORepositoryProvider implements RepositoryProvider {
     private objectStore;
     private schemaManager;
     private schemaInitialized;
-    constructor(storage: DurableObjectStorage);
+    constructor(storage: DurableObjectStorage, backend?: CASBackend);
     private ensureSchema;
     getRefs(): Promise<GitRef[]>;
     exists(): Promise<boolean>;

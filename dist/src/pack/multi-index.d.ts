@@ -200,7 +200,6 @@ export declare class MultiIndexManager {
     private _config;
     private _shards;
     private _registry;
-    private _shardCacheExpiry;
     /**
      * Creates a new MultiIndexManager.
      *

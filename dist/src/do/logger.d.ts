@@ -5,7 +5,7 @@
  *
  * @module do/logger
  */
-import { Logger, LogLevel, LogEntry } from './types';
+import { Logger, LogLevel, LogEntry, type LogContext } from './types';
 /**
  * Options for creating a logger.
  */
@@ -39,7 +39,7 @@ export declare function createLogger(options?: LoggerOptions): Logger;
  * @param context - Additional context to include in all log entries
  * @returns Child logger instance
  */
-export declare function createChildLogger(parent: Logger, context: Record<string, unknown>): Logger;
+export declare function createChildLogger(parent: Logger, context: LogContext): Logger;
 /**
  * No-op logger that discards all messages.
  * Useful for testing or when logging is disabled.
@@ -48,6 +48,6 @@ export declare const NOOP_LOGGER: Logger;
 /**
  * @deprecated Use NOOP_LOGGER instead. This alias is provided for backward compatibility.
  */
-export declare const noopLogger: Logger<import("./types").LogContext>;
+export declare const noopLogger: Logger<LogContext>;
 export { Logger, LogLevel, LogEntry };
 //# sourceMappingURL=logger.d.ts.map

@@ -35,6 +35,7 @@
 // Constants
 // ============================================================================
 /** Cookie names to check for auth tokens */
+const encoder = new TextEncoder();
 const AUTH_COOKIE_NAMES = ['auth_token', 'session_token'];
 /** Default session cache TTL (5 minutes) */
 const DEFAULT_CACHE_TTL = 300000;
@@ -177,6 +178,9 @@ export async function verifyJWT(token, options) {
         return { valid: false, error: 'Token is malformed: invalid segment count' };
     }
     const [headerB64, payloadB64, signatureB64] = parts;
+    if (!headerB64 || !payloadB64 || !signatureB64) {
+        return { valid: false, error: 'Token is malformed: missing segments' };
+    }
     // Decode header
     let header;
     try {
@@ -232,7 +236,7 @@ export async function verifyJWT(token, options) {
         if (!key) {
             return { valid: false, error: 'No matching key found for signature verification' };
         }
-        // Verify signature
+        // Verify signature (headerB64 and payloadB64 are guaranteed to be defined at this point)
         const signatureValid = await verifySignature(`${headerB64}.${payloadB64}`, signatureB64, key, header.alg);
         if (!signatureValid) {
             return { valid: false, error: 'Token has invalid signature' };
@@ -283,7 +287,6 @@ function findMatchingKey(keys, header) {
  */
 async function verifySignature(data, signatureB64, key, algorithm) {
     try {
-        const encoder = new TextEncoder();
         const dataBuffer = encoder.encode(data);
         // Decode signature from base64url
         let signatureB64Standard = signatureB64.replace(/-/g, '+').replace(/_/g, '/');
@@ -310,13 +313,18 @@ async function importKey(jwk, algorithm) {
     const algParams = getAlgorithmParams(algorithm);
     const keyData = {
         kty: jwk.kty,
-        n: jwk.n,
-        e: jwk.e,
-        x: jwk.x,
-        y: jwk.y,
-        crv: jwk.crv,
         alg: algorithm,
     };
+    if (jwk.n !== undefined)
+        keyData.n = jwk.n;
+    if (jwk.e !== undefined)
+        keyData.e = jwk.e;
+    if (jwk.x !== undefined)
+        keyData.x = jwk.x;
+    if (jwk.y !== undefined)
+        keyData.y = jwk.y;
+    if (jwk.crv !== undefined)
+        keyData.crv = jwk.crv;
     return crypto.subtle.importKey('jwk', keyData, algParams, false, ['verify']);
 }
 /**
@@ -533,11 +541,14 @@ export function createOAuthMiddleware(options) {
         let context = cache.get(token);
         if (!context) {
             // Verify JWT
-            const result = await verifyJWT(token, {
+            const verifyOptions = {
                 jwksUrl: options.jwksUrl,
-                audience: options.audience,
-                issuer: options.issuer,
-            });
+            };
+            if (options.audience !== undefined)
+                verifyOptions.audience = options.audience;
+            if (options.issuer !== undefined)
+                verifyOptions.issuer = options.issuer;
+            const result = await verifyJWT(token, verifyOptions);
             if (!result.valid || !result.payload) {
                 return c.json({ error: result.error || 'Invalid token' }, {
                     status: 401,
@@ -547,12 +558,14 @@ export function createOAuthMiddleware(options) {
             // Build context from payload
             context = {
                 userId: result.payload.sub,
-                email: result.payload.email,
-                name: result.payload.name,
                 scopes: parseGitScopes(result.payload.scopes),
                 token,
                 expiresAt: result.payload.exp * 1000,
             };
+            if (result.payload.email !== undefined)
+                context.email = result.payload.email;
+            if (result.payload.name !== undefined)
+                context.name = result.payload.name;
             // Cache the session
             const ttl = Math.min(result.payload.exp * 1000 - Date.now(), DEFAULT_CACHE_TTL);
             if (ttl > 0) {
@@ -560,7 +573,7 @@ export function createOAuthMiddleware(options) {
             }
         }
         // Check required scopes
-        if (options.requiredScopes?.length) {
+        if (options.requiredScopes?.length && context) {
             for (const required of options.requiredScopes) {
                 if (!hasScope(context.scopes, required)) {
                     return c.json({ error: `Insufficient permissions: requires ${required} scope` }, 403);

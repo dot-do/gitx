@@ -124,7 +124,6 @@ export declare class ParquetStore implements CASBackend {
     private codec;
     private objectFileKeys;
     private tombstones;
-    private initialized;
     private initPromise?;
     private onFlush;
     private _compactionNeeded;

@@ -357,7 +357,7 @@ export declare function safeParseHaveLine(line: string): {
  * )
  * ```
  */
-export declare function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage?: string): Promise<T>;
+export declare function withTimeout<T>(promise: Promise<T>, timeoutMs: number, _errorMessage?: string): Promise<T>;
 /**
  * Create a deadline-based timeout checker.
  *

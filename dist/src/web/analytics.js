@@ -141,7 +141,10 @@ async function gatherAnalytics(store, provider) {
     for (const c of sampleCommits) {
         if (c.parents.length === 0)
             continue;
-        const parentCommit = await provider.getCommit(c.parents[0]);
+        const parentSha = c.parents[0];
+        if (parentSha === undefined)
+            continue;
+        const parentCommit = await provider.getCommit(parentSha);
         if (!parentCommit)
             continue;
         const parentTree = await store.getTree(parentCommit.tree);

@@ -131,7 +131,9 @@ export class SandboxError extends Error {
         super(message);
         this.name = 'SandboxError';
         this.code = code;
-        this.data = data;
+        if (data !== undefined) {
+            this.data = data;
+        }
     }
     /**
      * Convert error to JSON representation.
@@ -350,11 +352,21 @@ export class MCPSandbox extends EventEmitter {
         };
         // Apply resource limits from config
         if (config.resourceLimits) {
-            this.config.memoryLimit = config.resourceLimits.memoryLimit ?? this.config.memoryLimit;
-            this.config.cpuTimeLimit = config.resourceLimits.cpuTimeLimit ?? this.config.cpuTimeLimit;
-            this.config.maxOpenFiles = config.resourceLimits.maxOpenFiles ?? this.config.maxOpenFiles;
-            this.config.maxProcesses = config.resourceLimits.maxProcesses ?? this.config.maxProcesses;
-            this.config.diskWriteLimit = config.resourceLimits.diskWriteLimit ?? this.config.diskWriteLimit;
+            if (config.resourceLimits.memoryLimit !== undefined) {
+                this.config.memoryLimit = config.resourceLimits.memoryLimit;
+            }
+            if (config.resourceLimits.cpuTimeLimit !== undefined) {
+                this.config.cpuTimeLimit = config.resourceLimits.cpuTimeLimit;
+            }
+            if (config.resourceLimits.maxOpenFiles !== undefined) {
+                this.config.maxOpenFiles = config.resourceLimits.maxOpenFiles;
+            }
+            if (config.resourceLimits.maxProcesses !== undefined) {
+                this.config.maxProcesses = config.resourceLimits.maxProcesses;
+            }
+            if (config.resourceLimits.diskWriteLimit !== undefined) {
+                this.config.diskWriteLimit = config.resourceLimits.diskWriteLimit;
+            }
         }
         // Set permissions from preset or config
         if (config.permissionPreset) {
@@ -404,13 +416,23 @@ export class MCPSandbox extends EventEmitter {
      * @returns Copy of resource limits
      */
     getResourceLimits() {
-        return {
-            memoryLimit: this.config.memoryLimit,
-            cpuTimeLimit: this.config.cpuTimeLimit,
-            maxOpenFiles: this.config.maxOpenFiles,
-            maxProcesses: this.config.maxProcesses,
-            diskWriteLimit: this.config.diskWriteLimit,
-        };
+        const limits = {};
+        if (this.config.memoryLimit !== undefined) {
+            limits.memoryLimit = this.config.memoryLimit;
+        }
+        if (this.config.cpuTimeLimit !== undefined) {
+            limits.cpuTimeLimit = this.config.cpuTimeLimit;
+        }
+        if (this.config.maxOpenFiles !== undefined) {
+            limits.maxOpenFiles = this.config.maxOpenFiles;
+        }
+        if (this.config.maxProcesses !== undefined) {
+            limits.maxProcesses = this.config.maxProcesses;
+        }
+        if (this.config.diskWriteLimit !== undefined) {
+            limits.diskWriteLimit = this.config.diskWriteLimit;
+        }
+        return limits;
     }
     /**
      * Get list of permission violations.
@@ -586,9 +608,7 @@ export class MCPSandbox extends EventEmitter {
             const result = await this.executeInSandbox(fn, timeout, options);
             const endTime = Date.now();
             this.resourceStats.executionCount++;
-            return {
-                value: result.value,
-                error: result.error,
+            const sandboxResult = {
                 sandboxId: this.id,
                 metadata: {
                     startTime,
@@ -600,6 +620,13 @@ export class MCPSandbox extends EventEmitter {
                     cpuTimeUsed: this.resourceStats.cpuTimeUsed,
                 },
             };
+            if (result.value !== undefined) {
+                sandboxResult.value = result.value;
+            }
+            if (result.error !== undefined) {
+                sandboxResult.error = result.error;
+            }
+            return sandboxResult;
         }
         finally {
             this.activeExecutions--;
@@ -746,7 +773,7 @@ export class MCPSandbox extends EventEmitter {
             // Check for file descriptor limits with openSync
             if (fnStr.includes('openSync') && this.config.maxOpenFiles) {
                 const match = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+)/);
-                if (match) {
+                if (match && match[1] !== undefined) {
                     const count = parseInt(match[1], 10);
                     if (count > this.config.maxOpenFiles) {
                         return new SandboxError(SandboxErrorCode.FILE_DESCRIPTOR_LIMIT, 'File descriptor limit exceeded');
@@ -782,7 +809,7 @@ export class MCPSandbox extends EventEmitter {
         if (this.config.memoryLimit) {
             // Check for large for loop allocations that push to arrays
             const forLoopMatch = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+(?:e\d+)?|\d+)/);
-            if (forLoopMatch && (fnStr.includes('.push') || fnStr.includes('arr.push'))) {
+            if (forLoopMatch && forLoopMatch[1] !== undefined && (fnStr.includes('.push') || fnStr.includes('arr.push'))) {
                 const iterations = parseFloat(forLoopMatch[1]);
                 // Check if iterations would exceed reasonable memory (10M+ items)
                 if (iterations >= 10000000) {
@@ -793,7 +820,7 @@ export class MCPSandbox extends EventEmitter {
         // Check for CPU-intensive operations (massive loops)
         if (this.config.cpuTimeLimit !== undefined || fnStr.includes('1000000000') || fnStr.includes('1e9')) {
             const cpuLoopMatch = fnStr.match(/for\s*\([^)]*i\s*<\s*(\d+(?:e\d+)?|\d+)/);
-            if (cpuLoopMatch) {
+            if (cpuLoopMatch && cpuLoopMatch[1] !== undefined) {
                 const iterations = parseFloat(cpuLoopMatch[1]);
                 if (iterations >= 1000000000) {
                     return new SandboxError(SandboxErrorCode.CPU_LIMIT_EXCEEDED, 'CPU time limit exceeded');
@@ -957,8 +984,8 @@ export class MCPSandbox extends EventEmitter {
         // Create isolated environment
         const sandboxGlobal = {};
         // Clear any global test values between executions
-        delete global.testValue;
-        delete global.sharedVar;
+        delete global['testValue'];
+        delete global['sharedVar'];
         // Create isolated process object
         const isolatedProcess = this.createIsolatedProcess();
         // Create secure import function
@@ -1012,8 +1039,8 @@ export class MCPSandbox extends EventEmitter {
             ...options.context,
         });
         // Make sandboxGlobal reference itself for globalThis patterns
-        sandboxGlobal.globalThis = sandboxGlobal;
-        sandboxGlobal.global = sandboxGlobal;
+        sandboxGlobal['globalThis'] = sandboxGlobal;
+        sandboxGlobal['global'] = sandboxGlobal;
         // Override the dynamic import in the function's scope
         // The function will use our secure import for any dynamic imports
         const wrappedFn = this.wrapFunctionWithSecureImports(fn, secureImport, isolatedProcess);
@@ -1022,8 +1049,8 @@ export class MCPSandbox extends EventEmitter {
         }
         finally {
             // Clear test values after execution
-            delete global.testValue;
-            delete global.sharedVar;
+            delete global['testValue'];
+            delete global['sharedVar'];
         }
     }
     /**
@@ -1035,7 +1062,7 @@ export class MCPSandbox extends EventEmitter {
         return function wrappedExecution() {
             // Temporarily replace global process
             ;
-            global.process = isolatedProcess;
+            global['process'] = isolatedProcess;
             // Store original import for restoration
             // Note: We can't fully replace import() in V8, but we intercept it
             // through our async function wrapper
@@ -1056,17 +1083,17 @@ export class MCPSandbox extends EventEmitter {
                     })
                         .finally(() => {
                         ;
-                        global.process = originalProcess;
+                        global['process'] = originalProcess;
                     });
                 }
                 // Restore process for sync results
                 ;
-                global.process = originalProcess;
+                global['process'] = originalProcess;
                 return result;
             }
             catch (error) {
                 ;
-                global.process = originalProcess;
+                global['process'] = originalProcess;
                 throw error;
             }
         };
@@ -1150,7 +1177,9 @@ export class MCPSandbox extends EventEmitter {
         const sandboxError = new SandboxError(SandboxErrorCode.EXECUTION_ERROR, message, {
             context: options.context,
         });
-        sandboxError.stack = stack;
+        if (stack !== undefined) {
+            sandboxError.stack = stack;
+        }
         return sandboxError;
     }
 }
